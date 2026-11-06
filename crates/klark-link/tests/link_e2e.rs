@@ -58,6 +58,7 @@ fn link_serves_a_hub_lazily() {
         socket: sock.clone(),
         bin: "/nonexistent/klark".into(),
         uploads_dir: std::env::temp_dir().join("klark-link-e2e-uploads"),
+        sessions: None,
     };
     thread::spawn(move || {
         let _ = klark_link::run_once(&config);

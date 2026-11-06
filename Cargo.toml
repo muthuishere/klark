@@ -54,6 +54,11 @@ unicode-width = "0.2"
 unicode-segmentation = "1.13.1"
 schemars = { version = "1.2.1", features = ["derive"] }
 
+[dev-dependencies]
+# tests/expose_sessions.rs plays a hub (same versions klark-link uses).
+flate2 = "1"
+tungstenite = { version = "0.24", default-features = false, features = ["handshake"] }
+
 [patch.crates-io]
 portable-pty = { path = "vendor/portable-pty" }
 

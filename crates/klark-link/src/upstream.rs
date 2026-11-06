@@ -23,6 +23,10 @@ pub struct Upstream {
     socket: PathBuf,
     bin: PathBuf,
     timeout: Duration,
+    /// The klark session this socket belongs to when it is not the default
+    /// one. Pane ids this upstream reports to the hub carry it as a prefix
+    /// (`<session>/<pane_id>`, see `crate::sessions`).
+    session: Option<String>,
 }
 
 impl Upstream {
@@ -31,11 +35,32 @@ impl Upstream {
             socket,
             bin,
             timeout: Duration::from_secs(10),
+            session: None,
         }
+    }
+
+    /// The same upstream, labelled as serving a named (non-default) session.
+    pub fn for_session(mut self, session: &str) -> Self {
+        self.session = (session != crate::sessions::DEFAULT_SESSION).then(|| session.to_string());
+        self
     }
 
     pub fn socket(&self) -> &Path {
         &self.socket
+    }
+
+    pub fn bin(&self) -> &Path {
+        &self.bin
+    }
+
+    /// The pane id the hub knows for a local pane id of this upstream.
+    pub fn wire_id(&self, local: &str) -> String {
+        crate::sessions::encode_id(
+            self.session
+                .as_deref()
+                .unwrap_or(crate::sessions::DEFAULT_SESSION),
+            local,
+        )
     }
 
     #[cfg(unix)]
@@ -142,12 +167,13 @@ impl Upstream {
         stop: Arc<AtomicBool>,
         slot: Arc<Mutex<Option<Child>>>,
     ) {
+        let wire = self.wire_id(&pane);
         let mut last_sent: Option<(u16, u16)> = None;
         let send_size = |size: (u16, u16), last: &mut Option<(u16, u16)>| {
             if *last != Some(size) && !stop.load(Ordering::SeqCst) {
                 *last = Some(size);
                 let _ = out.send(AgentMessage::PaneSize {
-                    pane_id: pane.clone(),
+                    pane_id: wire.clone(),
                     cols: size.0,
                     rows: size.1,
                 });
@@ -162,7 +188,7 @@ impl Upstream {
                     Err(reason) => {
                         if !stop.load(Ordering::SeqCst) {
                             let _ = out.send(AgentMessage::Closed {
-                                pane_id: pane.clone(),
+                                pane_id: wire.clone(),
                                 reason,
                             });
                         }
@@ -217,7 +243,7 @@ impl Upstream {
                         }
                         if out
                             .send(AgentMessage::Frame {
-                                pane_id: pane.clone(),
+                                pane_id: wire.clone(),
                                 bytes,
                             })
                             .is_err()
@@ -243,7 +269,7 @@ impl Upstream {
                 continue;
             }
             let _ = out.send(AgentMessage::Closed {
-                pane_id: pane,
+                pane_id: wire,
                 reason,
             });
             return;

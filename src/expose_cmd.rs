@@ -68,10 +68,31 @@ pub fn run(args: &[String]) -> ! {
         machine_id: machine_name.clone(),
         machine_name,
         klark_version: crate::build_info::version(),
-        socket: crate::api::socket_path(),
+        socket: default_socket(),
         bin,
         uploads_dir: crate::session::data_dir_for(None).join("uploads"),
+        // Every running session, not only this one (ids namespaced
+        // `<session>/<id>`, see crates/klark-link/src/sessions.rs).
+        sessions: Some(klark_link::sessions::SessionSource::new(|| {
+            crate::agent_index::running_sessions()
+                .into_iter()
+                .map(|s| {
+                    let socket = crate::agent_index::session_socket(&s);
+                    (s, socket)
+                })
+                .collect()
+        })),
     })
+}
+
+/// The default session's socket: plain pane ids on the wire belong to it.
+/// Run from inside a named session, that is still the default session; an
+/// explicit KLARK_SOCKET_PATH (no session) is honoured as before.
+fn default_socket() -> std::path::PathBuf {
+    match crate::session::active_name() {
+        Some(_) => crate::session::api_socket_path_for(None),
+        None => crate::api::socket_path(),
+    }
 }
 
 fn print_url(args: &[String]) -> ! {
@@ -85,6 +106,7 @@ fn print_url(args: &[String]) -> ! {
         std::process::exit(2);
     };
     let machine_name = o.name.unwrap_or_else(hostname);
+    let pane = wire_pane_id(crate::session::active_name().as_deref(), &pane);
     match klark_link::pane_url(&hub_url, &machine_name, &pane) {
         Ok(url) => {
             println!("{url}");
@@ -94,6 +116,15 @@ fn print_url(args: &[String]) -> ! {
             eprintln!("{e}");
             std::process::exit(2);
         }
+    }
+}
+
+/// The pane id the hub knows: namespaced `<session>/<id>` outside the default
+/// session (an id that already carries a session is left alone).
+fn wire_pane_id(session: Option<&str>, pane: &str) -> String {
+    match session {
+        Some(s) if !pane.contains('/') => klark_link::sessions::encode_id(s, pane),
+        _ => pane.to_string(),
     }
 }
 
@@ -127,4 +158,14 @@ fn os_hostname() -> Option<String> {
 #[cfg(not(unix))]
 fn os_hostname() -> Option<String> {
     None
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn url_pane_id_is_namespaced_outside_the_default_session() {
+        assert_eq!(super::wire_pane_id(None, "p1"), "p1");
+        assert_eq!(super::wire_pane_id(Some("work"), "p1"), "work/p1");
+        assert_eq!(super::wire_pane_id(Some("work"), "work/p1"), "work/p1");
+    }
 }
