@@ -1,5 +1,5 @@
 //! Talking to the local klark server: one-shot socket API calls and per-pane
-//! terminal observers. Ported from herdr-expose's Go `internal/upstream`.
+//! terminal observers. Ported from klark-expose's Go `internal/upstream`.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -16,7 +16,7 @@ use crate::protocol::AgentMessage;
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
 /// Socket API client. Each call opens a connection, writes one NDJSON request,
-/// reads one NDJSON response — the same shape herdr-expose relied on.
+/// reads one NDJSON response — the same shape klark-expose relied on.
 #[derive(Debug, Clone)]
 pub struct Upstream {
     socket: PathBuf,
@@ -78,7 +78,7 @@ impl Upstream {
     pub fn observe(&self, pane_id: &str, out: Sender<AgentMessage>) -> Result<Observer, String> {
         let mut child = Command::new(&self.bin)
             .args(["terminal", "session", "observe", pane_id])
-            .env("HERDR_SOCKET_PATH", &self.socket)
+            .env("KLARK_SOCKET_PATH", &self.socket)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())

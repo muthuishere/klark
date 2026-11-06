@@ -4,7 +4,7 @@ use super::harness::*;
 fn pane_run_sends_one_send_input_request_with_enter_key() {
     let base = unique_test_dir();
     fs::create_dir_all(&base).unwrap();
-    let socket_path = base.join("herdr.sock");
+    let socket_path = base.join("klark.sock");
     let listener = UnixListener::bind(&socket_path).unwrap();
 
     let server = thread::spawn(move || {
@@ -71,7 +71,7 @@ fn pane_run_sends_one_send_input_request_with_enter_key() {
 fn workspace_report_metadata_sends_token_patch() {
     let base = unique_test_dir();
     fs::create_dir_all(&base).unwrap();
-    let socket_path = base.join("herdr.sock");
+    let socket_path = base.join("klark.sock");
     let listener = UnixListener::bind(&socket_path).unwrap();
 
     let server = thread::spawn(move || {
@@ -123,7 +123,7 @@ fn workspace_report_metadata_sends_token_patch() {
 fn pane_report_metadata_sends_presentation_request() {
     let base = unique_test_dir();
     fs::create_dir_all(&base).unwrap();
-    let socket_path = base.join("herdr.sock");
+    let socket_path = base.join("klark.sock");
     let listener = UnixListener::bind(&socket_path).unwrap();
 
     let server = thread::spawn(move || {
@@ -264,7 +264,7 @@ fn help_commands_exit_successfully() {
             .unwrap();
         assert!(
             output.status.success(),
-            "herdr {} failed: status={:?} stdout={} stderr={}",
+            "klark {} failed: status={:?} stdout={} stderr={}",
             args.join(" "),
             output.status.code(),
             String::from_utf8_lossy(&output.stdout),
@@ -278,21 +278,21 @@ fn root_and_command_group_help_point_agents_to_plain_text_docs() {
     for args in [&["--help"][..], &["agent", "--help"][..]] {
         let output = Command::new(env!("CARGO_BIN_EXE_klark"))
             .args(args)
-            .env_remove("HERDR_SOCKET_PATH")
-            .env_remove("HERDR_CLIENT_SOCKET_PATH")
-            .env_remove("HERDR_ENV")
+            .env_remove("KLARK_SOCKET_PATH")
+            .env_remove("KLARK_CLIENT_SOCKET_PATH")
+            .env_remove("KLARK_ENV")
             .output()
             .unwrap();
-        assert!(output.status.success(), "herdr {} failed", args.join(" "));
+        assert!(output.status.success(), "klark {} failed", args.join(" "));
         let stdout = String::from_utf8_lossy(&output.stdout);
         for expected in [
             "Are you an AI? Use these resources ONLY IF your task specifically asks you to:",
-            "herdr --skill",
-            "https://github.com/herdrdev/herdr",
+            "klark --skill",
+            "https://github.com/klarkdev/klark",
         ] {
             assert!(
                 stdout.contains(expected),
-                "herdr {} help did not contain {expected:?}: {stdout}",
+                "klark {} help did not contain {expected:?}: {stdout}",
                 args.join(" ")
             );
         }
@@ -325,14 +325,14 @@ fn subcommand_help_explains_automation_semantics_without_a_server() {
     for (args, expected) in cases {
         let output = Command::new(env!("CARGO_BIN_EXE_klark"))
             .args(*args)
-            .env_remove("HERDR_SOCKET_PATH")
-            .env_remove("HERDR_CLIENT_SOCKET_PATH")
-            .env_remove("HERDR_ENV")
+            .env_remove("KLARK_SOCKET_PATH")
+            .env_remove("KLARK_CLIENT_SOCKET_PATH")
+            .env_remove("KLARK_ENV")
             .output()
             .unwrap();
         assert!(
             output.status.success(),
-            "herdr {} failed: status={:?} stdout={} stderr={}",
+            "klark {} failed: status={:?} stdout={} stderr={}",
             args.join(" "),
             output.status.code(),
             String::from_utf8_lossy(&output.stdout),
@@ -341,7 +341,7 @@ fn subcommand_help_explains_automation_semantics_without_a_server() {
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(
             stdout.contains(expected),
-            "herdr {} help did not contain {expected:?}: {stdout}",
+            "klark {} help did not contain {expected:?}: {stdout}",
             args.join(" ")
         );
     }
@@ -359,7 +359,7 @@ fn removed_wait_and_agent_send_commands_are_rejected() {
         .arg("--help")
         .output()
         .unwrap();
-    assert!(!String::from_utf8_lossy(&help.stdout).contains("herdr wait <subcommand>"));
+    assert!(!String::from_utf8_lossy(&help.stdout).contains("klark wait <subcommand>"));
 
     let send = Command::new(env!("CARGO_BIN_EXE_klark"))
         .args(["agent", "send", "reviewer", "hello"])
@@ -368,7 +368,7 @@ fn removed_wait_and_agent_send_commands_are_rejected() {
     assert_eq!(send.status.code(), Some(2));
     let stderr = String::from_utf8_lossy(&send.stderr);
     assert!(stderr.contains("unrecognized subcommand 'send'"));
-    assert!(!stderr.contains("herdr agent send <"));
+    assert!(!stderr.contains("klark agent send <"));
 }
 
 #[test]
@@ -404,13 +404,13 @@ fn agent_cli_rejects_invalid_wait_and_rename_grammar_locally() {
     ] {
         let output = Command::new(env!("CARGO_BIN_EXE_klark"))
             .args(args)
-            .env("HERDR_SOCKET_PATH", "/nonexistent/herdr.sock")
+            .env("KLARK_SOCKET_PATH", "/nonexistent/klark.sock")
             .output()
             .unwrap();
         assert_eq!(
             output.status.code(),
             Some(2),
-            "herdr {}: stdout={} stderr={}",
+            "klark {}: stdout={} stderr={}",
             args.join(" "),
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
@@ -422,9 +422,9 @@ fn agent_cli_rejects_invalid_wait_and_rename_grammar_locally() {
 fn completion_command_prints_zsh_script_without_session_startup() {
     let output = Command::new(env!("CARGO_BIN_EXE_klark"))
         .args(["completion", "zsh"])
-        .env_remove("HERDR_SOCKET_PATH")
-        .env_remove("HERDR_CLIENT_SOCKET_PATH")
-        .env_remove("HERDR_ENV")
+        .env_remove("KLARK_SOCKET_PATH")
+        .env_remove("KLARK_CLIENT_SOCKET_PATH")
+        .env_remove("KLARK_ENV")
         .output()
         .unwrap();
 
@@ -435,7 +435,7 @@ fn completion_command_prints_zsh_script_without_session_startup() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("#compdef herdr"), "stdout: {stdout}");
+    assert!(stdout.contains("#compdef klark"), "stdout: {stdout}");
     assert!(
         !stdout.contains("--cwd=[]"),
         "zsh completions should not suggest equals-style values unsupported by most manual parsers: {stdout}"
@@ -460,7 +460,7 @@ fn root_help_hides_explicit_client_command() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        !stdout.contains("herdr client"),
+        !stdout.contains("klark client"),
         "root help should not advertise the internal client command: {stdout}"
     );
 }
@@ -475,7 +475,7 @@ fn root_help_advertises_api_schema_command_group() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("herdr api <subcommand>"),
+        stdout.contains("klark api <subcommand>"),
         "root help should advertise the api command group: {stdout}"
     );
 }
@@ -489,9 +489,9 @@ fn api_schema_default_output_is_a_short_summary() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Herdr API schema"), "stdout: {stdout}");
+    assert!(stdout.contains("Klark API schema"), "stdout: {stdout}");
     assert!(
-        stdout.contains("Use `herdr api schema --json`"),
+        stdout.contains("Use `klark api schema --json`"),
         "stdout: {stdout}"
     );
     assert!(
@@ -526,7 +526,7 @@ fn api_schema_json_prints_bundled_schema() {
 fn api_snapshot_prints_live_session_snapshot() {
     let base = unique_test_dir();
     fs::create_dir_all(&base).unwrap();
-    let socket_path = base.join("herdr.sock");
+    let socket_path = base.join("klark.sock");
     let listener = UnixListener::bind(&socket_path).unwrap();
 
     let server = thread::spawn({
@@ -561,7 +561,7 @@ fn api_snapshot_prints_live_session_snapshot() {
 fn api_schema_output_writes_bundled_schema_to_file() {
     let base = unique_test_dir();
     fs::create_dir_all(&base).unwrap();
-    let schema_path = base.join("herdr-api.schema.json");
+    let schema_path = base.join("klark-api.schema.json");
 
     let output = Command::new(env!("CARGO_BIN_EXE_klark"))
         .args(["api", "schema", "--output"])
@@ -592,9 +592,9 @@ fn explicit_client_command_respects_nested_guard() {
 
     let output = Command::new(env!("CARGO_BIN_EXE_klark"))
         .arg("client")
-        .env("HERDR_ENV", "1")
+        .env("KLARK_ENV", "1")
         .env("XDG_CONFIG_HOME", &base)
-        .env_remove("HERDR_CONFIG_PATH")
+        .env_remove("KLARK_CONFIG_PATH")
         .output()
         .unwrap();
 
@@ -603,7 +603,7 @@ fn explicit_client_command_respects_nested_guard() {
     assert_eq!(output.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("nested herdr is disabled by default"),
+        stderr.contains("nested klark is disabled by default"),
         "client should fail at the nested guard before connecting: {stderr}"
     );
 }
@@ -612,7 +612,7 @@ fn explicit_client_command_respects_nested_guard() {
 fn removed_show_changelog_flag_fails_before_nested_guard() {
     let output = Command::new(env!("CARGO_BIN_EXE_klark"))
         .arg("--show-changelog")
-        .env("HERDR_ENV", "1")
+        .env("KLARK_ENV", "1")
         .output()
         .unwrap();
 
@@ -623,7 +623,7 @@ fn removed_show_changelog_flag_fails_before_nested_guard() {
         "stderr: {stderr}"
     );
     assert!(
-        !stderr.contains("nested herdr"),
+        !stderr.contains("nested klark"),
         "unknown flag should be rejected before nested guard: {stderr}"
     );
 }

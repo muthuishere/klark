@@ -3,7 +3,7 @@
 //! The machine dials out to the hub (no inbound port) and streams panes only
 //! while someone on the hub is looking at them. See crates/klark-link.
 
-const USAGE: &str = "usage: klark link --hub <wss://host/agent> --token <machine-token> [--name <machine-name>]\n       (or set KLARK_HUB_URL / KLARK_HUB_TOKEN / KLARK_MACHINE_NAME)";
+const USAGE: &str = "usage: klark link --hub <ws://hub-host:8080/agent> --token <machine-token> [--name <machine-name>]\n       (or set KLARK_HUB_URL / KLARK_HUB_TOKEN / KLARK_MACHINE_NAME)";
 
 pub fn run(args: &[String]) -> ! {
     let mut hub = std::env::var("KLARK_HUB_URL").ok();

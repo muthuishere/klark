@@ -25,7 +25,7 @@ builder.Services.Configure<HubOptions>(builder.Configuration.GetSection("Hub"));
 builder.Services.AddSingleton<HubStore>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<HubStore>());
 builder.Services.AddSingleton<MachineRegistry>();
-builder.Services.AddResponseCompression(o => o.EnableForHttps = true);
+builder.Services.AddResponseCompression();
 builder.Services.AddRazorComponents().AddInteractiveServerComponents();
 builder.Services.AddCascadingAuthenticationState();
 builder.Services
@@ -37,6 +37,8 @@ builder.Services
         o.SlidingExpiration = true;
         o.Cookie.HttpOnly = true;
         o.Cookie.SameSite = SameSiteMode.Lax;
+        // The hub is served over plain HTTP, so the cookie cannot require HTTPS.
+        o.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
     });
 builder.Services.AddAuthorization();
 
@@ -44,8 +46,8 @@ var app = builder.Build();
 
 if (!app.Environment.IsDevelopment())
 {
+    // Plain HTTP by design (ADR 0001, D9): no HSTS, no HTTPS redirect.
     app.UseExceptionHandler("/error", createScopeForErrors: true);
-    app.UseHsts();
 }
 
 app.UseResponseCompression();
@@ -55,7 +57,7 @@ app.UseAuthorization();
 app.UseAntiforgery();
 app.MapStaticAssets();
 
-// klark machines dial in here: `klark link --hub wss://<host>/agent --token <token>`.
+// klark machines dial in here: `klark link --hub ws://<host>:8080/agent --token <token>`.
 app.Map("/agent", async (HttpContext ctx, MachineRegistry registry, IOptionsMonitor<HubOptions> options) =>
 {
     if (!ctx.WebSockets.IsWebSocketRequest)

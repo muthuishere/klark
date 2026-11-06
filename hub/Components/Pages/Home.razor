@@ -13,7 +13,7 @@
 @if (Registry.Machines.Count == 0)
 {
     <p class="empty">No machines are linked yet. On a machine, run
-        <code>klark link --hub wss://&lt;this-host&gt;/agent --token &lt;token&gt;</code>.</p>
+        <code>klark link --hub ws://&lt;this-host&gt;:8080/agent --token &lt;token&gt;</code>.</p>
 }
 
 @foreach (var machine in Registry.Machines)

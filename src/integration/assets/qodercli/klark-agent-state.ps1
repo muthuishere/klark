@@ -1,0 +1,30 @@
+# installed by klark
+# managed by klark; reinstalling or updating the integration overwrites this file.
+# add custom hooks beside this file instead of editing it.
+# KLARK_INTEGRATION_ID=qodercli
+# KLARK_INTEGRATION_VERSION=4
+
+param([string]$Action = "")
+
+if ($Action -ne "session") { exit 0 }
+if ($env:KLARK_ENV -ne "1") { exit 0 }
+if ([string]::IsNullOrWhiteSpace($env:KLARK_PANE_ID)) { exit 0 }
+
+# Read hook input as raw bytes so UTF-8 payloads decode correctly even when the
+# console input code page is not UTF-8 (for example CP949 on Korean Windows).
+$stdinReader = New-Object System.IO.StreamReader([Console]::OpenStandardInput(), [System.Text.Encoding]::UTF8)
+$inputText = $stdinReader.ReadToEnd()
+try {
+    $payload = if ([string]::IsNullOrWhiteSpace($inputText)) { $null } else { $inputText | ConvertFrom-Json }
+} catch {
+    $payload = $null
+}
+
+if ($null -eq $payload -or [string]::IsNullOrWhiteSpace($payload.session_id)) { exit 0 }
+
+$seq = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+$klark = if ([string]::IsNullOrWhiteSpace($env:KLARK_BIN_PATH)) { "klark" } else { $env:KLARK_BIN_PATH }
+try {
+    & $klark pane report-agent-session $env:KLARK_PANE_ID --source klark:qodercli --agent qodercli --agent-session-id $payload.session_id --seq $seq 2>$null | Out-Null
+} catch {
+}

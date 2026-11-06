@@ -30,7 +30,9 @@ dotnet run
 ```
 
 Or with Docker: put your users and machine hashes in `hub/appsettings.Production.json`, then run `cd hub && docker compose up -d --build`.
-Put it behind TLS (any reverse proxy) so machines can use `wss://`.
+The hub is plain HTTP on port 8080; machines connect with `ws://`. Run it on a
+trusted network or VPN. Tokens and passwords cross the wire unencrypted, so for
+public exposure put a TLS proxy in front and use `wss://` (the link supports both).
 
 ## Storage
 
@@ -44,7 +46,7 @@ Writes are batched by one background writer, so disk never slows the machine soc
 ## Link a machine
 
 ```bash
-klark link --hub wss://hub.example.com/agent --token <machine token> [--name laptop]
+klark link --hub ws://hub-host:8080/agent --token <machine token> [--name laptop]
 # or KLARK_HUB_URL / KLARK_HUB_TOKEN / KLARK_MACHINE_NAME
 ```
 
