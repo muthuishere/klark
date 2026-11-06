@@ -59,6 +59,7 @@ fn link_serves_a_hub_lazily() {
         bin: "/nonexistent/klark".into(),
         uploads_dir: std::env::temp_dir().join("klark-link-e2e-uploads"),
         sessions: None,
+        agents: None,
     };
     thread::spawn(move || {
         let _ = klark_link::run_once(&config);

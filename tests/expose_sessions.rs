@@ -319,3 +319,175 @@ fn expose_serves_every_running_session() {
     assert!(res["error"].is_null(), "{res}");
     assert!(res.to_string().contains("EXPOSE_42_OK"), "{res}");
 }
+
+/// Start a stand-in agent (`cat` reached through a symlink named `claude`, as
+/// tests/msg_sessions.rs does) in a new pane and wait until klark detects it.
+fn fake_agent(env: &Env, socket: &Path) -> String {
+    let fake = env.base.join("bin").join("claude");
+    if !fake.exists() {
+        fs::create_dir_all(fake.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink("/bin/cat", &fake).unwrap();
+    }
+    let pane = new_pane(socket, &env.base);
+    call(
+        socket,
+        "pane.send_text",
+        json!({"pane_id": pane, "text": fake.display().to_string()}),
+    );
+    call(
+        socket,
+        "pane.send_keys",
+        json!({"pane_id": pane, "keys": ["Enter"]}),
+    );
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        let list = call(socket, "agent.list", json!({}));
+        if list["result"]["agents"]
+            .as_array()
+            .is_some_and(|a| a.iter().any(|a| a["pane_id"] == json!(pane)))
+        {
+            return pane;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "fake agent never detected: {list}"
+        );
+        thread::sleep(Duration::from_millis(100));
+    }
+}
+
+fn tree_panes(ws: &mut WebSocket<TcpStream>) -> Vec<String> {
+    send(ws, json!({"type": "get_tree"}));
+    let tree = until(ws, "tree", |m| match m {
+        In::Json(v) if v["type"] == "tree" => Some(v),
+        _ => None,
+    });
+    tree["snapshot"]["panes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|p| p["pane_id"].as_str().map(str::to_string))
+        .collect()
+}
+
+#[test]
+fn expose_agents_filter_shows_and_accepts_only_listed_agents() {
+    let mut env = Env::new();
+    env.spawn({
+        let mut c = env.cmd(None);
+        c.arg("server");
+        c
+    });
+    env.spawn({
+        let mut c = env.cmd(Some("work"));
+        c.arg("server");
+        c
+    });
+    let default = env.socket("default");
+    let work = env.socket("work");
+    let shell = new_pane(&default, &env.base);
+    let reviewer = fake_agent(&env, &default);
+    let builder = fake_agent(&env, &work);
+    for (sock, pane, name) in [
+        (&default, &reviewer, "reviewer"),
+        (&work, &builder, "builder"),
+    ] {
+        let r = call(sock, "agent.rename", json!({"target": pane, "name": name}));
+        assert!(r["error"].is_null(), "{r}");
+    }
+
+    let hub = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("ws://{}/agent", hub.local_addr().unwrap());
+    env.spawn({
+        let mut c = env.cmd(None);
+        // Case-insensitive; the type `claude` would have matched both.
+        c.args([
+            "expose", "--hub", &url, "--token", "t0ken", "--agents", "Reviewer",
+        ]);
+        c
+    });
+    let (stream, _) = hub.accept().unwrap();
+    let mut ws = tungstenite::accept(stream).unwrap();
+    ws.get_ref()
+        .set_read_timeout(Some(Duration::from_millis(200)))
+        .unwrap();
+    until(&mut ws, "hello", |m| match m {
+        In::Json(v) if v["type"] == "hello" => Some(()),
+        _ => None,
+    });
+
+    // Only the reviewer's pane: not the shell, not the builder in `work`.
+    let b_wire = format!("work/{builder}");
+    assert_eq!(tree_panes(&mut ws), vec![reviewer.clone()]);
+
+    // Input to the builder is refused, and never reaches it.
+    send(
+        &mut ws,
+        json!({"type": "input", "pane_id": b_wire, "text": "LEAK_CHECK"}),
+    );
+    let reason = until(&mut ws, "refusal", |m| match m {
+        In::Json(v) if v["type"] == "closed" && v["pane_id"] == json!(b_wire) => {
+            Some(v["reason"].as_str().unwrap_or_default().to_string())
+        }
+        _ => None,
+    });
+    assert!(
+        reason.contains("is not exposed") && reason.contains("Reviewer"),
+        "{reason}"
+    );
+    // Reads of hidden panes are refused too; session-wide reads are filtered.
+    for (id, method, params) in [
+        (
+            "r1",
+            "pane.read",
+            json!({"pane_id": shell, "source": "recent"}),
+        ),
+        ("r2", "pane.list", json!({})),
+    ] {
+        send(
+            &mut ws,
+            json!({"type": "call", "id": id, "method": method, "params": params}),
+        );
+        let res = until(&mut ws, "call result", |m| match m {
+            In::Json(v) if v["type"] == "result" && v["id"] == id => Some(v),
+            _ => None,
+        });
+        if id == "r1" {
+            assert!(
+                res["error"].as_str().unwrap().contains("is not exposed"),
+                "{res}"
+            );
+        } else {
+            assert!(res["error"].is_null(), "{res}");
+            assert!(!res.to_string().contains(&format!("\"{shell}\"")), "{res}");
+        }
+    }
+    send(&mut ws, json!({"type": "list_agents", "id": "a1"}));
+    let agents = until(&mut ws, "agent list", |m| match m {
+        In::Json(v) if v["type"] == "result" && v["id"] == "a1" => Some(v),
+        _ => None,
+    });
+    let names: Vec<&str> = agents["result"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{agents}"))
+        .iter()
+        .filter_map(|a| a["name"].as_str())
+        .collect();
+    assert_eq!(names, ["reviewer"], "{agents}");
+    thread::sleep(Duration::from_millis(300));
+    let read = call(
+        &work,
+        "pane.read",
+        json!({"pane_id": builder, "source": "recent", "lines": 40}),
+    );
+    assert!(!read.to_string().contains("LEAK_CHECK"), "{read}");
+
+    // Renaming the builder to a listed name exposes it on the next pull.
+    call(
+        &work,
+        "agent.rename",
+        json!({"target": builder, "name": "reviewer"}),
+    );
+    let panes = tree_panes(&mut ws);
+    assert!(panes.contains(&b_wire), "{panes:?}");
+}

@@ -1,6 +1,6 @@
 ---
 name: klark
-description: "Control Klark, a terminal multiplexer for coding agents. Use only when the user explicitly mentions Klark or asks to use Klark to inspect or control panes, tabs, workspaces, commands, or another agent. Do not use merely because a task could benefit from a background terminal, delegation, or parallel work. Requires KLARK_ENV=1."
+description: "Control Klark, a terminal multiplexer for coding agents: panes, tabs, workspaces, commands and agents; agents across klark sessions; messaging other agents (klark msg); exposing this machine or pane to a klark hub (klark expose, --agents, share links); offering files; the hub (login, chat/transcript view). Use when the user mentions Klark, or, running inside a Klark pane, says: share this, give me a link, expose, which agents are running, message/ask/tell another agent, reply to that agent, send a file / send this to my phone, hub. Do not use merely because a task could benefit from a background terminal, delegation, or parallel work. Requires KLARK_ENV=1."
 ---
 
 # Klark
@@ -16,6 +16,27 @@ test "${KLARK_ENV:-}" = 1
 If the check fails, say that you are not running inside Klark and stop. Do not inspect or control the focused Klark session from outside Klark.
 
 When the check passes, the `klark` binary in `PATH` talks to the current session. Use it to inspect neighboring work, create terminal layout, start agents and commands, read output, and wait for state changes.
+
+## I want to … → command
+
+| I want to … | command |
+|---|---|
+| see the panes / agents of this session | `klark pane list`, `klark agent list` |
+| see which agents are running in ALL sessions | `klark agent list -a` (JSON, `session` + `address`) or `klark msg ls` (table) |
+| start an agent next to me | `klark pane split --current --direction right --cwd "$PWD" --no-focus`, then `klark agent start <name> --kind <kind> --pane <id>` |
+| prompt an agent and wait | `klark agent prompt <target> "<text>" --wait --timeout 120000` |
+| read / wait on an agent in another session | `klark agent read work/coder --lines 40`, `klark agent wait work/coder --timeout 600000` |
+| know my own address | `klark msg whoami` → `laptop/work/reviewer` |
+| name myself | `klark msg name reviewer` |
+| message another agent (any session or machine) | `klark msg send work/coder "<text>"` |
+| answer a message I got | `klark msg reply "<text>"` |
+| see recent messages | `klark msg log` (`-n 50`, `--json`) |
+| share this pane ("share this", "give me a link") | `klark expose url` |
+| put this machine on a hub | `klark expose --hub <ws://host:8080/agent> --token <machine-token>` (owner only) |
+| expose only some agents | `klark expose … --agents reviewer,builder` (or `KLARK_EXPOSE_AGENTS`) |
+| send a file to the person / their phone | `klark offer <path>` |
+| reach agents on other machines | `klark msg login --hub http://hub.lan:8080 --user <name>` (a person types the password) |
+| check hub, token, sessions | `klark msg status` |
 
 ## Learn the current CLI
 
@@ -88,7 +109,7 @@ klark agent list
 
 Creation responses expose the IDs to use next. `workspace create` returns `.result.workspace`, `.result.tab`, and `.result.root_pane`. `tab create` returns `.result.tab` and `.result.root_pane`. `pane split` returns the new pane as `.result.pane`.
 
-Other klark sessions on this machine: `klark agent list -a` lists the agents of every running session, each with `session` and `address`. Agent TARGETs accept `session/agent` (e.g. `klark agent read work/reviewer`); a bare name missing from your session is looked up in the others. To message another agent, use the `klark-msg` skill.
+Other klark sessions on this machine: `klark agent list -a` lists the agents of every running session, each with `session` and `address`. Agent TARGETs accept `session/agent` (e.g. `klark agent read work/reviewer`); a bare name missing from your session is looked up in the others. To message another agent, use `klark msg send` (see "Agents across sessions and messaging" below).
 
 IDs and live agent names are scoped to one server. Two saved SSH machines can both have `w1:p1` or an agent named `reviewer`. Selecting a machine in the TUI does not retarget commands running in your pane: without `--machine`, they still use the inherited session and socket context.
 
@@ -203,7 +224,97 @@ Use `--format ansi` when colors and terminal styling are evidence. Otherwise use
 
 If a larger recent read still does not reveal the completed response, ask the agent to write it as Markdown in a temporary directory and reply only with the file path, then read that file on the same machine. Use this only as a fallback; do not request file output in the initial prompt.
 
+## Agents across sessions and messaging
+
+Every agent has an address `<machine>/<session>/<agent>` (`laptop/work/reviewer`). `agent` is its name, or its pane id (`w1:p1`) if it has none. On this machine the short forms `work/reviewer` and `reviewer` work too.
+
+Every `klark agent` TARGET (`get read prompt send-keys wait focus rename`) accepts `session/agent` and `machine/session/agent` for this machine. A bare name is looked up in your own session first, then in the other running sessions. `klark agent attach` stays in one session. `klark session list` shows sessions.
+
+`klark msg send` vs `klark agent prompt`: `msg send` tags the text with your address, logs it, offers a reply hint and crosses machines; `agent prompt` types raw text into a local agent. To ask another agent something, use `msg send`. The other agent sees:
+
+```
+[klark msg from laptop/default/reviewer] Run the tests in crates/x; reply with failing names.
+(reply: klark msg reply "<text>")
+```
+
+Answer with `klark msg reply "<text>"`; it goes to whoever last messaged your pane. Options go before the address (`klark msg send --json work/coder <text...>`); everything after the address is the message, verbatim. In `klark msg ls`, STATUS `-` means klark cannot classify that agent's screen.
+
+Ask, then wait:
+
+```bash
+klark msg send work/coder "Fix the failing test in src/a.rs; reply 'done' or the blocker."
+klark agent wait work/coder --timeout 900000
+klark agent read work/coder --lines 30
+```
+
+Etiquette: one ask per message, say what you need back and in what form, include paths/branch/PR the other agent cannot see. Check `klark msg ls` first: don't message a `blocked` agent (it waits on a person) and don't resend while it is `working`. No "thanks"/"ok" messages; every message interrupts a turn.
+
+## Exposing and sharing ("share this")
+
+`klark expose` dials out to a klark hub (no inbound port) and serves this machine: by default every pane of every running session; panes stream only while someone on the hub watches them. Don't start it yourself unless the owner asks: it puts the machine on the hub.
+
+```bash
+klark expose --hub ws://hub.lan:8080/agent --token "$KLARK_HUB_TOKEN"            # everything
+klark expose --hub ws://hub.lan:8080/agent --token "$KLARK_HUB_TOKEN" --agents reviewer,builder
+klark expose … --agent reviewer --agent work/builder                             # repeatable
+KLARK_EXPOSE_AGENTS=claude klark expose …                                         # every claude
+```
+
+It prints `klark expose: exposing agents: reviewer, builder (all sessions)` or `klark expose: exposing everything (every pane of every session)`. `--agents` entries are case-insensitive: `session/name` matches that named agent (or pane id) in that session; a bare `x` matches agents NAMED `x` in any session, and only if no running agent is named `x` does it match the agent type (`claude`, `devin`, `codex`). A name beats a type. The list is re-checked on every hub pull: an agent that starts later or is renamed to a listed name appears; one that exits disappears. Everything else is hidden from the tree and agent list, and input, reads, transcripts, files and messages to it are refused.
+
+When the person says "share this" / "give me a link" / "open this on my phone", print your pane's link and hand it over as-is:
+
+```bash
+klark expose url
+# http://hub.lan:8080/go?machine=laptop&pane=w1%3Ap1
+```
+
+Options: `--pane <id>` (default `KLARK_PANE_ID`), `--hub <url>` (default `KLARK_HUB_URL`), `--name <machine>` (default `KLARK_MACHINE_NAME`, else the hostname), `--agents` (default `KLARK_EXPOSE_AGENTS`; pass the same list the running `klark expose` uses so an unexposed pane is caught). The URL is built locally; nothing is sent. Share only your own pane unless the person names another.
+
+## Files
+
+```bash
+klark offer ./report.pdf            # appears on this pane's hub page as a download/image
+klark offer out.png --pane w1:p2    # another pane; defaults to KLARK_PANE_ID
+klark offer .env --force            # credential-looking paths are refused without --force
+```
+
+Needs `klark expose` running with a hub (`KLARK_HUB_URL`, `KLARK_HUB_TOKEN`). Max 100 MB. Images or files the person uploads on the hub arrive in your pane as a prompt `[image from <user>] <path>`; read the file at that path.
+
+## The hub
+
+- The person signs in to the hub and lands on the pane; access follows hub groups, and a read-only user can watch but not type.
+- A pane page has two tabs: **Terminal** (the live screen at the pane's real size) and **Transcript** (a cleaned, chat-style view of the conversation; phones open it by default). They can type replies and upload images there.
+- Cross-machine messages need a hub login: `klark msg login --hub <url> --user <name>` (the person types the password, or `--password-stdin`); `klark msg logout` forgets the token; `klark msg status` shows hub, token expiry and running sessions.
+- Nothing streams until someone opens a page; it stops when they leave.
+
+## When it fails
+
+| it prints | fix |
+|---|---|
+| `klark msg: no agent X in any running session on this machine (see: klark msg ls)` | Wrong name, or its session is stopped. `klark msg ls`, `klark session list`. |
+| `klark msg: no agent X in session S on this machine (see: klark msg ls)` | Same, for a `session/agent` address. |
+| `X is ambiguous; use one of: work/w1:p1, ops/w1:p1` | Use the `session/agent` form from the list. |
+| `agent target X not found in session S, nor in any other running session (see: klark agent list -a)` | `klark agent list -a` for real names. |
+| `agent target X is not in this session and is ambiguous across sessions; use one of: …` | Use a full address from the list. |
+| `session S is not running (see: klark session list)` | Typo, or the session is stopped. |
+| `M/S/A: machine M is not this machine (H); klark agent reaches sessions on this machine only. To message it via the hub: klark msg send M/S/A "<text>"` | `klark agent` is local only; use `klark msg send`. |
+| ``klark msg: no hub configured: run `klark msg login --hub <url> --user <name>` or set KLARK_HUB_URL`` | Cross-machine needs a hub; ask the owner to log in. |
+| `m/s/a: no such agent (agent_not_found)` | The hub reached that machine; no such agent there. |
+| `m/s/a: hub refused: …` | Machine offline/not linked, not exposed by its `--agents`, or no permission to type into it. |
+| `nobody has messaged this pane yet; use klark msg send <to> <text>` | Nothing to reply to; use `send`. |
+| `klark msg: reply works inside a klark pane (KLARK_PANE_ID is not set)` | `reply` and `name` only work from inside a pane. |
+| `no hub configured: pass --hub or set KLARK_HUB_URL` (`klark expose url`) | This machine has no hub. Tell the person; don't guess a URL. |
+| `no pane: run this inside a klark pane or pass --pane <pane-id>` | Ask which pane, then `--pane <id>`. |
+| `pane P is not exposed: klark expose shares only agents L (--agents / KLARK_EXPOSE_AGENTS); add this agent's name or type to --agents and restart klark expose` | Your pane is filtered out; tell the owner, or `klark msg name` yourself to a listed name. |
+| `bad --agents entry "a/b/c": use <name>, <agent-type> or <session>/<name>` | Fix the `--agents` list. |
+| hub shows `… is not exposed: this machine exposes only agents L (klark expose --agents)` | The pane/agent is outside the running expose's `--agents`. |
+| `klark offer: P looks like a credential; refusing to offer it (pass --force if you are sure)` | Don't offer secrets; `--force` only if the person insists it is safe. |
+| the hub page says the machine is not linked | `klark expose` isn't running, or uses another name: retry `klark expose url --name <name>`. |
+
 ## Safety and coordination rules
+
+- Never print, paste or log a token (`KLARK_HUB_TOKEN`, `KLARK_HUB_JWT`, `hub.json`). Never ask for a password in a message or put one on a command line. The hub may be plain HTTP: no secrets in messages or offered files.
 
 - Use `--no-focus` for background work unless the user asked to switch context.
 - Use `--current`, an explicit pane ID, or a unique agent name. Do not rely on another client's focused pane.

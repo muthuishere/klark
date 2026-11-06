@@ -26,7 +26,7 @@ machines and many users share.
 |---|---|---|
 | socket client, terminal observe | `crates/klark-link` | done (D-04) |
 | web UI | the hub | done (not yet compiled) |
-| `share` + skill ("share this" → link) | `klark link url` + `skills/klark-share`, hub `/go` | done (D-24) |
+| `share` + skill ("share this" → link) | `klark link url` + `skills/klark` ("share this"; was `skills/klark-share`), hub `/go` | done (D-24) |
 | scoped, time-boxed, pairing-gated guest links, QR codes | hub guest links | S-24 |
 | agents messaging agents across machines | messaging through the hub | S-25 (needs its own ADR: machine-initiated, an exception to ADR 0002) |
 | `panic` | hub admin: disconnect / revoke a machine | S-26 |

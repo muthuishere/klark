@@ -8,7 +8,7 @@ An agent running in one klark pane should be able to send a message to another
 agent: in the same session, in another klark session on the same machine, or
 on another machine linked to the same hub. The receiving agent sees the
 message as a prompt and can reply the same way. The `klark msg` CLI does this,
-and so does the `klark-msg` skill, which wraps the CLI.
+and so does the `klark` skill (`skills/klark`, formerly the separate `klark-msg` skill), which wraps the CLI.
 
 ## Addresses
 `<machine>/<session>/<agent>`:

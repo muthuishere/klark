@@ -6,6 +6,7 @@
 //! subscribes to, and reads only when asked.
 
 pub mod assets;
+pub mod filter;
 pub mod http;
 pub mod protocol;
 pub mod sessions;
@@ -24,6 +25,7 @@ use tungstenite::http::HeaderValue;
 use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{Message, WebSocket};
 
+use filter::{AgentFilter, AgentInfo};
 use protocol::{call_allowed, AgentMessage, HubMessage, PROTOCOL_VERSION};
 use sessions::{decode_id, SessionSource, DEFAULT_SESSION};
 use upstream::{MsgReply, Observer, Upstream};
@@ -53,6 +55,9 @@ pub struct LinkConfig {
     /// namespaced `<session>/<id>` (see `sessions`). `None` exposes only
     /// `socket`, as before.
     pub sessions: Option<SessionSource>,
+    /// `--agents`: expose only the panes running these agents (see `filter`).
+    /// `None` exposes every pane, as before.
+    pub agents: Option<AgentFilter>,
 }
 
 /// Connect to the hub and serve it forever, reconnecting with backoff.
@@ -145,6 +150,7 @@ pub fn run_once(config: &LinkConfig) -> Result<(), String> {
     let upstream = Upstream::new(config.socket.clone(), config.bin.clone());
     let mut session = Session::new(upstream);
     session.sessions = config.sessions.clone();
+    session.agents = config.agents.clone();
     session.assets = Some(AssetTarget {
         hub_base: http::hub_http_base(&config.hub_url)?,
         token: config.token.clone(),
@@ -326,7 +332,15 @@ pub struct Session {
     pub sessions: Option<SessionSource>,
     /// Upstreams of non-default sessions, resolved lazily and dropped on error.
     others: HashMap<String, Upstream>,
+    /// `--agents`; `None` exposes everything.
+    pub agents: Option<AgentFilter>,
+    /// Every agent with whether it is exposed, and when that was computed.
+    exposure: Option<(Instant, Vec<(AgentInfo, bool)>)>,
 }
+
+/// How long an exposure decision is reused for input and reads. A miss always
+/// recomputes, so an agent that just started is never refused for long.
+const EXPOSURE_TTL: Duration = Duration::from_secs(2);
 
 impl Session {
     pub fn new(upstream: Upstream) -> Self {
@@ -339,6 +353,8 @@ impl Session {
             assets: None,
             sessions: None,
             others: HashMap::new(),
+            agents: None,
+            exposure: None,
         }
     }
 
@@ -385,6 +401,9 @@ impl Session {
     }
 
     pub fn handle(&mut self, msg: HubMessage) -> Vec<AgentMessage> {
+        if let Some(refused) = self.refuse(&msg) {
+            return refused;
+        }
         match msg {
             HubMessage::Subscribe { pane_id } => {
                 if self.observers.contains_key(&pane_id) {
@@ -423,7 +442,7 @@ impl Session {
             HubMessage::Call { id, method, params } => {
                 let (result, error) = if call_allowed(&method) {
                     match sessions::route_params(&params)
-                        .and_then(|(session, params)| self.call_in(&session, &method, params))
+                        .and_then(|(session, params)| self.filtered_call(&session, &method, params))
                     {
                         Ok(v) => (Some(v), None),
                         Err(e) => (None, Some(e)),
@@ -439,12 +458,31 @@ impl Session {
             // remote delivery share one code path. Answered asynchronously
             // through the frames channel, so a slow pane never stalls the link.
             HubMessage::ListAgents { id } => {
-                self.upstream.run_msg(
-                    id,
-                    vec!["msg".into(), "ls".into(), "--local".into(), "--json".into()],
-                    MsgReply::Json,
-                    self.frames_tx.clone(),
-                );
+                let args = vec!["msg".into(), "ls".into(), "--local".into(), "--json".into()];
+                match self.agents.clone() {
+                    None => self
+                        .upstream
+                        .run_msg(id, args, MsgReply::Json, self.frames_tx.clone()),
+                    Some(filter) => {
+                        // Answer through a relay that drops unexposed agents.
+                        let (tx, rx) = mpsc::channel();
+                        self.upstream.run_msg(id, args, MsgReply::Json, tx);
+                        let out = self.frames_tx.clone();
+                        let _ = std::thread::Builder::new()
+                            .name("klark-link-agents".into())
+                            .spawn(move || {
+                                if let Ok(mut msg) = rx.recv() {
+                                    if let AgentMessage::Result {
+                                        result: Some(r), ..
+                                    } = &mut msg
+                                    {
+                                        *r = filter_agent_list(&filter, r);
+                                    }
+                                    let _ = out.send(msg);
+                                }
+                            });
+                    }
+                }
                 vec![]
             }
             HubMessage::Deliver {
@@ -547,6 +585,181 @@ impl Session {
         }
     }
 
+    /// The refusal for a message that addresses a pane or agent `--agents`
+    /// does not expose; `None` lets it through.
+    fn refuse(&mut self, msg: &HubMessage) -> Option<Vec<AgentMessage>> {
+        self.agents.as_ref()?;
+        let answer = |id: &str, what: String, me: &Self| {
+            vec![AgentMessage::Result {
+                id: id.to_string(),
+                result: None,
+                error: Some(me.not_exposed(&what)),
+            }]
+        };
+        match msg {
+            HubMessage::Subscribe { pane_id }
+            | HubMessage::Input { pane_id, .. }
+            | HubMessage::Keys { pane_id, .. } => {
+                let (s, l) = decode_id(pane_id);
+                (!self.exposed(s, l)).then(|| {
+                    let reason = self.not_exposed(&format!("pane {pane_id}"));
+                    eprintln!("klark expose: refused: {reason}");
+                    vec![AgentMessage::Closed {
+                        pane_id: pane_id.clone(),
+                        reason,
+                    }]
+                })
+            }
+            HubMessage::GetTranscript { id, pane_id, .. }
+            | HubMessage::FetchAsset { id, pane_id, .. } => {
+                let (s, l) = decode_id(pane_id);
+                (!self.exposed(s, l)).then(|| answer(id, format!("pane {pane_id}"), self))
+            }
+            HubMessage::Deliver {
+                id, session, agent, ..
+            } => (!self.exposed(session, agent))
+                .then(|| answer(id, format!("agent {session}/{agent}"), self)),
+            HubMessage::Call { id, params, .. } => {
+                let (session, params) = sessions::route_params(params).ok()?;
+                let target = ["pane_id", "target"]
+                    .iter()
+                    .find_map(|k| params.get(*k).and_then(Value::as_str))?
+                    .to_string();
+                (!self.exposed(&session, &target)).then(|| {
+                    let wire = sessions::encode_id(&session, &target);
+                    answer(id, format!("pane {wire}"), self)
+                })
+            }
+            _ => None,
+        }
+    }
+
+    fn not_exposed(&self, what: &str) -> String {
+        let only = self
+            .agents
+            .as_ref()
+            .map(AgentFilter::describe)
+            .unwrap_or_default();
+        format!(
+            "{what} is not exposed: this machine exposes only agents {only} (klark expose --agents)"
+        )
+    }
+
+    /// Every agent of every running session (`agent.list`).
+    fn agent_infos(&mut self) -> Vec<AgentInfo> {
+        let mut names = vec![DEFAULT_SESSION.to_string()];
+        if let Some(src) = &self.sessions {
+            let mut others: Vec<String> = src
+                .running()
+                .into_iter()
+                .map(|(n, _)| n)
+                .filter(|n| n != DEFAULT_SESSION && sessions::valid_session(n))
+                .collect();
+            others.sort();
+            names.extend(others);
+        }
+        let mut out = Vec::new();
+        for name in names {
+            let Ok(up) = self.upstream_for(&name) else {
+                continue;
+            };
+            match up.call("agent.list", json!({})) {
+                Ok(list) => out.extend(
+                    list.get("agents")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|a| AgentInfo::from_json(&name, a))
+                        .map(|mut a| {
+                            a.session = name.clone();
+                            a
+                        }),
+                ),
+                Err(_) => self.forget(&name),
+            }
+        }
+        out
+    }
+
+    /// Recompute which agents are exposed (no-op without `--agents`).
+    fn refresh_exposure(&mut self) {
+        let Some(filter) = self.agents.clone() else {
+            return;
+        };
+        let infos = self.agent_infos();
+        let on = filter.exposed(&infos);
+        self.exposure = Some((Instant::now(), infos.into_iter().zip(on).collect()));
+    }
+
+    /// Whether `id` (a local pane id, or an agent name) in `session` is an
+    /// exposed agent. A stale answer, or a miss, is recomputed once.
+    fn exposed(&mut self, session: &str, id: &str) -> bool {
+        if self.agents.is_none() {
+            return true;
+        }
+        let check = |me: &Self| {
+            me.exposure.as_ref().is_some_and(|(_, all)| {
+                all.iter().any(|(a, on)| {
+                    *on && a.session == session
+                        && (a.pane_id == id
+                            || a.name
+                                .as_deref()
+                                .is_some_and(|n| n.eq_ignore_ascii_case(id)))
+                })
+            })
+        };
+        let fresh = self
+            .exposure
+            .as_ref()
+            .is_some_and(|(at, _)| at.elapsed() < EXPOSURE_TTL);
+        if fresh && check(self) {
+            return true;
+        }
+        self.refresh_exposure();
+        check(self)
+    }
+
+    /// A session's snapshot cut down to its exposed panes (unchanged without
+    /// `--agents`), by the exposure last computed.
+    fn filter_session_snapshot(&self, session: &str, snapshot: &Value) -> Value {
+        let Some((_, all)) = self.exposure.as_ref().filter(|_| self.agents.is_some()) else {
+            return snapshot.clone();
+        };
+        let keep: std::collections::HashSet<&str> = all
+            .iter()
+            .filter(|(a, on)| *on && a.session == session)
+            .map(|(a, _)| a.pane_id.as_str())
+            .collect();
+        filter::filter_snapshot(snapshot, &|p| keep.contains(p))
+    }
+
+    /// A hub `call`; with `--agents`, the session-wide reads return only what
+    /// is exposed (pane-addressed calls were already checked by `refuse`).
+    fn filtered_call(
+        &mut self,
+        session: &str,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, String> {
+        let out = self.call_in(session, method, params)?;
+        if self.agents.is_none() {
+            return Ok(out);
+        }
+        match method {
+            "session.snapshot" => {
+                self.refresh_exposure();
+                Ok(self.filter_session_snapshot(session, &out))
+            }
+            "workspace.list" | "tab.list" | "pane.list" => {
+                self.refresh_exposure();
+                let snap = self.call_in(session, "session.snapshot", Value::Null)?;
+                let kept = self.filter_session_snapshot(session, &snap);
+                Ok(filter::filter_list_result(&out, &kept))
+            }
+            _ => Ok(out),
+        }
+    }
+
     fn fire(&mut self, session: &str, method: &str, params: Value) -> Vec<AgentMessage> {
         if let Err(e) = self.call_in(session, method, params) {
             eprintln!("klark expose: {e}");
@@ -600,7 +813,11 @@ impl Session {
     /// pull simply appear or disappear. Without other sessions the default
     /// snapshot goes out unchanged, exactly as before.
     fn snapshot_all(&mut self) -> Value {
-        let default = self.upstream.snapshot();
+        self.refresh_exposure();
+        let default = self
+            .upstream
+            .snapshot()
+            .map(|s| self.filter_session_snapshot(DEFAULT_SESSION, &s));
         let mut running: Vec<(String, PathBuf)> = self
             .sessions
             .as_ref()
@@ -631,7 +848,10 @@ impl Session {
                 .or_insert_with(|| Upstream::new(socket, bin.clone()).for_session(&name))
                 .clone();
             match up.snapshot() {
-                Ok(s) => parts.push((name, s)),
+                Ok(s) => {
+                    let s = self.filter_session_snapshot(&name, &s);
+                    parts.push((name, s))
+                }
                 Err(e) => {
                     eprintln!("klark expose: snapshot {name}: {e}");
                     self.others.remove(&name);
@@ -640,6 +860,28 @@ impl Session {
         }
         sessions::merge_snapshots(&parts)
     }
+}
+
+/// A `msg ls --local --json` answer cut down to the exposed agents.
+pub fn filter_agent_list(filter: &AgentFilter, list: &Value) -> Value {
+    let Some(items) = list.as_array() else {
+        return list.clone();
+    };
+    let infos: Vec<AgentInfo> = items
+        .iter()
+        .filter_map(|v| AgentInfo::from_json(DEFAULT_SESSION, v))
+        .collect();
+    let exposed = filter.exposed_panes(&infos);
+    Value::Array(
+        items
+            .iter()
+            .filter(|v| {
+                AgentInfo::from_json(DEFAULT_SESSION, v)
+                    .is_some_and(|a| exposed.contains(&(a.session, a.pane_id)))
+            })
+            .cloned()
+            .collect(),
+    )
 }
 
 /// `klark msg deliver` arguments for a hub `deliver` (ADR 0009). `--` keeps a

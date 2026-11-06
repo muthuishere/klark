@@ -4,17 +4,21 @@
 //! while someone on the hub is looking at them. See crates/klark-link.
 //!
 //! `klark expose url` prints the hub link for a pane: what an agent hands back
-//! when someone says "share this" (skills/klark-share, ADR 0008).
+//! when someone says "share this" (skills/klark, ADR 0008).
 
-const USAGE: &str = "usage: klark expose --hub <ws://hub-host:8080/agent> --token <machine-token> [--name <machine-name>]
-       klark expose url [--pane <pane-id>] [--hub <url>] [--name <machine-name>]
-       (or set KLARK_HUB_URL / KLARK_HUB_TOKEN / KLARK_MACHINE_NAME; --pane defaults to KLARK_PANE_ID)";
+const USAGE: &str = "usage: klark expose --hub <ws://hub-host:8080/agent> --token <machine-token> [--name <machine-name>] [--agents <name>[,<name>...]]
+       klark expose url [--pane <pane-id>] [--hub <url>] [--name <machine-name>] [--agents <name>[,<name>...]]
+       (or set KLARK_HUB_URL / KLARK_HUB_TOKEN / KLARK_MACHINE_NAME / KLARK_EXPOSE_AGENTS; --pane defaults to KLARK_PANE_ID)
+       --agents (or repeated --agent) exposes only panes running those agents: an agent name, <session>/<name>,
+       or an agent type such as claude (a name beats a type); case-insensitive. Default: every pane of every session.";
 
 struct Options {
     hub: Option<String>,
     token: Option<String>,
     name: Option<String>,
     pane: Option<String>,
+    /// `--agents` / `--agent` values; `None` when neither was given.
+    agents: Option<Vec<String>>,
 }
 
 fn parse(args: &[String], allow_pane: bool) -> Options {
@@ -23,9 +27,20 @@ fn parse(args: &[String], allow_pane: bool) -> Options {
         token: std::env::var("KLARK_HUB_TOKEN").ok(),
         name: std::env::var("KLARK_MACHINE_NAME").ok(),
         pane: std::env::var("KLARK_PANE_ID").ok(),
+        agents: None,
     };
     let mut it = args.iter();
     while let Some(arg) = it.next() {
+        if matches!(arg.as_str(), "--agents" | "--agent") {
+            match it.next() {
+                Some(v) => o.agents.get_or_insert_with(Vec::new).push(v.clone()),
+                None => {
+                    eprintln!("{arg} needs a value\n{USAGE}");
+                    std::process::exit(2);
+                }
+            }
+            continue;
+        }
         let slot = match arg.as_str() {
             "--hub" => &mut o.hub,
             "--token" => &mut o.token,
@@ -51,15 +66,57 @@ fn parse(args: &[String], allow_pane: bool) -> Options {
     o
 }
 
+/// `--agents` (flags win over KLARK_EXPOSE_AGENTS); `None` exposes everything.
+fn agent_filter(o: &Options) -> Option<klark_link::filter::AgentFilter> {
+    let values = o
+        .agents
+        .clone()
+        .or_else(|| std::env::var("KLARK_EXPOSE_AGENTS").ok().map(|v| vec![v]))
+        .unwrap_or_default();
+    match klark_link::filter::AgentFilter::parse(&values) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("{e}\n{USAGE}");
+            std::process::exit(2);
+        }
+    }
+}
+
+/// What the startup line says is exposed.
+fn exposing_line(filter: Option<&klark_link::filter::AgentFilter>) -> String {
+    match filter {
+        Some(f) => format!(
+            "klark expose: exposing agents: {} (all sessions)",
+            f.describe()
+        ),
+        None => "klark expose: exposing everything (every pane of every session)".to_string(),
+    }
+}
+
+/// Every local agent as the link's filter sees it.
+fn local_agent_infos(machine: &str) -> Vec<klark_link::filter::AgentInfo> {
+    crate::agent_index::local_agents(machine)
+        .into_iter()
+        .map(|a| klark_link::filter::AgentInfo {
+            session: a.session,
+            pane_id: a.pane_id,
+            name: a.name,
+            kind: a.agent,
+        })
+        .collect()
+}
+
 pub fn run(args: &[String]) -> ! {
     if args.first().map(String::as_str) == Some("url") {
         print_url(&args[1..]);
     }
     let o = parse(args, false);
-    let (Some(hub_url), Some(token)) = (o.hub, o.token) else {
+    let (Some(hub_url), Some(token)) = (o.hub.clone(), o.token.clone()) else {
         eprintln!("{USAGE}");
         std::process::exit(2);
     };
+    let agents = agent_filter(&o);
+    eprintln!("{}", exposing_line(agents.as_ref()));
     let machine_name = o.name.unwrap_or_else(hostname);
     let bin = std::env::current_exe().unwrap_or_else(|_| "klark".into());
     klark_link::run(klark_link::LinkConfig {
@@ -82,6 +139,7 @@ pub fn run(args: &[String]) -> ! {
                 })
                 .collect()
         })),
+        agents,
     })
 }
 
@@ -97,16 +155,29 @@ fn default_socket() -> std::path::PathBuf {
 
 fn print_url(args: &[String]) -> ! {
     let o = parse(args, true);
-    let Some(hub_url) = o.hub else {
+    let Some(hub_url) = o.hub.clone() else {
         eprintln!("no hub configured: pass --hub or set KLARK_HUB_URL\n{USAGE}");
         std::process::exit(2);
     };
-    let Some(pane) = o.pane.filter(|p| !p.is_empty()) else {
+    let Some(pane) = o.pane.clone().filter(|p| !p.is_empty()) else {
         eprintln!("no pane: run this inside a klark pane or pass --pane <pane-id>");
         std::process::exit(2);
     };
+    let filter = agent_filter(&o);
     let machine_name = o.name.unwrap_or_else(hostname);
     let pane = wire_pane_id(crate::session::active_name().as_deref(), &pane);
+    if let Some(filter) = &filter {
+        let (session, local) = klark_link::sessions::decode_id(&pane);
+        let exposed = filter.exposed_panes(&local_agent_infos(&machine_name));
+        if !exposed.contains(&(session.to_string(), local.to_string())) {
+            eprintln!(
+                "pane {pane} is not exposed: klark expose shares only agents {} (--agents / KLARK_EXPOSE_AGENTS); \
+                 add this agent's name or type to --agents and restart klark expose",
+                filter.describe()
+            );
+            std::process::exit(2);
+        }
+    }
     match klark_link::pane_url(&hub_url, &machine_name, &pane) {
         Ok(url) => {
             println!("{url}");
@@ -162,6 +233,19 @@ fn os_hostname() -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn startup_line_names_what_is_exposed() {
+        let f = klark_link::filter::AgentFilter::parse(&["reviewer,builder"]).unwrap();
+        assert_eq!(
+            super::exposing_line(f.as_ref()),
+            "klark expose: exposing agents: reviewer, builder (all sessions)"
+        );
+        assert_eq!(
+            super::exposing_line(None),
+            "klark expose: exposing everything (every pane of every session)"
+        );
+    }
+
     #[test]
     fn url_pane_id_is_namespaced_outside_the_default_session() {
         assert_eq!(super::wire_pane_id(None, "p1"), "p1");

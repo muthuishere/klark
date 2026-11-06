@@ -71,8 +71,8 @@ through the pane view in a browser (S-03).
 | `hub/Services/Directory.cs` | sign-in: MockLdap / Ldap / Local |
 | `hub/Services/HubAccess.cs` | who sees and who may type |
 | `hub/Components/Pages/` | Home (machines), PaneView (live terminal, transcript), Go (share links), Login |
-| `skills/klark-share/SKILL.md` | "share this" → `klark expose url` |
-| `src/msg_cmd.rs`, `skills/klark-msg/SKILL.md` | `klark msg`: agents messaging agents (ADR 0009) |
+| `skills/klark/SKILL.md` | the one agent skill: klark control, agents across sessions, `klark msg`, "share this" → `klark expose url`, `--agents`, `klark offer`, hub (installed by `klark` itself, bundled via `include_str!`) |
+| `src/msg_cmd.rs` | `klark msg`: agents messaging agents (ADR 0009) |
 | `hub/Services/Messaging.cs`, `ApiAuth.cs` | hub message routing, JWTs and machine-token API auth |
 | `experiments/` | `mockhub.py` and `drive.py` behind the experiments |
 
