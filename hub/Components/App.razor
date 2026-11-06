@@ -2,17 +2,23 @@
 <html lang="en">
 <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <base href="/" />
     <title>klark hub</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@@xterm/xterm@5.5.0/css/xterm.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#0d1117" />
+    <link rel="stylesheet" href="@Assets["lib/xterm.css"]" />
+    <link rel="stylesheet" href="@Assets["lib/highlight-github-dark.min.css"]" />
     <link rel="stylesheet" href="@Assets["app.css"]" />
     <HeadOutlet />
 </head>
 <body>
     <Routes />
-    <script src="https://cdn.jsdelivr.net/npm/@@xterm/xterm@5.5.0/lib/xterm.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@@xterm/addon-fit@0.10.0/lib/addon-fit.js"></script>
+    @* Bundled, pinned copies (ADR 0011, C): the hub works offline on a LAN. *@
+    <script src="@Assets["lib/xterm.js"]"></script>
+    <script src="@Assets["lib/addon-unicode11.js"]"></script>
+    <script src="@Assets["lib/addon-web-links.js"]"></script>
+    <script src="@Assets["lib/highlight.min.js"]"></script>
+    <script src="@Assets["chat.js"]"></script>
     <script src="@Assets["terminal.js"]"></script>
     <script src="_framework/blazor.web.js"></script>
 </body>

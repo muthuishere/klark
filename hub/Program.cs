@@ -42,6 +42,10 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<HubStore>());
 builder.Services.AddSingleton<MachineRegistry>();
 builder.Services.AddSingleton<JwtIssuer>();
 builder.Services.AddSingleton<Messaging>();
+builder.Services.AddSingleton<IAssetStore, FileAssetStore>();
+builder.Services.AddSingleton<AssetService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<AssetService>());
+builder.Services.AddSingleton<TranscriptFeeds>();
 builder.Services.AddSingleton<IPostConfigureOptions<JwtBearerOptions>, JwtBearerSetup>();
 builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower);
 // Keep cookie/antiforgery keys on the data volume, so a redeploy does not sign everyone out.
@@ -207,6 +211,82 @@ api.MapGet("/messages", async (HttpContext ctx, Messaging messaging, int? limit)
     {
         id = m.Id, ts = m.Ts, from = m.From, to = m.To, text = m.Text, sender = m.Sender, ok = m.Ok, error = m.Error,
     }));
+
+// ---- assets (ADR 0011) ------------------------------------------------------
+
+// A person sends an image to a pane's agent: the pane page's upload, and the
+// same path for scripts (`curl -H "Authorization: Bearer <jwt>" --data-binary @x.png`).
+api.MapPost("/panes/{machine}/{pane}/images", async (HttpContext ctx, string machine, string pane, string? name,
+    string? caption, AssetService assets) =>
+{
+    if (ApiAuth.MachineOf(ctx.User) is not null) return Results.Json(new { error = "machines offer files with PUT /api/assets" }, statusCode: 403);
+    SendAssetOutcome r;
+    try { r = await assets.SendToAgentAsync(ctx.User, machine, pane, ctx.Request.Body, name, caption, ctx.RequestAborted); }
+    catch (Microsoft.AspNetCore.Http.BadHttpRequestException e) when (e.StatusCode == 413)
+    {
+        r = new SendAssetOutcome(413, null, null, $"image is larger than {assets.Options.MaxImageBytes} bytes");
+    }
+    return Results.Json(new { sha256 = r.Asset?.Sha256, size = r.Asset?.Size, mime = r.Asset?.Mime, path = r.Path, error = r.Error },
+        statusCode: r.Status);
+}).DisableAntiforgery();
+
+// A machine fetches an image addressed to it (fetch_asset).
+api.MapGet("/assets/{sha256}", (HttpContext ctx, string sha256, AssetService assets) =>
+{
+    var me = ApiAuth.MachineOf(ctx.User);
+    if (me is null) return Results.Json(new { error = "machine token required; people use /assets/<sha256>" }, statusCode: 403);
+    var asset = assets.Find(sha256, a => a.Machine == me && a.Direction == "to_agent");
+    return asset is null
+        ? Results.Json(new { error = "no such asset for this machine" }, statusCode: 403)
+        : ServeAsset(ctx, asset, assets);
+});
+
+// A machine offers a file for one of its panes (`klark offer`).
+api.MapPut("/assets", async (HttpContext ctx, string? pane, string? name, AssetService assets) =>
+{
+    var me = ApiAuth.MachineOf(ctx.User);
+    if (me is null) return Results.Json(new { error = "machine token required" }, statusCode: 403);
+    if (string.IsNullOrWhiteSpace(pane)) return Results.Json(new { error = "pane is required" }, statusCode: 400);
+    var max = assets.Options.MaxFileBytes;
+    if (ctx.Request.ContentLength > max) return Results.Json(new { error = $"file is larger than {max} bytes" }, statusCode: 413);
+    if (ctx.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } limit)
+        limit.MaxRequestBodySize = max + 1024 * 1024; // the store's own cap answers first
+    int status;
+    Asset? asset;
+    string? error;
+    try { (status, asset, error) = await assets.OfferAsync(me, pane, name, ctx.Request.Body, ctx.RequestAborted); }
+    catch (Microsoft.AspNetCore.Http.BadHttpRequestException e) when (e.StatusCode == 413)
+    {
+        (status, asset, error) = (413, null, $"file is larger than {max} bytes");
+    }
+    return asset is null
+        ? Results.Json(new { error }, statusCode: status)
+        : Results.Ok(new { sha256 = asset.Sha256, size = asset.Size, mime = asset.Mime, url = asset.Url });
+}).DisableAntiforgery();
+
+// People read an asset with their cookie or a JWT, if they may see its machine.
+app.MapGet("/assets/{sha256}", async (HttpContext ctx, string sha256, AssetService assets, HubAccess access) =>
+{
+    var auth = await ctx.AuthenticateAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+    if (!auth.Succeeded && ApiAuth.SelectScheme(ctx) == ApiAuth.JwtScheme) auth = await ctx.AuthenticateAsync(ApiAuth.JwtScheme);
+    if (!auth.Succeeded || auth.Principal is null) return Results.Json(new { error = "sign in required" }, statusCode: 401);
+    var asset = assets.Find(sha256, a => access.CanSee(auth.Principal, a.Machine));
+    return asset is null ? Results.NotFound() : ServeAsset(ctx, asset, assets);
+});
+
+static IResult ServeAsset(HttpContext ctx, Asset asset, AssetService assets)
+{
+    var stream = assets.OpenRead(asset.Sha256);
+    if (stream is null) return Results.NotFound();
+    var h = ctx.Response.Headers;
+    h["X-Content-Type-Options"] = "nosniff";
+    h["Cache-Control"] = "private, max-age=3600";
+    h["Content-Security-Policy"] = "default-src 'none'; sandbox";
+    var cd = new Microsoft.Net.Http.Headers.ContentDispositionHeaderValue(asset.IsImage ? "inline" : "attachment");
+    cd.SetHttpFileName(asset.Name);
+    h.ContentDisposition = cd.ToString();
+    return Results.Stream(stream, AssetTypes.ServeAs(asset.Mime));
+}
 
 app.MapGet("/healthz", () => Results.Ok("ok"));
 

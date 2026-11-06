@@ -1,0 +1,162 @@
+@* The Transcript tab as a chat (ADR 0011, D). One shared ~1 Hz poll per pane
+   (TranscriptFeeds) runs only while a ChatView is open; this component only
+   re-renders when the feed's version moves, and each row only when it grows. *@
+@implements IAsyncDisposable
+@inject TranscriptFeeds Feeds
+@inject IJSRuntime JS
+
+@if (SearchOpen)
+{
+    <div class="chat-search">
+        <input @ref="searchBox" autofocus placeholder="Search loaded messages" value="@query" @oninput="OnSearchAsync" @onkeydown="SearchKeyAsync" />
+        <span class="muted">@(query.Length == 0 ? "" : hits == 0 ? "none" : $"{at}/{hits}")</span>
+        <button type="button" class="icon" aria-label="Previous match" @onclick="() => StepAsync(-1)">↑</button>
+        <button type="button" class="icon" aria-label="Next match" @onclick="() => StepAsync(1)">↓</button>
+    </div>
+}
+
+<div class="chat-scroll" @ref="scroller">
+    <div class="chat-col">
+        @if (hidden > 0)
+        {
+            <button type="button" class="earlier" @onclick="ShowEarlier">Show @Math.Min(hidden, Page) earlier</button>
+        }
+        @if (rows.Count == 0)
+        {
+            <p class="empty chat-empty">@(feed.Error is { } e ? $"Transcript unavailable: {e}" : feed.Version == 0 ? "Loading…" : "Nothing here yet.")</p>
+        }
+        @foreach (var row in rows.Skip(hidden))
+        {
+            <ChatRow @key="row.Key" Row="row" />
+        }
+        @if (feed.Source == "screen" && rows.Count > 0)
+        {
+            <p class="muted chat-note">Read from the screen: this agent has no structured transcript.</p>
+        }
+        @if (feed.Blocked is { } b)
+        {
+            <div class="blocked">
+                <div class="blocked-label">Waiting for you</div>
+                @if (b.Question.Length > 0) { <pre class="blocked-q">@b.Question</pre> }
+                <div class="quick">
+                    @foreach (var o in b.Options)
+                    {
+                        <button type="button" disabled="@ReadOnly" @onclick="() => QuickReply.InvokeAsync((o.Send, o.Enter))">@o.Label</button>
+                    }
+                    <button type="button" class="ghost" disabled="@ReadOnly" @onclick='() => QuickReply.InvokeAsync(("\u001b", false))'>Esc</button>
+                </div>
+            </div>
+        }
+    </div>
+</div>
+<button type="button" class="jump" @ref="pill">Jump to latest ↓</button>
+@if (feed.Status is "working" or "blocked" or "idle")
+{
+    <div class="live live-@feed.Status"><span class="dot"></span>@(feed.Status switch { "working" => "Working…", "blocked" => "Needs your answer", _ => "Idle" })</div>
+}
+
+@code {
+    [Parameter, EditorRequired] public string MachineId { get; set; } = "";
+    [Parameter, EditorRequired] public string PaneId { get; set; } = "";
+    [Parameter] public bool Live { get; set; } = true;
+    [Parameter] public bool ReadOnly { get; set; }
+    [Parameter] public bool SearchOpen { get; set; }
+    [Parameter] public EventCallback<(string Send, bool Enter)> QuickReply { get; set; }
+
+    /// <summary>Rows drawn at once; older ones load on request.</summary>
+    private const int Page = 150;
+
+    private TranscriptFeed feed = default!;
+    private IDisposable? lease;
+    private List<ChatRowModel> rows = new();
+    private long rowsVersion = -1;
+    private int shown = Page;
+    private int hidden;
+    private long renderedVersion = -1;
+    private bool attached;
+    private ElementReference scroller, pill, searchBox;
+    private string query = "";
+    private int hits, at;
+    private string Key => MachineId + "/" + PaneId;
+
+    protected override void OnInitialized()
+    {
+        // The cached feed paints at once; the poll then asks only for what is newer.
+        feed = Feeds.Get(MachineId, PaneId);
+        Rebuild();
+    }
+
+    private void OnFeed()
+    {
+        if (feed.Version == renderedVersion) return;
+        _ = InvokeAsync(() =>
+        {
+            Rebuild();
+            StateHasChanged();
+        });
+    }
+
+    private void Rebuild()
+    {
+        if (rowsVersion == feed.Version) return;
+        rowsVersion = feed.Version;
+        rows = ChatRowModel.Build(feed.Items);
+        hidden = Math.Max(0, rows.Count - shown);
+    }
+
+    protected override bool ShouldRender()
+    {
+        renderedVersion = feed.Version;
+        return true;
+    }
+
+    private void ShowEarlier()
+    {
+        shown += Page;
+        hidden = Math.Max(0, rows.Count - shown);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!attached)
+        {
+            attached = true;
+            // Polling starts only in a live circuit, never during prerendering.
+            if (Live) lease = Feeds.Watch(MachineId, PaneId, OnFeed);
+            await JS.InvokeVoidAsync("klarkChat.attach", Key, scroller, pill);
+        }
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!SearchOpen && query.Length > 0)
+        {
+            query = "";
+            hits = at = 0;
+            if (attached) await JS.InvokeAsync<int>("klarkChat.search", Key, "");
+        }
+    }
+
+    private async Task OnSearchAsync(ChangeEventArgs e)
+    {
+        query = e.Value?.ToString() ?? "";
+        hits = await JS.InvokeAsync<int>("klarkChat.search", Key, query);
+        at = hits > 0 ? hits : 0;
+    }
+
+    private async Task StepAsync(int dir)
+    {
+        if (hits > 0) at = await JS.InvokeAsync<int>("klarkChat.step", Key, dir);
+    }
+
+    private Task SearchKeyAsync(KeyboardEventArgs e) =>
+        e.Key == "Enter" ? StepAsync(e.ShiftKey ? 1 : -1) : Task.CompletedTask;
+
+    public async ValueTask DisposeAsync()
+    {
+        lease?.Dispose();
+        if (!attached) return;
+        try { await JS.InvokeVoidAsync("klarkChat.detach", Key); }
+        catch (JSDisconnectedException) { }
+    }
+}
