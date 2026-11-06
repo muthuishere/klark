@@ -7,7 +7,7 @@
 |---|---|
 | linked, nobody signed in | 1 socket and a keepalive every 20 s; nothing else |
 | machines page open | one `get_tree` every 3 s; the reply is ~40 bytes when unchanged |
-| a pane open | the pane's output, merged per 25 ms, binary, gzip when it pays off |
+| a pane open | the pane's output, merged per 50 ms, binary, gzip when it pays off |
 
 ## Design choices that keep it cheap
 - Pull, not push (ADR 0002).
@@ -24,8 +24,8 @@
 - Blazor Server keeps a circuit per browser tab (~hundreds of KB). 50+
   simultaneous viewers need measuring (S-12).
 - Fan-out to viewers is sequential per frame. With many viewers on one hot
-  pane, a slow viewer could delay the others. A per-viewer bounded queue is
-  needed (S-13).
-- The machine side merges output in 25 ms ticks. Tiny ticks leave little for
+  pane, a slow viewer could delay the others. Fixed by per-viewer bounded
+  queues (S-13, done).
+- The machine side merges output in 50 ms ticks (E-03). Tiny ticks leave little for
   gzip to work with (E-02). An adaptive tick, 25 ms when typing and up to
-  100 ms when flooding, is E-04.
+  100 ms when flooding, is E-05.

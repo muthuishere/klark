@@ -35,8 +35,10 @@ over the LAN or a tunnel. What we want instead:
 - Package and binary are `klark`.
 - Self-update (`klark update`), background version checks, product
   announcements and the remote agent-detection catalog are disabled.
-- The catalog can be re-enabled with `HERDR_AGENT_DETECTION_MANIFEST_CATALOG_URL`.
-- Config dirs, socket paths and `HERDR_*` env names are kept for compatibility
+- The catalog can be re-enabled with `KLARK_AGENT_DETECTION_MANIFEST_CATALOG_URL`.
+- Superseded in part: env names were renamed to `KLARK_*`, and config dirs to `klark`,
+  with a one-time move of the old herdr config dir (STATUS D-01). The original text said
+  config dirs, socket paths and `HERDR_*` env names are kept for compatibility
   (see open item O1).
 
 ### D2. Expose ported to Rust as `crates/klark-link`

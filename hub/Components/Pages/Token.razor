@@ -1,0 +1,27 @@
+@page "/token"
+@attribute [Authorize]
+@inject JwtIssuer Jwt
+@inject AuthenticationStateProvider Auth
+@inject NavigationManager Nav
+
+@* ADR 0009: a user JWT for `klark msg` and scripts. Minted fresh on every visit. *@
+
+<PageTitle>CLI token · klark hub</PageTitle>
+
+<h1>CLI token</h1>
+<p class="muted">A token for <b>@user</b>, valid until @expires.ToLocalTime().ToString("g"). Anyone holding it can act as you on this hub.</p>
+<textarea id="jwt" class="token" readonly rows="5">@token</textarea>
+<p><button type="button" onclick="navigator.clipboard.writeText(document.getElementById('jwt').value);this.textContent='Copied'">Copy</button></p>
+<p class="muted">Or let the CLI fetch one: <code>klark msg login --hub @Nav.BaseUri.TrimEnd('/') --user @user</code></p>
+
+@code {
+    private string token = "", user = "";
+    private DateTimeOffset expires;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var principal = (await Auth.GetAuthenticationStateAsync()).User;
+        user = principal.Identity?.Name ?? "";
+        (token, expires) = Jwt.Issue(principal);
+    }
+}

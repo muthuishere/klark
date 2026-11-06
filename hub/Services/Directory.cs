@@ -35,9 +35,9 @@ public sealed class SignInService
         var auth = _options.CurrentValue.Auth;
         IUserDirectory directory = auth.Mode.ToLowerInvariant() switch
         {
-            "ldap" => _services.GetRequiredService<LdapDirectory>(),
             "local" => _services.GetRequiredService<LocalDirectory>(),
-            _ => _services.GetRequiredService<MockLdapDirectory>(),
+            "mockldap" => _services.GetRequiredService<MockLdapDirectory>(),
+            _ => _services.GetRequiredService<LdapDirectory>(),
         };
         DirectoryUser? user;
         try
@@ -100,26 +100,80 @@ public sealed class MockLdapDirectory : IUserDirectory
     }
 }
 
-/// <summary>A real LDAP server: simple bind as the user, then read their groups.</summary>
+/// <summary>
+/// A real LDAP server (OpenLDAP, Active Directory, FreeIPA...): the server checks
+/// the password by a bind as the user; the hub never sees or stores it.
+/// Direct bind (UserDnTemplate) or search-then-bind (UserSearchBase + UserFilter).
+/// Groups come from a group search and/or the user's memberOf.
+/// </summary>
 public sealed class LdapDirectory : IUserDirectory
 {
     private readonly IOptionsMonitor<HubOptions> _options;
+    private readonly ILogger<LdapDirectory> _log;
 
-    public LdapDirectory(IOptionsMonitor<HubOptions> options) => _options = options;
+    public LdapDirectory(IOptionsMonitor<HubOptions> options, ILogger<LdapDirectory> log)
+    {
+        _options = options;
+        _log = log;
+    }
 
     public Task<DirectoryUser?> AuthenticateAsync(string username, string password, CancellationToken ct = default) =>
         Task.Run(() => Authenticate(username, password), ct);
 
+    private LdapConnection Connect(LdapOptions o)
+    {
+        var port = o.Port > 0 ? o.Port : (o.UseSsl ? 636 : 389);
+        var conn = new LdapConnection(new LdapDirectoryIdentifier(o.Host, port))
+        {
+            AuthType = AuthType.Basic,
+            Timeout = TimeSpan.FromSeconds(Math.Max(1, o.TimeoutSeconds)),
+        };
+        conn.SessionOptions.ProtocolVersion = 3;
+        conn.SessionOptions.ReferralChasing = ReferralChasingOptions.None;
+        if (o.SkipCertificateCheck)
+        {
+            conn.SessionOptions.VerifyServerCertificate = (_, _) => true;
+        }
+        if (o.UseSsl)
+        {
+            conn.SessionOptions.SecureSocketLayer = true;
+        }
+        else if (o.StartTls)
+        {
+            conn.SessionOptions.StartTransportLayerSecurity(null);
+        }
+        return conn;
+    }
+
     private DirectoryUser? Authenticate(string username, string password)
     {
         var o = _options.CurrentValue.Auth.Ldap;
-        var dn = string.Format(o.UserDnTemplate, EscapeDnValue(username));
-        using var conn = new LdapConnection(new LdapDirectoryIdentifier(o.Host, o.Port))
+        string dn;
+        SearchResultEntry? entry = null;
+
+        if (!string.IsNullOrWhiteSpace(o.UserSearchBase))
         {
-            AuthType = AuthType.Basic,
-            Timeout = TimeSpan.FromSeconds(10),
-        };
-        conn.SessionOptions.ProtocolVersion = 3;
+            // Search-then-bind: find the user's DN first.
+            using var finder = Connect(o);
+            if (string.IsNullOrEmpty(o.BindDn)) finder.AuthType = AuthType.Anonymous;
+            finder.Bind(string.IsNullOrEmpty(o.BindDn) ? null : new NetworkCredential(o.BindDn, o.BindPassword));
+            var filter = string.Format(o.UserFilter, EscapeFilter(username));
+            var found = (SearchResponse)finder.SendRequest(new SearchRequest(o.UserSearchBase, filter, SearchScope.Subtree,
+                "cn", "displayName", "memberOf"));
+            if (found.Entries.Count != 1)
+            {
+                _log.LogInformation("ldap: {Count} entries match {User}", found.Entries.Count, username);
+                return null;
+            }
+            entry = found.Entries[0];
+            dn = entry.DistinguishedName;
+        }
+        else
+        {
+            dn = string.Format(o.UserDnTemplate, EscapeDnValue(username));
+        }
+
+        using var conn = Connect(o);
         try
         {
             conn.Bind(new NetworkCredential(dn, password));
@@ -129,18 +183,56 @@ public sealed class LdapDirectory : IUserDirectory
             return null;
         }
 
-        var displayName = username;
-        var who = (SearchResponse)conn.SendRequest(new SearchRequest(dn, "(objectClass=*)", SearchScope.Base, "cn", "displayName"));
-        if (who.Entries.Count > 0)
+        if (entry is null)
         {
-            var e = who.Entries[0];
-            displayName = First(e, "displayName") ?? First(e, "cn") ?? username;
+            try
+            {
+                var who = (SearchResponse)conn.SendRequest(new SearchRequest(dn, "(objectClass=*)", SearchScope.Base,
+                    "cn", "displayName", "memberOf"));
+                if (who.Entries.Count > 0) entry = who.Entries[0];
+            }
+            catch (DirectoryOperationException)
+            {
+                // A UPN bind ("user@domain") is not a DN we can read; groups then come from the search below.
+            }
         }
 
-        var filter = $"(|(member={EscapeFilter(dn)})(uniqueMember={EscapeFilter(dn)})(memberUid={EscapeFilter(username)}))";
-        var groups = (SearchResponse)conn.SendRequest(new SearchRequest(o.GroupSearchBase, filter, SearchScope.Subtree, "cn"));
-        var names = groups.Entries.Cast<SearchResultEntry>().Select(g => First(g, "cn")).OfType<string>().ToList();
-        return new DirectoryUser(username, displayName, names);
+        var displayName = (entry is null ? null : First(entry, "displayName") ?? First(entry, "cn")) ?? username;
+        var groups = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        if (o.UseMemberOf && entry is not null && entry.Attributes.Contains("memberOf"))
+        {
+            foreach (var v in entry.Attributes["memberOf"].GetValues(typeof(string)).Cast<string>())
+            {
+                var cn = CnOf(v);
+                if (cn is not null) groups.Add(cn);
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(o.GroupSearchBase))
+        {
+            var memberDn = entry?.DistinguishedName ?? dn;
+            var filter = $"(|(member={EscapeFilter(memberDn)})(uniqueMember={EscapeFilter(memberDn)})(memberUid={EscapeFilter(username)}))";
+            try
+            {
+                var found = (SearchResponse)conn.SendRequest(new SearchRequest(o.GroupSearchBase, filter, SearchScope.Subtree, "cn"));
+                foreach (var g in found.Entries.Cast<SearchResultEntry>().Select(g => First(g, "cn")).OfType<string>()) groups.Add(g);
+            }
+            catch (DirectoryOperationException e)
+            {
+                _log.LogWarning(e, "ldap: group search failed for {User}", username);
+            }
+        }
+
+        return new DirectoryUser(username, displayName, groups.ToList());
+    }
+
+    /// <summary>"CN=klark-admins,OU=Groups,DC=corp" → "klark-admins".</summary>
+    internal static string? CnOf(string dn)
+    {
+        var first = dn.Split(',', 2)[0];
+        var eq = first.IndexOf('=');
+        return eq > 0 && first[..eq].Trim().Equals("cn", StringComparison.OrdinalIgnoreCase) ? first[(eq + 1)..].Trim() : null;
     }
 
     private static string? First(SearchResultEntry e, string attr) =>

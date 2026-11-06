@@ -101,6 +101,9 @@ public sealed class MachineConnection
     /// <summary>The host name the machine reported about itself (informational only).</summary>
     public string Host { get; private set; } = "";
     public string Version { get; private set; } = "";
+
+    /// <summary>Link protocol from hello; 0 until hello arrives.</summary>
+    public int Protocol { get; private set; }
     public DateTimeOffset ConnectedAt { get; } = DateTimeOffset.UtcNow;
     public SessionTree Tree { get; private set; } = SessionTree.Empty;
 
@@ -210,16 +213,41 @@ public sealed class MachineConnection
         SendAsync(new { type = "keys", pane_id = paneId, keys });
 
     /// <summary>An allow-listed read on the machine (pane.read, agent.read, ...).</summary>
-    public async Task<JsonNode?> CallAsync(string method, object parameters, TimeSpan? timeout = null)
+    public Task<JsonNode?> CallAsync(string method, object parameters, TimeSpan? timeout = null) =>
+        RequestAsync(method, id => new { type = "call", id, method, @params = parameters }, timeout ?? TimeSpan.FromSeconds(15));
+
+    /// <summary>The agents in every klark session on this machine (protocol 2, ADR 0009).</summary>
+    public async Task<JsonArray> ListAgentsAsync(TimeSpan timeout)
+    {
+        RequireProtocol2();
+        var result = await RequestAsync("list_agents", id => new { type = "list_agents", id }, timeout);
+        return result as JsonArray ?? new JsonArray();
+    }
+
+    /// <summary>Hand a message to one agent on this machine (protocol 2, ADR 0009). Throws with the machine's error.</summary>
+    public async Task DeliverAsync(string session, string agent, string from, string text, TimeSpan timeout)
+    {
+        RequireProtocol2();
+        await RequestAsync("deliver", id => new { type = "deliver", id, session, agent, from, text }, timeout);
+    }
+
+    private void RequireProtocol2()
+    {
+        if (Protocol < 2)
+            throw new NotSupportedException($"machine {Id} links with protocol {Protocol}; update klark there to receive messages");
+    }
+
+    /// <summary>Send a request with a fresh id and wait for the machine's `result {id, ...}`.</summary>
+    private async Task<JsonNode?> RequestAsync(string what, Func<string, object> build, TimeSpan timeout)
     {
         var id = Interlocked.Increment(ref _nextCallId).ToString();
         var tcs = new TaskCompletionSource<JsonNode?>(TaskCreationOptions.RunContinuationsAsynchronously);
         _pending[id] = tcs;
         try
         {
-            await SendAsync(new { type = "call", id, method, @params = parameters });
-            using var cts = new CancellationTokenSource(timeout ?? TimeSpan.FromSeconds(15));
-            await using var reg = cts.Token.Register(() => tcs.TrySetException(new TimeoutException($"{method} timed out")));
+            await SendAsync(build(id));
+            using var cts = new CancellationTokenSource(timeout);
+            await using var reg = cts.Token.Register(() => tcs.TrySetException(new TimeoutException($"{what} timed out")));
             return await tcs.Task;
         }
         finally
@@ -330,8 +358,8 @@ public sealed class MachineConnection
         }
     }
 
-    /// <summary>klark-link PROTOCOL_VERSION this hub understands.</summary>
-    public const int SupportedProtocol = 1;
+    /// <summary>klark-link PROTOCOL_VERSIONs this hub understands. v2 adds list_agents and deliver (ADR 0009).</summary>
+    public const int MinProtocol = 1, MaxProtocol = 2;
 
     private const byte FrameGzip = 0x01;
     private const byte FrameRaw = 0x02;
@@ -384,14 +412,15 @@ public sealed class MachineConnection
         {
             case "hello":
                 var protocol = msg["protocol"]?.GetValue<int>() ?? 0;
-                if (protocol != SupportedProtocol)
+                if (protocol is < MinProtocol or > MaxProtocol)
                 {
                     // A machine on another protocol would misread what we send (STATUS S-10).
-                    _log.LogWarning("machine {Machine} speaks protocol {Protocol}; this hub speaks {Supported}", Id, protocol, SupportedProtocol);
+                    _log.LogWarning("machine {Machine} speaks protocol {Protocol}; this hub speaks {Min}-{Max}", Id, protocol, MinProtocol, MaxProtocol);
                     await _socket.CloseAsync(WebSocketCloseStatus.PolicyViolation,
-                        $"unsupported protocol {protocol}; hub speaks {SupportedProtocol}", CancellationToken.None);
+                        $"unsupported protocol {protocol}; hub speaks {MinProtocol}-{MaxProtocol}", CancellationToken.None);
                     return;
                 }
+                Protocol = protocol;
                 Host = msg["machine_name"]?.GetValue<string>() ?? "";
                 Version = msg["klark_version"]?.GetValue<string>() ?? "";
                 _registry.Store.MachineConnected(Id, Host, Version);

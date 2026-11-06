@@ -4,21 +4,32 @@ services:
     ports:
       - "8080:8080"
     environment:
-      # MockLdap (built-in demo users) by default. With the ldap profile below:
-      #   Hub__Auth__Mode=Ldap Hub__Auth__Ldap__Host=ldap Hub__Auth__Ldap__Port=1389
-      Hub__Auth__Mode: ${HUB_AUTH_MODE:-MockLdap}
-      Hub__Auth__Ldap__Host: ldap
-      Hub__Auth__Ldap__Port: "1389"
-      Hub__Auth__Ldap__UserDnTemplate: "cn={0},ou=users,dc=klark,dc=local"
-      Hub__Auth__Ldap__GroupSearchBase: "dc=klark,dc=local"
+      # Settings use the KLARK_ prefix: KLARK_HUB__AUTH__MODE is Hub:Auth:Mode.
+      # Sign-in defaults to Ldap (your directory). Point it at your server here or in
+      # appsettings.Production.json, for example:
+      #   KLARK_HUB__AUTH__LDAP__HOST: ldap.corp.example.com
+      #   KLARK_HUB__AUTH__LDAP__USERDNTEMPLATE: "{0}@corp.example.com"
+      #
+      # MockLdap (built-in demo users admin/admin, alice/alice, bob/bob, viewer/viewer)
+      # is a one-line opt-in, in the same image:
+      #   KLARK_HUB_AUTH_MODE=MockLdap docker compose up -d --build
+      KLARK_HUB__AUTH__MODE: ${KLARK_HUB_AUTH_MODE:-Ldap}
+      KLARK_HUB__AUTH__LDAP__HOST: ${KLARK_HUB_LDAP_HOST:-ldap}
+      KLARK_HUB__AUTH__LDAP__PORT: ${KLARK_HUB_LDAP_PORT:-1389}
+      KLARK_HUB__AUTH__LDAP__USERDNTEMPLATE: ${KLARK_HUB_LDAP_USERDN:-cn={0},ou=users,dc=klark,dc=local}
+      KLARK_HUB__AUTH__LDAP__GROUPSEARCHBASE: ${KLARK_HUB_LDAP_GROUPBASE:-dc=klark,dc=local}
+      # JWT signing key for /api (at least 32 bytes). Unset: a random key kept in /data/jwt.key.
+      KLARK_HUB__JWT__KEY: ${KLARK_HUB_JWT_KEY:-}
     volumes:
       - hub-data:/data
       - ./appsettings.Production.json:/app/appsettings.Production.json:ro
     restart: unless-stopped
 
-  # A throwaway OpenLDAP server with test users, for trying Mode=Ldap:
-  #   HUB_AUTH_MODE=Ldap docker compose --profile ldap up -d --build
+  # A throwaway OpenLDAP server with test users, for trying Mode=Ldap without your own directory:
+  #   docker compose --profile ldap up -d --build
   # Users alice/alice and bob/bob, both in group "readers".
+  # Note: Bitnami has been moving its free images (bitnami/* -> bitnamilegacy/*); if this tag
+  # no longer pulls, use bitnamilegacy/openldap:2.6 or another OpenLDAP image.
   ldap:
     profiles: ["ldap"]
     image: bitnami/openldap:2.6

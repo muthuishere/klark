@@ -33,7 +33,7 @@ else gets an error reply. The hub cannot close panes or run commands.
 Binary encoding, machine → hub:
 - `0x1f…`: a gzip JSON message.
 - `0x01 len id gzip(output)` and `0x02 len id output`: terminal output.
-  Output is merged per pane per 25 ms tick.
+  Output is merged per pane per 50 ms tick (E-03).
 
 ## Consequences
 - An idle machine costs one socket. An idle hub with no viewers sends nothing
@@ -41,5 +41,5 @@ Binary encoding, machine → hub:
 - The pane list a viewer sees is at most ~3 s old. That is fine for status;
   live output is still instant.
 - The protocol version is in `hello`. Breaking changes bump `PROTOCOL_VERSION`,
-  and the hub must refuse versions it doesn't understand (not done yet: S-10 in
-  STATUS).
+  and the hub refuses versions it doesn't understand (S-10, done). Protocol
+  v2 adds messaging (ADR 0009).

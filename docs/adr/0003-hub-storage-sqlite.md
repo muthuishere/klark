@@ -27,5 +27,5 @@ database server, and one noisy machine must not starve the others.
 - Output is stored only while someone watches, because that is the only time it
   flows (ADR 0002). The store is a "recently seen" log, not a full recording.
 - The WAL file can briefly exceed the cap between checkpoints.
-- Nothing reads `pane_output` yet. Showing history for offline machines is
-  S-07 in STATUS.
+- Offline machines show their last tree and recorded output from these files
+  (S-07, done).

@@ -4,6 +4,8 @@
     <a class="brand" href="/">klark hub</a>
     <AuthorizeView>
         <Authorized>
+            <a href="/messages">Messages</a>
+            <a href="/token">CLI token</a>
             <span class="who">@(context.User.FindFirst("display_name")?.Value ?? context.User.Identity?.Name)</span>
             <form method="post" action="/account/logout">
                 <AntiforgeryToken />

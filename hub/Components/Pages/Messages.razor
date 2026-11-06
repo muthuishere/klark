@@ -1,0 +1,80 @@
+@page "/messages"
+@attribute [Authorize]
+@rendermode InteractiveServer
+@inject Messaging Messaging
+@inject AuthenticationStateProvider Auth
+
+@* ADR 0009: recent agent messages, and a form that sends one as the signed-in user. *@
+
+<PageTitle>Messages · klark hub</PageTitle>
+
+<h1>Messages</h1>
+
+<form class="reply" @onsubmit="SendAsync">
+    <input placeholder="machine/session/agent" @bind="to" list="agent-addresses" />
+    <datalist id="agent-addresses">
+        @foreach (var a in agents) { <option value="@a.Address">@a.Status</option> }
+    </datalist>
+    <input placeholder="Message" @bind="text" />
+    <button type="submit" disabled="@sending">Send</button>
+</form>
+@if (result is not null) { <p class="@(resultOk ? "muted" : "error")">@result</p> }
+
+@if (messages.Count == 0)
+{
+    <p class="empty">No messages yet.</p>
+}
+else
+{
+    <table class="messages">
+        <thead><tr><th>Time</th><th>From</th><th>To</th><th>Text</th><th></th></tr></thead>
+        <tbody>
+            @foreach (var m in messages)
+            {
+                <tr>
+                    <td>@m.Ts.ToLocalTime().ToString("g")</td>
+                    <td>@m.From @if (m.Sender != m.From && m.Sender != "machine:" + m.From) { <span class="muted"> (@m.Sender)</span> }</td>
+                    <td>@m.To</td>
+                    <td class="text">@m.Text</td>
+                    <td>@if (m.Ok) { <span class="status status-idle">ok</span> } else { <span class="error">@m.Error</span> }</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    private List<HubMessage> messages = new();
+    private List<AgentEntry> agents = new();
+    private string to = "", text = "";
+    private string? result;
+    private bool resultOk, sending;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var user = (await Auth.GetAuthenticationStateAsync()).User;
+        messages = await Messaging.RecentAsync(user, 100);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        var user = (await Auth.GetAuthenticationStateAsync()).User;
+        agents = await Messaging.ListAgentsAsync(user);
+        StateHasChanged();
+    }
+
+    private async Task SendAsync()
+    {
+        sending = true;
+        var user = (await Auth.GetAuthenticationStateAsync()).User;
+        var r = await Messaging.SendAsync(user, to, text, null);
+        resultOk = r.Status == 200;
+        result = resultOk ? $"Delivered to {to}." : r.Error;
+        if (resultOk) text = "";
+        // The store writes in the background; give it a moment before re-reading.
+        await Task.Delay(250);
+        messages = await Messaging.RecentAsync(user, 100);
+        sending = false;
+    }
+}

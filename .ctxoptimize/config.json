@@ -1,0 +1,12 @@
+{
+  "name": "klark",
+  "modules": [
+    {
+      "path": "crates/ghostty-vt"
+    },
+    {
+      "path": "crates/klark-link"
+    }
+  ],
+  "wiki": false
+}

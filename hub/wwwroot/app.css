@@ -50,3 +50,8 @@ code { font-size: .85em; }
 .muted { color: var(--muted); font-size: .85rem; }
 .transcript-head { display: flex; gap: 12px; align-items: baseline; margin: 8px 0; }
 .transcript { white-space: pre-wrap; word-break: break-word; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px; max-height: 65vh; overflow: auto; font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.topbar a { color: var(--muted); }
+.token { width: 100%; font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; word-break: break-all; background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
+.messages { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: .9rem; }
+.messages th, .messages td { text-align: left; padding: 6px; border-top: 1px solid var(--line); vertical-align: top; }
+.messages td.text { white-space: pre-wrap; word-break: break-word; }

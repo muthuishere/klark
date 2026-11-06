@@ -18,8 +18,20 @@ public sealed class HubOptions
     /// <summary>People who may sign in to the UI. Every signed-in user sees every connected machine.</summary>
     public List<HubUser> Users { get; set; } = new();
 
+    /// <summary>User JWTs for the CLI and /api (ADR 0009).</summary>
+    public JwtOptions Jwt { get; set; } = new();
+
     /// <summary>klark machines allowed to connect with `klark link`.</summary>
     public List<HubMachine> Machines { get; set; } = new();
+}
+
+public sealed class JwtOptions
+{
+    /// <summary>HS256 signing key (KLARK_HUB__JWT__KEY), at least 32 bytes. Empty: a random key kept in DataDir/jwt.key.</summary>
+    public string Key { get; set; } = "";
+
+    /// <summary>Token lifetime.</summary>
+    public double Hours { get; set; } = 12;
 }
 
 public sealed class HubUser
@@ -74,8 +86,11 @@ public static class TokenHash
 
 public sealed class AuthOptions
 {
-    /// <summary>"MockLdap" (default: built-in pretend directory), "Ldap" (real server), or "Local".</summary>
-    public string Mode { get; set; } = "MockLdap";
+    /// <summary>
+    /// "Ldap" (default: your LDAP / Active Directory checks every password),
+    /// "MockLdap" (built-in pretend directory, development only) or "Local" (hashes in Hub:Users).
+    /// </summary>
+    public string Mode { get; set; } = "Ldap";
 
     /// <summary>If not empty, only members of one of these groups may sign in.</summary>
     public List<string> AllowedGroups { get; set; } = new();
@@ -95,13 +110,46 @@ public sealed class AuthOptions
 public sealed class LdapOptions
 {
     public string Host { get; set; } = "localhost";
-    public int Port { get; set; } = 389;
 
-    /// <summary>DN to bind as, with {0} = the escaped user name.</summary>
+    /// <summary>0 = pick from the scheme: 636 with UseSsl, else 389.</summary>
+    public int Port { get; set; }
+
+    /// <summary>LDAPS (TLS from the first byte, usually port 636).</summary>
+    public bool UseSsl { get; set; }
+
+    /// <summary>Upgrade a plain connection with StartTLS before binding.</summary>
+    public bool StartTls { get; set; }
+
+    /// <summary>Accept any server certificate (self-signed test servers only).</summary>
+    public bool SkipCertificateCheck { get; set; }
+
+    /// <summary>
+    /// Direct bind: the DN (or UPN) to bind as, with {0} = the escaped user name.
+    /// Examples: "uid={0},ou=people,dc=example,dc=com" (OpenLDAP) or "{0}@corp.example.com" (Active Directory).
+    /// Ignored when UserSearchBase is set.
+    /// </summary>
     public string UserDnTemplate { get; set; } = "cn={0},ou=users,dc=klark,dc=local";
 
-    /// <summary>Where groups live; members are matched by DN (member) or name (memberUid).</summary>
+    /// <summary>
+    /// Search-then-bind: when set, the hub finds the user under this base with UserFilter
+    /// (bound as BindDn/BindPassword, or anonymously), then binds as the DN it found.
+    /// </summary>
+    public string UserSearchBase { get; set; } = "";
+
+    /// <summary>{0} = the escaped user name. "(uid={0})" for OpenLDAP, "(sAMAccountName={0})" for AD.</summary>
+    public string UserFilter { get; set; } = "(|(uid={0})(sAMAccountName={0})(cn={0}))";
+
+    /// <summary>Service account for search-then-bind. Set the password through the environment, not a file.</summary>
+    public string BindDn { get; set; } = "";
+    public string BindPassword { get; set; } = "";
+
+    /// <summary>Where groups live; members are matched by DN (member, uniqueMember) or name (memberUid). Empty = skip the search.</summary>
     public string GroupSearchBase { get; set; } = "dc=klark,dc=local";
+
+    /// <summary>Also read the user's memberOf attribute (Active Directory, OpenLDAP memberof overlay).</summary>
+    public bool UseMemberOf { get; set; } = true;
+
+    public int TimeoutSeconds { get; set; } = 10;
 }
 
 public sealed class MockLdapEntry

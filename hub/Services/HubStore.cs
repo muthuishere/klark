@@ -8,7 +8,8 @@ namespace KlarkHub.Services;
 /// <summary>
 /// SQLite persistence (ADR 0001, D7).
 ///
-/// data/hub.db              — every machine that has connected, with last seen.
+/// data/hub.db              — every machine that has connected, with last seen,
+///                            and agent messages (ADR 0009).
 /// data/machines/{id}.db    — one file per klark machine: latest tree, recent
 ///                            pane output, connection events. Capped at
 ///                            MaxBytesPerMachine; oldest output is pruned first.
@@ -45,7 +46,34 @@ public sealed partial class HubStore : BackgroundService
     public void AppendOutput(string machineId, string paneId, byte[] bytes) =>
         _queue.Writer.TryWrite(new StoreItem(machineId, ItemKind.Output, paneId, null, bytes));
 
+    /// <summary>One agent message (ADR 0009), whatever its outcome.</summary>
+    public void RecordMessage(HubMessage m) =>
+        _queue.Writer.TryWrite(new StoreItem("", ItemKind.Message, null, null, null, m));
+
     // ---- readers -------------------------------------------------------------
+
+    /// <summary>The newest messages, newest first.</summary>
+    public async Task<List<HubMessage>> RecentMessagesAsync(int limit)
+    {
+        var hubDb = Path.Combine(_options.DataDir, "hub.db");
+        if (!File.Exists(hubDb)) return new List<HubMessage>();
+        await using var db = Open(hubDb);
+        await using var cmd = db.CreateCommand();
+        cmd.CommandText = "SELECT id, ts, from_addr, to_addr, text, sender, ok, error FROM messages ORDER BY ts DESC, rowid DESC LIMIT $limit";
+        cmd.Parameters.AddWithValue("$limit", limit);
+        var list = new List<HubMessage>();
+        try
+        {
+            await using var r = await cmd.ExecuteReaderAsync();
+            while (await r.ReadAsync())
+            {
+                list.Add(new HubMessage(r.GetString(0), DateTimeOffset.FromUnixTimeMilliseconds(r.GetInt64(1)), r.GetString(2),
+                    r.GetString(3), r.GetString(4), r.GetString(5), r.GetInt64(6) != 0, r.IsDBNull(7) ? null : r.GetString(7)));
+            }
+        }
+        catch (SqliteException e) when (e.Message.Contains("no such table")) { }
+        return list;
+    }
 
     /// <summary>Machines known to the hub, connected or not.</summary>
     public async Task<List<KnownMachine>> KnownMachinesAsync()
@@ -114,6 +142,10 @@ public sealed partial class HubStore : BackgroundService
               id TEXT PRIMARY KEY, host TEXT NOT NULL DEFAULT '', version TEXT NOT NULL DEFAULT '',
               first_seen INTEGER NOT NULL, last_seen INTEGER NOT NULL, connected INTEGER NOT NULL DEFAULT 0);
             UPDATE machines SET connected = 0;
+            CREATE TABLE IF NOT EXISTS messages (
+              id TEXT PRIMARY KEY, ts INTEGER NOT NULL, from_addr TEXT NOT NULL, to_addr TEXT NOT NULL,
+              text TEXT NOT NULL, sender TEXT NOT NULL, ok INTEGER NOT NULL, error TEXT);
+            CREATE INDEX IF NOT EXISTS messages_ts ON messages (ts);
             """);
 
         var batch = new List<StoreItem>(1024);
@@ -141,7 +173,8 @@ public sealed partial class HubStore : BackgroundService
     private void Apply(List<StoreItem> batch)
     {
         var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        foreach (var group in batch.GroupBy(i => i.MachineId))
+        foreach (var item in batch.Where(i => i.Kind == ItemKind.Message)) InsertMessage(item.Message!);
+        foreach (var group in batch.Where(i => i.Kind != ItemKind.Message).GroupBy(i => i.MachineId))
         {
             var db = MachineDb(group.Key);
             using var tx = db.BeginTransaction();
@@ -218,6 +251,24 @@ public sealed partial class HubStore : BackgroundService
         cmd.ExecuteNonQuery();
     }
 
+    private void InsertMessage(HubMessage m)
+    {
+        using var cmd = _hubDb!.CreateCommand();
+        cmd.CommandText = """
+            INSERT OR IGNORE INTO messages (id, ts, from_addr, to_addr, text, sender, ok, error)
+            VALUES ($id, $ts, $from, $to, $text, $sender, $ok, $error)
+            """;
+        cmd.Parameters.AddWithValue("$id", m.Id);
+        cmd.Parameters.AddWithValue("$ts", m.Ts.ToUnixTimeMilliseconds());
+        cmd.Parameters.AddWithValue("$from", m.From);
+        cmd.Parameters.AddWithValue("$to", m.To);
+        cmd.Parameters.AddWithValue("$text", m.Text);
+        cmd.Parameters.AddWithValue("$sender", m.Sender);
+        cmd.Parameters.AddWithValue("$ok", m.Ok ? 1 : 0);
+        cmd.Parameters.AddWithValue("$error", (object?)m.Error ?? DBNull.Value);
+        cmd.ExecuteNonQuery();
+    }
+
     private SqliteConnection MachineDb(string machineId)
     {
         if (_machineDbs.TryGetValue(machineId, out var db)) return db;
@@ -228,7 +279,7 @@ public sealed partial class HubStore : BackgroundService
             PRAGMA synchronous = NORMAL;
             CREATE TABLE IF NOT EXISTS tree (id INTEGER PRIMARY KEY CHECK (id = 1), ts INTEGER NOT NULL, json TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS pane_output (ts INTEGER NOT NULL, pane_id TEXT NOT NULL, bytes BLOB NOT NULL);
-            CREATE INDEX IF NOT EXISTS pane_output_pane ON pane_output (pane_id, rowid);
+            CREATE INDEX IF NOT EXISTS pane_output_pane ON pane_output (pane_id);
             CREATE TABLE IF NOT EXISTS events (ts INTEGER NOT NULL, kind TEXT NOT NULL);
             """);
         _machineDbs[machineId] = db;
@@ -264,9 +315,12 @@ public sealed partial class HubStore : BackgroundService
         cmd.ExecuteNonQuery();
     }
 
-    private enum ItemKind { Connected, Disconnected, Tree, Output }
+    private enum ItemKind { Connected, Disconnected, Tree, Output, Message }
 
-    private sealed record StoreItem(string MachineId, ItemKind Kind, string? A, string? B, byte[]? Bytes);
+    private sealed record StoreItem(string MachineId, ItemKind Kind, string? A, string? B, byte[]? Bytes, HubMessage? Message = null);
 }
+
+/// <summary>A row of hub.db messages (ADR 0009). Sender is who really called: "user:&lt;name&gt;" or "machine:&lt;id&gt;".</summary>
+public sealed record HubMessage(string Id, DateTimeOffset Ts, string From, string To, string Text, string Sender, bool Ok, string? Error);
 
 public sealed record KnownMachine(string Id, string Host, string Version, DateTimeOffset FirstSeen, DateTimeOffset LastSeen);
