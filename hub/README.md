@@ -79,10 +79,30 @@ arguments still win over the environment.
 
 ### Pane page
 
-- **Live terminal.** A viewer whose browser falls behind (more than ~2.5 s of
-  queued output) gets a fresh screen instead of a pile of stale output. Other
-  viewers are not slowed down.
-- **Transcript.** Recent agent text, fetched only when you open it or press Refresh.
+`/m/<machine>/p/<pane>?view=chat|terminal` (ADR 0011). One full-height
+column, phone first; desktops centre it. Phones open on **Chat**, desktops on
+**Terminal**, and each browser remembers the last tab per pane.
+
+- **Chat.** User and agent turns, markdown (tables scroll inside the
+  message, code blocks have a language label, copy button and highlighting),
+  tool calls and thinking folded into one-line rows, a live
+  working/idle/blocked line, and a "Jump to latest" pill once you scroll up.
+  A blocked agent's question shows with buttons for its numbered or yes/no
+  options. Search (⌕) covers the loaded messages. Data comes from the
+  machine's `get_transcript` (Claude Code logs; everything else is the
+  cleaned screen) about once a second, only while a chat is open, shared by
+  all viewers of the pane; older machines fall back to `agent.read` /
+  `pane.read`. Only the newest 150 rows are drawn ("Show earlier" for more).
+- **Terminal.** Drawn at the pane's real size (`pane_size` from the
+  machine; 120x40 before one arrives) and scaled to the width, scrolling
+  sideways below 55 %. A viewer whose browser falls behind (more than ~2.5 s
+  of queued output) gets a fresh screen. xterm 5.5, its Unicode 11 and
+  web-links addons and highlight.js 11.11.1 are bundled in `wwwroot/lib`, so
+  the hub needs no CDN.
+- **Composer.** Enter sends, Shift+Enter is a new line; Esc and Ctrl-C on the
+  terminal tab. Drafts, scroll position, opened tool rows and the list's
+  search text survive leaving and coming back (browser storage).
+- **Images and files.** See *Assets* below.
 - **Offline machines** are listed with their last-seen time. Expanding one
   shows its last recorded pane list, and opening a pane shows the output that
   was recorded while someone watched it.
@@ -117,6 +137,9 @@ fleet tokens also need `X-Klark-Machine`). No or a bad token gives 401.
 | `GET /api/agents` | `[{machine, session, agent, name, pane_id, status, address}]` from every online machine you may see (asked concurrently, 10 s timeout each) |
 | `POST /api/messages` `{to, text, from?}` | `200 {id, delivered:true}`, else `{id, error}` with the status below |
 | `GET /api/messages?limit=100` | the newest messages (max 500) whose target or source machine you may see |
+| `POST /api/panes/{machine}/{pane}/images?name=&caption=` (user JWT, raw image body) | `200 {sha256, size, mime, path}` once the machine fetched it; 403 read-only, 404 offline, 409 machine below v3, 413 too big, 415 not an image |
+| `PUT /api/assets?pane=<pane>&name=<name>` (machine token, raw body) | `200 {sha256, size, mime, url}`; 413 over 100 MB |
+| `GET /api/assets/{sha256}` (machine token) | the bytes, only for an asset sent to that machine; 403 otherwise |
 
 ## Messaging between agents (ADR 0009)
 
@@ -149,12 +172,42 @@ cargo run --release -p klark-link --bin klark-loadtest -- \
 
 Then sign in and open a few panes: only those panes start streaming.
 
+## Assets: images to agents, files from agents (ADR 0011)
+
+All assets are **temporary**: they expire after `Hub:Assets:RetentionHours`
+(24 by default) and are then deleted. The hub keeps them in its own
+content-addressed file store on the data volume (`assets/sha256/<aa>/<hex>`,
+files 0600, directories 0700, written to a temp file, fsynced and renamed).
+There is no second process and no object store: the image runs only the hub,
+on one port.
+
+- **Person to agent.** On a pane page, paste, drop, pick (＋) or photograph
+  (◎, phones) an image. You must be allowed to type there. The hub checks the
+  type from the bytes (png, jpeg, gif, webp, heic, avif; 20 MB at most),
+  stores it and sends the machine `fetch_asset`; the machine downloads it
+  and hands the path to the agent. Scripts can do the same with
+  `POST /api/panes/<machine>/<pane>/images?name=x.png&caption=...` and a JWT.
+- **Agent to person.** `klark offer <file>` uploads with the machine token
+  (100 MB at most). The pane page lists offered files live: images inline,
+  everything else as downloads.
+- **Serving.** `GET /assets/<sha256>` with the sign-in cookie or a JWT, if you
+  may see the asset's machine. Every response sends `nosniff`; HTML, SVG and
+  XML go out as `application/octet-stream`, and anything that is not an
+  image is an attachment.
+
+| setting | env | default |
+|---|---|---|
+| `Hub:Assets:RetentionHours` | `KLARK_HUB__ASSETS__RETENTIONHOURS` | 24 |
+| `Hub:Assets:MaxImageBytes` | `KLARK_HUB__ASSETS__MAXIMAGEBYTES` | 20971520 |
+| `Hub:Assets:MaxFileBytes` | `KLARK_HUB__ASSETS__MAXFILEBYTES` | 104857600 |
+
 ## Storage
 
 SQLite, in `Hub:DataDir` (`/data` in Docker):
 
 - `hub.db` lists every machine that has connected, with its host, version and when it was first and last seen, and every agent message.
 - `jwt.key` is the generated JWT signing key, when `Hub:Jwt:Key` is not set.
+- `assets/` holds temporary images and files (see *Assets*); `hub.db` has their `assets` table.
 - `machines/<name>.db` holds one machine's data: its latest pane tree, recent pane output and connect/disconnect events. Each file is capped at `Hub:MaxBytesPerMachine` (10 MB by default). The oldest output is dropped first.
 
 Writes are batched by one background writer, so disk never slows the machine sockets.
@@ -175,4 +228,4 @@ JSON messages `{"type": ...}`. Machines send them gzip-compressed in binary fram
 
 | machine → hub | hub → machine |
 |---|---|
-| `hello` (protocol 1 or 2), `tree` / `tree_unchanged` (only when asked), binary output frames, `closed`, `result`, `pong` | `get_tree`, `subscribe`, `unsubscribe`, `input`, `keys`, `call`, `ping`; v2 only: `list_agents`, `deliver` |
+| `hello` (protocol 1, 2 or 3), `tree` / `tree_unchanged` (only when asked), binary output frames, `closed`, `result`, `pong`; v3: `pane_size {pane_id, cols, rows}` while subscribed | `get_tree`, `subscribe`, `unsubscribe`, `input`, `keys`, `call`, `ping`; v2+: `list_agents`, `deliver`; v3: `fetch_asset {id, sha256, name, mime, size, pane_id, caption}`, `get_transcript {id, pane_id, after?}` |

@@ -23,6 +23,21 @@ public sealed class HubOptions
 
     /// <summary>klark machines allowed to connect with `klark expose`.</summary>
     public List<HubMachine> Machines { get; set; } = new();
+
+    /// <summary>Images and files passed between people and agents (ADR 0011).</summary>
+    public AssetOptions Assets { get; set; } = new();
+}
+
+public sealed class AssetOptions
+{
+    /// <summary>Every asset is temporary: objects and rows older than this are swept.</summary>
+    public double RetentionHours { get; set; } = 24;
+
+    /// <summary>Cap on an image a person sends to an agent.</summary>
+    public long MaxImageBytes { get; set; } = 20 * 1024 * 1024;
+
+    /// <summary>Cap on a file an agent offers to people (`klark offer`).</summary>
+    public long MaxFileBytes { get; set; } = 100 * 1024 * 1024;
 }
 
 public sealed class JwtOptions

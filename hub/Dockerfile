@@ -10,7 +10,8 @@ WORKDIR /app
 COPY --from=build /app .
 ENV ASPNETCORE_URLS=http://+:8080 \
     Hub__DataDir=/data
-# hub.db and machines/*.db (each machine capped at 10 MB) — keep this on a volume.
+# hub.db, machines/*.db (each capped at 10 MB) and assets/ (temporary, swept after
+# Hub:Assets:RetentionHours, default 24) — keep this on a volume. One process, one port.
 VOLUME /data
 EXPOSE 8080
 ENTRYPOINT ["dotnet", "KlarkHub.dll"]

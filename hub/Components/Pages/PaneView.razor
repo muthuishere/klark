@@ -7,72 +7,130 @@
 @inject MachineRegistry Registry
 @inject HubStore Store
 @inject HubAccess Access
+@inject AssetService AssetSvc
 @inject AuthenticationStateProvider Auth
+@inject NavigationManager Nav
 @inject IJSRuntime JS
 
-<PageTitle>@(pane?.Title ?? PaneId) · klark hub</PageTitle>
+<PageTitle>@Title · klark</PageTitle>
 
-<nav class="crumbs"><a href="/">Machines</a> / @MachineId / @(pane?.Title ?? PaneId)</nav>
-
-@if (!allowed)
-{
-    <p class="empty">Machine <b>@MachineId</b> is not available to you.</p>
-}
-else
-{
-    <div class="pane-head">
-        <h1>@(pane?.Title ?? PaneId)</h1>
-        @if (pane is not null)
-        {
-            <span class="status status-@(string.IsNullOrEmpty(pane.AgentStatus) ? "none" : pane.AgentStatus)">@(string.IsNullOrEmpty(pane.AgentStatus) ? "shell" : pane.AgentStatus)</span>
-        }
-        @if (offline) { <span class="closed">machine offline: showing what was last recorded</span> }
-        else if (closedReason is not null) { <span class="closed">stream ended: @closedReason</span> }
-        @if (readOnly) { <span class="badge">read-only</span> }
-        @if (!offline)
-        {
-            <button type="button" class="link" @onclick="ToggleTranscriptAsync">@(transcript is null ? "Transcript" : "Terminal")</button>
-        }
-    </div>
-
-    <div class="terminal" @ref="terminalHost" style="@(transcript is null ? "" : "display:none")"></div>
-
-    @if (transcript is not null)
-    {
-        <div class="transcript-head">
-            <span class="muted">Recent text from the agent (pulled on request).</span>
-            <button type="button" class="link" @onclick="LoadTranscriptAsync">Refresh</button>
+<div class="pane-app" @ref="root">
+    <header class="pane-bar">
+        <a class="icon back" href="/" aria-label="Back to machines">‹</a>
+        <div class="who">
+            <div class="name">@Title</div>
+            <div class="sub">
+                <span class="dot dot-@StatusCss"></span>
+                @(offline ? "offline" : StatusLabel) · @MachineId@(pane is not null && machine is not null ? " · " + machine.Tree.WorkspaceLabel(pane.WorkspaceId) : "")
+            </div>
         </div>
-        <pre class="transcript">@transcript</pre>
-    }
+        @if (view == "chat" && allowed)
+        {
+            <button type="button" class="icon" aria-label="Search" @onclick="() => searchOpen = !searchOpen">⌕</button>
+        }
+        @if (allowed && view is not null)
+        {
+            <nav class="seg" aria-label="View">
+                <a class="@(view == "chat" ? "on" : "")" href="@ViewUrl("chat")" @onclick='() => SetView("chat")' @onclick:preventDefault>Chat</a>
+                <a class="@(view == "terminal" ? "on" : "")" href="@ViewUrl("terminal")" @onclick='() => SetView("terminal")' @onclick:preventDefault>Terminal</a>
+            </nav>
+        }
+    </header>
 
-    @if (!offline && !readOnly)
+    @if (!allowed)
     {
-        <form class="reply" @onsubmit="SendAsync">
-            <input placeholder="Type a reply and press Enter…" @bind="reply" autocomplete="off" />
-            <button type="submit">Send</button>
-            <button type="button" @onclick='() => KeysAsync("esc")'>Esc</button>
-            <button type="button" @onclick='() => KeysAsync("ctrl+c")'>Ctrl-C</button>
-        </form>
+        <p class="empty pad">Machine <b>@MachineId</b> is not available to you.</p>
     }
-}
+    else
+    {
+        <div class="pane-body">
+            @if (view == "chat")
+            {
+                <div class="chat">
+                    <ChatView MachineId="@MachineId" PaneId="@PaneId" Live="@(!offline)" ReadOnly="@readOnly" SearchOpen="@searchOpen" QuickReply="QuickReplyAsync" />
+                </div>
+            }
+            <div class="terminal-view" style="@(view == "terminal" ? "" : "display:none")">
+                @if (closedReason is not null) { <div class="notice">Stream ended: @closedReason</div> }
+                @if (offline) { <div class="notice">Machine offline: showing what was last recorded.</div> }
+                <div class="term-wrap" @ref="terminalHost"></div>
+            </div>
+        </div>
+
+        @if (offers.Count > 0)
+        {
+            <details class="offers" open="@offersOpen" @ontoggle="() => offersOpen = !offersOpen">
+                <summary>Files from the agent (@offers.Count) <span class="muted">· expire after @RetentionLabel</span></summary>
+                <div class="offer-list">
+                    @foreach (var a in offers)
+                    {
+                        @if (a.IsImage)
+                        {
+                            <a class="offer img" href="@a.Url" target="_blank" rel="noopener"><img src="@a.Url" alt="@a.Name" loading="lazy" /></a>
+                        }
+                        else
+                        {
+                            <a class="offer file" href="@a.Url" download="@a.Name">@a.Name <span class="muted">@Size(a.Size)</span></a>
+                        }
+                    }
+                </div>
+            </details>
+        }
+
+        @if (uploadStatus is not null)
+        {
+            <div class="toast @(uploadOk ? "" : "bad")" @onclick="() => uploadStatus = null">@uploadStatus</div>
+        }
+
+        @if (!offline && !readOnly)
+        {
+            <div class="composer">
+                <InputFile id="@("up-" + termId)" class="hidden-file" accept="image/*" OnChange="UploadAsync" @ref="fileInput" />
+                <InputFile id="@("cam-" + termId)" class="hidden-file" accept="image/*" capture="environment" OnChange="UploadAsync" />
+                <label for="@("up-" + termId)" class="icon attach" title="Attach an image (paste and drop work too; files expire after @RetentionLabel)">＋</label>
+                <label for="@("cam-" + termId)" class="icon attach cam" title="Take a photo">◎</label>
+                <textarea rows="1" placeholder="@(uploading ? "Sending image…" : "Message")" @bind="reply" @bind:event="oninput" @ref="textarea"></textarea>
+                @if (view == "terminal")
+                {
+                    <button type="button" class="icon key" title="Esc" @onclick='() => KeysAsync("esc")'>esc</button>
+                    <button type="button" class="icon key" title="Ctrl-C" @onclick='() => KeysAsync("ctrl+c")'>^C</button>
+                }
+                <button type="button" class="send" @onclick="SendAsync" @ref="sendButton" aria-label="Send">↑</button>
+            </div>
+        }
+        else if (readOnly && !offline)
+        {
+            <div class="composer muted ro">Read-only</div>
+        }
+    }
+</div>
 
 @code {
     [Parameter] public string MachineId { get; set; } = "";
     [Parameter] public string PaneId { get; set; } = "";
+    [SupplyParameterFromQuery(Name = "view")] public string? ViewQuery { get; set; }
 
     private ClaimsPrincipal user = new();
-    private bool allowed;
-    private bool readOnly;
-    private bool offline;
+    private bool allowed, readOnly, offline;
     private MachineConnection? machine;
     private PaneInfo? pane;
-    private ElementReference terminalHost;
+    private ElementReference root, terminalHost, textarea, sendButton;
+    private InputFile? fileInput;
     private IAsyncDisposable? watch;
     private string reply = "";
     private string? closedReason;
-    private string? transcript;
+    private string? view;
+    private bool searchOpen, termOpened, offersOpen = true;
+    private List<Asset> offers = new();
+    private string? uploadStatus;
+    private bool uploadOk, uploading;
     private readonly string termId = Guid.NewGuid().ToString("N");
+    private string PaneKey => MachineId + "/" + PaneId;
+
+    private string Title => pane?.Title is { Length: > 0 } t ? t : PaneId;
+    private string StatusCss => offline ? "none" : string.IsNullOrEmpty(pane?.AgentStatus) ? "none" : pane!.AgentStatus;
+    private string StatusLabel => string.IsNullOrEmpty(pane?.AgentStatus) ? (pane?.Agent is { Length: > 0 } a ? a : "shell") : $"{pane!.Agent} {pane.AgentStatus}".Trim();
+    private string RetentionLabel => AssetSvc.Options.RetentionHours is var h && h % 1 == 0 ? $"{h} h" : $"{h:0.#} h";
 
     protected override async Task OnInitializedAsync()
     {
@@ -82,9 +140,12 @@ else
         if (!allowed) return;
 
         Registry.Changed += OnChanged;
+        AssetSvc.Offered += OnOffered;
+        offers = AssetSvc.Offers(MachineId, PaneId);
         Refresh();
         if (machine is not null)
         {
+            machine.PaneSizeChanged += OnPaneSize;
             _ = machine.EnsureTreeAsync(TimeSpan.FromSeconds(5)).ContinueWith(_ => OnChanged());
         }
         else if (await Store.LastTreeAsync(MachineId) is { } json)
@@ -93,40 +154,95 @@ else
             offline = true;
             pane = SessionTree.Parse(JsonNode.Parse(json)).Panes.FirstOrDefault(p => p.Id == PaneId);
         }
+        else
+        {
+            offline = true;
+        }
+        if (ViewQuery is "chat" or "terminal") view = ViewQuery;
+    }
+
+    protected override void OnParametersSet()
+    {
+        // Browser back/forward between ?view=chat and ?view=terminal.
+        if (ViewQuery is "chat" or "terminal" && view is not null && ViewQuery != view) view = ViewQuery;
     }
 
     private void Refresh()
     {
         machine = Registry.Get(MachineId);
-        if (machine is not null)
-        {
-            pane = machine.Tree.Panes.FirstOrDefault(p => p.Id == PaneId) ?? pane;
-        }
+        if (machine is not null) pane = machine.Tree.Panes.FirstOrDefault(p => p.Id == PaneId) ?? pane;
     }
 
     private void OnChanged() => InvokeAsync(() => { Refresh(); StateHasChanged(); });
 
+    private void OnOffered(string m, string p)
+    {
+        if (m != MachineId || p != PaneId) return;
+        _ = InvokeAsync(() => { offers = AssetSvc.Offers(MachineId, PaneId); offersOpen = true; StateHasChanged(); });
+    }
+
+    private void OnPaneSize(string paneId, int cols, int rows)
+    {
+        if (paneId != PaneId || !termOpened) return;
+        _ = InvokeAsync(() => JS.InvokeVoidAsync("klarkTerm.resize", termId, cols, rows).AsTask());
+    }
+
+    private string ViewUrl(string v) => Nav.GetUriWithQueryParameter("view", v);
+
+    private async Task SetView(string v)
+    {
+        if (view == v) return;
+        view = v;
+        searchOpen = false;
+        try { await JS.InvokeVoidAsync("klarkState.set", "view:" + PaneKey, v); } catch (JSException) { }
+        Nav.NavigateTo(ViewUrl(v), replace: true);
+    }
+
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (!firstRender || !allowed) return;
-        await JS.InvokeVoidAsync("klarkTerm.open", termId, terminalHost);
+        if (!allowed) return;
+        if (firstRender)
+        {
+            if (view is null)
+            {
+                // Per pane, the last tab this browser used; else phones get Chat and desktops Terminal.
+                var saved = await JS.InvokeAsync<string?>("klarkState.get", "view:" + PaneKey);
+                view = saved is "chat" or "terminal" ? saved : await JS.InvokeAsync<bool>("klarkState.isNarrow") ? "chat" : "terminal";
+                StateHasChanged();
+            }
+            if (!offline && !readOnly)
+            {
+                await JS.InvokeVoidAsync("klarkChat.composer", PaneKey, textarea, sendButton);
+                await JS.InvokeVoidAsync("klarkChat.uploads", root, fileInput?.Element);
+            }
+        }
+        if (view == "terminal" && !termOpened)
+        {
+            termOpened = true;
+            await OpenTerminalAsync();
+        }
+        else if (view == "terminal")
+        {
+            await JS.InvokeVoidAsync("klarkTerm.rescale", termId);
+        }
+    }
+
+    /// <summary>The terminal starts only when its tab is first shown (ADR 0002: nothing streams unwatched).</summary>
+    private async Task OpenTerminalAsync()
+    {
+        // Pane's own size (ADR 0011, C); before a v3 machine reports one, klark's observe default.
+        var size = machine?.PaneSize(PaneId) ?? (120, 40);
+        await JS.InvokeVoidAsync("klarkTerm.open", termId, terminalHost, size.Cols, size.Rows);
 
         if (machine is null)
         {
             var recorded = await Store.RecentOutputAsync(MachineId, PaneId);
-            if (recorded.Length > 0)
-            {
-                await JS.InvokeVoidAsync("klarkTerm.writeBase64", termId, Convert.ToBase64String(recorded));
-            }
-            else
-            {
-                await JS.InvokeVoidAsync("klarkTerm.writeText", termId, "(nothing was recorded for this pane while it was watched)");
-            }
+            if (recorded.Length > 0) await JS.InvokeVoidAsync("klarkTerm.writeBase64", termId, Convert.ToBase64String(recorded));
+            else await JS.InvokeVoidAsync("klarkTerm.write", termId, "(nothing was recorded for this pane while it was watched)");
             return;
         }
 
-        // Paint the current screen first, then follow the live stream. The
-        // machine only starts streaming this pane because we are watching it.
+        // Paint the current screen first, then follow the live stream.
         watch = machine.Watch(PaneId,
             bytes => InvokeAsync(() => JS.InvokeVoidAsync("klarkTerm.writeBase64", termId, bytes).AsTask()),
             reason => InvokeAsync(() => { closedReason = reason; StateHasChanged(); }),
@@ -134,67 +250,82 @@ else
         try
         {
             var screen = await machine.ReadScreenAsync(PaneId);
-            await JS.InvokeVoidAsync("klarkTerm.writeText", termId, screen);
+            // Written raw (ADR 0011, C): no \n to \r\n rewriting.
+            await JS.InvokeVoidAsync("klarkTerm.write", termId, screen);
+            if (machine.PaneSize(PaneId) is { } s) await JS.InvokeVoidAsync("klarkTerm.resize", termId, s.Cols, s.Rows);
         }
-        catch (Exception e)
+        catch (Exception e) when (e is TimeoutException or InvalidOperationException)
         {
             closedReason = e.Message;
             StateHasChanged();
         }
     }
 
-    private async Task ToggleTranscriptAsync()
-    {
-        if (transcript is not null)
-        {
-            transcript = null;
-            return;
-        }
-        transcript = "Loading…";
-        await LoadTranscriptAsync();
-    }
-
-    /// <summary>STATUS S-09: agent.read, fetched only when asked for.</summary>
-    private async Task LoadTranscriptAsync()
-    {
-        if (machine is null) return;
-        try
-        {
-            var result = await machine.CallAsync("agent.read", new { target = PaneId, source = "recent", format = "text", strip_ansi = true, lines = 500 });
-            transcript = result?["read"]?["text"]?.GetValue<string>() is { Length: > 0 } text ? text : "(no text)";
-        }
-        catch (Exception e)
-        {
-            // agent.read only works on panes with a detected agent; fall back to the pane's own text.
-            try
-            {
-                var result = await machine.CallAsync("pane.read", new { pane_id = PaneId, source = "recent", format = "text", strip_ansi = true, lines = 500 });
-                transcript = result?["read"]?["text"]?.GetValue<string>() ?? $"(unavailable: {e.Message})";
-            }
-            catch (Exception e2)
-            {
-                transcript = $"(unavailable: {e2.Message})";
-            }
-        }
-    }
-
     private async Task SendAsync()
     {
         // Checked here, on the server, not just by hiding the form (STATUS S-06).
-        if (machine is null || string.IsNullOrEmpty(reply) || !Access.CanType(user, MachineId)) return;
-        await machine.SendInputAsync(PaneId, reply);
-        await machine.SendKeysAsync(PaneId, "enter");
+        var text = reply.TrimEnd();
+        if (machine is null || text.Length == 0 || !Access.CanType(user, MachineId)) return;
         reply = "";
+        await machine.SendInputAsync(PaneId, text);
+        await machine.SendKeysAsync(PaneId, "enter");
+    }
+
+    private async Task QuickReplyAsync((string Send, bool Enter) r)
+    {
+        if (machine is null || !Access.CanType(user, MachineId)) return;
+        if (r.Send == "\u001b") { await machine.SendKeysAsync(PaneId, "esc"); return; }
+        await machine.SendInputAsync(PaneId, r.Send);
+        if (r.Enter) await machine.SendKeysAsync(PaneId, "enter");
     }
 
     private Task KeysAsync(string key) =>
         machine is not null && Access.CanType(user, MachineId) ? machine.SendKeysAsync(PaneId, key) : Task.CompletedTask;
 
+    /// <summary>Picked, pasted, dropped or photographed: store, then fetch_asset to the machine (ADR 0011, B).</summary>
+    private async Task UploadAsync(InputFileChangeEventArgs e)
+    {
+        if (uploading) return;
+        uploading = true;
+        uploadStatus = $"Sending {e.File.Name}…";
+        uploadOk = true;
+        StateHasChanged();
+        try
+        {
+            using var buffer = new MemoryStream();
+            try
+            {
+                await using var s = e.File.OpenReadStream(AssetSvc.Options.MaxImageBytes);
+                await s.CopyToAsync(buffer);
+            }
+            catch (IOException)
+            {
+                uploadStatus = $"{e.File.Name} is larger than {Size(AssetSvc.Options.MaxImageBytes)}";
+                uploadOk = false;
+                return;
+            }
+            buffer.Position = 0;
+            var caption = reply.Trim();
+            var r = await AssetSvc.SendToAgentAsync(user, MachineId, PaneId, buffer, e.File.Name, caption, CancellationToken.None);
+            uploadOk = r.Status == 200;
+            if (uploadOk) reply = "";
+            uploadStatus = uploadOk ? $"Sent {r.Asset!.Name} → {r.Path}" : $"Not sent: {r.Error}";
+        }
+        finally
+        {
+            uploading = false;
+        }
+    }
+
+    private static string Size(long b) => b >= 1 << 20 ? $"{b / 1048576.0:0.#} MB" : b >= 1024 ? $"{b / 1024.0:0} KB" : $"{b} B";
+
     public async ValueTask DisposeAsync()
     {
         Registry.Changed -= OnChanged;
+        AssetSvc.Offered -= OnOffered;
+        if (machine is not null) machine.PaneSizeChanged -= OnPaneSize;
         if (watch is not null) await watch.DisposeAsync();
-        try { await JS.InvokeVoidAsync("klarkTerm.close", termId); }
+        try { if (termOpened) await JS.InvokeVoidAsync("klarkTerm.close", termId); }
         catch (JSDisconnectedException) { }
     }
 }

@@ -1,0 +1,133 @@
+@* One row of the chat: a person's turn, an agent's text, or a run of tool calls.
+   Items never change once they arrive, so a row re-renders only when its run grows. *@
+
+@switch (Row.Kind)
+{
+    case "user":
+        <div class="msg user" title="@Time(Row.Items[0].Ts)"><div class="bubble">@Row.Items[0].Text</div></div>
+        break;
+    case "text":
+        <div class="msg asst" title="@Time(Row.Items[0].Ts)">
+            @foreach (var seg in Row.Items[0].Md ?? Array.Empty<MdSegment>())
+            {
+                if (seg is MdHtml h)
+                {
+                    <div class="md">@((MarkupString)h.Html)</div>
+                }
+                else if (seg is MdCode c)
+                {
+                    <div class="code">
+                        <div class="code-head"><span>@(c.Lang.Length > 0 ? c.Lang : "text")</span><button type="button" class="copy">Copy</button></div>
+                        <pre><code data-lang="@c.Lang">@c.Code</code></pre>
+                    </div>
+                }
+            }
+        </div>
+        break;
+    case "tools":
+        var calls = Calls(Row.Items);
+        if (calls.Count == 1)
+        {
+            @Call(calls[0])
+        }
+        else
+        {
+            <details class="tools" data-key="@("g:" + Row.Key)">
+                <summary><span class="ico">⋯</span><span class="t">@ToolCount(calls)</span></summary>
+                <div class="tool-list">
+                    @foreach (var call in calls)
+                    {
+                        @Call(call)
+                    }
+                </div>
+            </details>
+        }
+        break;
+}
+
+@code {
+    [Parameter, EditorRequired] public ChatRowModel Row { get; set; } = default!;
+
+    private string? renderedStamp;
+
+    protected override bool ShouldRender()
+    {
+        if (renderedStamp == Row.Stamp) return false;
+        renderedStamp = Row.Stamp;
+        return true;
+    }
+
+    private sealed record ToolCall(string Key, string Kind, ChatItem? Use, ChatItem? Result);
+
+    /// <summary>Pair each tool_use with the result that follows it; thinking stands alone.</summary>
+    private static List<ToolCall> Calls(IReadOnlyList<ChatItem> items)
+    {
+        var list = new List<ToolCall>();
+        foreach (var i in items)
+        {
+            if (i.Kind == "tool_result")
+            {
+                // By tool_use_id when the machine sends it, else the last call still waiting.
+                var open = i.ToolUseId is { } tid
+                    ? list.FindLastIndex(c => c.Kind == "tool" && c.Use?.ToolUseId == tid && c.Result is null)
+                    : -1;
+                if (open < 0) open = list.FindLastIndex(c => c.Kind == "tool" && c.Use is not null && c.Result is null);
+                if (open >= 0) list[open] = list[open] with { Result = i };
+                else list.Add(new ToolCall(i.Id, "tool", null, i));
+            }
+            else if (i.Kind == "thinking")
+            {
+                list.Add(new ToolCall(i.Id, "thinking", i, null));
+            }
+            else
+            {
+                list.Add(new ToolCall(i.Id, "tool", i, null));
+            }
+        }
+        return list;
+    }
+
+    private static string ToolCount(List<ToolCall> calls)
+    {
+        var tools = calls.Count(c => c.Kind == "tool");
+        var thinking = calls.Count - tools;
+        var parts = new List<string>();
+        if (tools > 0) parts.Add(tools == 1 ? "1 tool call" : $"{tools} tool calls");
+        if (thinking > 0) parts.Add("thinking");
+        return string.Join(" · ", parts);
+    }
+
+    private RenderFragment Call(ToolCall c) => @<details class="tool @(c.Result?.Ok == false ? "failed" : "")" data-key="@("t:" + c.Key)">
+        @if (c.Kind == "thinking")
+        {
+            <summary><span class="ico">✦</span><span class="t">Thinking</span></summary>
+            <pre class="tool-body">@c.Use?.Text</pre>
+        }
+        else
+        {
+            var name = c.Use?.Tool ?? c.Result?.Tool ?? "Tool";
+            var arg = c.Use?.Summary ?? "";
+            <summary title="@Time(c.Use?.Ts ?? c.Result?.Ts)">
+                <span class="ico">@Icon(name)</span><span class="t">@name</span>@if (arg.Length > 0) {<span class="arg">@arg</span>}
+                @if (c.Result is null) { <span class="state">…</span> }
+                else if (c.Result.Ok == false) { <span class="state bad">failed</span> }
+            </summary>
+            @if (!string.IsNullOrEmpty(c.Use?.Input)) { <pre class="tool-body">@c.Use.Input</pre> }
+            @if (!string.IsNullOrEmpty(c.Result?.Text)) { <pre class="tool-body result">@c.Result.Text</pre> }
+        }
+    </details>;
+
+    private static string Icon(string tool) => tool switch
+    {
+        "Bash" or "BashOutput" or "shell" or "exec" => "$",
+        "Read" or "NotebookRead" => "◉",
+        "Edit" or "MultiEdit" or "Write" or "NotebookEdit" or "str_replace" => "✎",
+        "Grep" or "Glob" or "WebSearch" or "search" => "⌕",
+        "WebFetch" => "↗",
+        "Task" or "Agent" => "◆",
+        "TodoWrite" => "☰",
+        _ => "•",
+    };
+
+    private static string? Time(DateTimeOffset? ts) => ts?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
+}

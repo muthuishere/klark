@@ -8,12 +8,13 @@
 @inject HubStore Store
 @inject HubAccess Access
 @inject AuthenticationStateProvider Auth
+@inject IJSRuntime JS
 
 <PageTitle>klark hub</PageTitle>
 
 <h1>Machines</h1>
 
-<input class="search" placeholder="Filter panes by title, agent, folder…" @bind="filter" @bind:event="oninput" />
+<input class="search" type="search" placeholder="Search machines, sessions, agents, status…" value="@filter" @oninput="OnFilterAsync" />
 
 @if (Mine.Count == 0 && offlineMachines.Count == 0)
 {
@@ -23,7 +24,7 @@
 
 @foreach (var machine in Mine)
 {
-    var panes = Visible(machine.Tree.Panes).ToList();
+    var panes = Visible(machine.Name, machine.Tree, machine.Tree.Panes).ToList();
     <section class="machine">
         <h2>@machine.Name <small>@machine.Host · klark @machine.Version · @machine.Tree.Panes.Count panes</small></h2>
         @if (panes.Count == 0)
@@ -68,7 +69,7 @@
                 else
                 {
                     <ul class="panes">
-                        @foreach (var pane in Visible(tree.Panes))
+                        @foreach (var pane in Visible(known.Id, tree, tree.Panes))
                         {
                             <li>
                                 <a href="@($"/m/{Uri.EscapeDataString(known.Id)}/p/{Uri.EscapeDataString(pane.Id)}")">
@@ -164,12 +165,52 @@
     {
         Registry.Changed -= OnChanged;
         pullTimer?.Dispose();
+        if (scrollTrack is not null) _ = DisposeTrackAsync(scrollTrack);
     }
 
-    private IEnumerable<PaneInfo> Visible(IEnumerable<PaneInfo> panes) =>
-        string.IsNullOrWhiteSpace(filter)
-            ? panes
-            : panes.Where(p => $"{p.Title} {p.Agent} {p.Cwd}".Contains(filter, StringComparison.OrdinalIgnoreCase));
+    private static async Task DisposeTrackAsync(IJSObjectReference track)
+    {
+        try
+        {
+            await track.InvokeVoidAsync("dispose");
+            await track.DisposeAsync();
+        }
+        catch (JSDisconnectedException) { }
+    }
+
+    /// <summary>Every word must appear in the pane's machine, session, title, agent, status, folder or address.</summary>
+    private IEnumerable<PaneInfo> Visible(string machineName, SessionTree tree, IEnumerable<PaneInfo> panes)
+    {
+        var words = filter.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (words.Length == 0) return panes;
+        return panes.Where(p =>
+        {
+            var session = tree.WorkspaceLabel(p.WorkspaceId);
+            var hay = $"{machineName} {session} {p.Title} {p.Agent} {Label(p.AgentStatus)} {p.Cwd} {machineName}/{session}/{p.Title}";
+            return words.All(w => hay.Contains(w, StringComparison.OrdinalIgnoreCase));
+        });
+    }
+
+    private async Task OnFilterAsync(ChangeEventArgs e)
+    {
+        filter = e.Value?.ToString() ?? "";
+        try { await JS.InvokeVoidAsync("klarkState.set", "home:filter", filter, "s"); } catch (JSException) { }
+    }
+
+    private IJSObjectReference? scrollTrack;
+
+    // Coming back to the list puts the search text and the scroll position back.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        var saved = await JS.InvokeAsync<string?>("klarkState.get", "home:filter", "s");
+        if (!string.IsNullOrEmpty(saved) && saved != filter)
+        {
+            filter = saved;
+            StateHasChanged();
+        }
+        scrollTrack = await JS.InvokeAsync<IJSObjectReference>("klarkState.trackScroll", "home");
+    }
 
     // Blocked agents first: those are the ones waiting for a person.
     private static int Rank(string status) => status switch { "blocked" => 3, "working" => 2, "idle" => 1, _ => 0 };

@@ -1,6 +1,8 @@
-# ADR 0011: assets in an embedded MinIO, faithful pane rendering, transcript view
+# ADR 0011: temporary assets on the hub's own file store, faithful pane rendering, chat view
 
-- Status: accepted (owner, 2026-11-06). Link protocol **v3**.
+- Status: accepted (owner, 2026-11-06), amended the same day (owner): no
+  MinIO; the Transcript tab is a chat view fed by `get_transcript`. Link
+  protocol **v3**.
 - Ports ideas from herdr-expose (`internal/serve/upload.go`, `offer.go`,
   `offerapi.go`, `internal/core/clean.go`, `transcript.go`). No code is shared
   (ADR 0008).
@@ -19,24 +21,29 @@ A comparison with herdr-expose (2026-11-06) found three gaps:
 
 ## Decision
 
-### A. One container: hub + MinIO
-- The hub image also holds a pinned MinIO server binary. The entrypoint
-  starts MinIO on **127.0.0.1:9000 only**, with data in `/data/minio`, and
-  then starts the hub. If either process exits, the container exits.
-- MinIO root credentials come from `KLARK_HUB__ASSETS__ACCESSKEY` /
-  `__SECRETKEY`. If those are unset, the entrypoint generates them once into
-  `/data/minio.env` (mode 0600). They are never logged.
-- The hub talks S3 to it: bucket `klark-assets`, created at startup with a
-  lifecycle rule that expires objects after `Hub:Assets:RetentionHours`
-  (default 24).
-- `Hub:Assets:Endpoint` can point at any external S3/MinIO instead, in which
-  case the embedded one is not started (`KLARK_HUB__ASSETS__EMBEDDED=false`).
-- Nothing outside the container reaches MinIO. Every byte passes through the
-  hub, which enforces auth, caps and types. Only one port is published (8080).
+### A. One process: the hub's own content-addressed file store (amended: no MinIO)
+- The first draft embedded a MinIO server in the hub image. The owner
+  dropped it: MinIO stopped publishing community binaries (dl.min.io
+  answers `410 Gone`), the project is archived, and a second process with its
+  own credentials buys nothing a single-node hub needs.
+- Assets live in the hub's **own content-addressed file store on the /data
+  volume; no MinIO**: `<DataDir>/assets/sha256/<aa>/<hex>`. A write streams
+  to a temp file (`<DataDir>/assets/tmp/`, same volume), is fsynced, and is
+  renamed into place atomically. Directories are 0700, files 0600. An object
+  that already exists is not written again.
+- The code talks to an `IAssetStore` interface (`FileAssetStore` today), so
+  another backend can be added later without touching the routes.
+- **Every asset is temporary.** A background sweep (every 10 minutes) deletes
+  `assets` rows older than `Hub:Assets:RetentionHours` (default 24) and then
+  every object no remaining row names. There is no permanent storage path,
+  and the UI says "files expire after 24 h".
+- One process, one port (8080); the image's entrypoint is `dotnet
+  KlarkHub.dll` as before. Every byte passes through the hub, which enforces
+  auth, caps and types.
 
 ### B. Assets
-- Object key: `sha256/<hex>`. An identical upload is stored once (the hub
-  checks with HEAD before writing).
+- Object key: `sha256/<aa>/<hex>`. An identical upload is stored once (the
+  store checks whether the object exists before renaming a new one in).
 - The hub stores `assets(sha256, size, mime, name, ts, machine, pane_id,
   direction, by)` in `hub.db`. `direction` is `to_agent` or `from_agent`.
 - Type is decided from magic bytes, never from the name or the client's
@@ -70,7 +77,7 @@ A comparison with herdr-expose (2026-11-06) found three gaps:
   downloads.
 
 **Serving:** `GET /assets/<sha256>` (cookie, or Bearer JWT). The caller must
-be able to see the asset's machine. The hub streams the object from MinIO.
+be able to see the asset's machine. The hub streams the object from its file store.
 
 ### C. Faithful rendering (protocol v3)
 - The exposer observes a pane **at the pane's own size**, never at a default
@@ -89,6 +96,9 @@ be able to see the asset's machine. The hub streams the object from MinIO.
   loaded from a CDN, so the hub works offline on a LAN.
 
 ### D. Transcript view
+(Amended: the tab is now **Chat**, see E. On v3 machines its data comes from
+`get_transcript`; what follows is the fallback for machines below v3 and for
+`source:"screen"`.)
 - Each pane page has two tabs, **Terminal** and **Transcript**. Phones (narrow
   screens) default to Transcript; desktops default to Terminal.
 - Transcript text comes from `agent.read`, falling back to
@@ -100,12 +110,47 @@ be able to see the asset's machine. The hub streams the object from MinIO.
   ANSI. The result is rendered as markdown with safe links only.
 - The image upload and the offered files appear on both tabs.
 
+### E. Chat view (amended)
+- The Transcript tab is a chat, modelled on the Claude Code mobile view: one
+  full-height column (centred, max ~760px, on desktop), a compact header
+  (back arrow, agent name, live status dot, machine and session), person
+  and agent turns as distinct blocks, markdown with code blocks (language
+  label, copy button, highlighting from a bundled highlight.js 11.11.1),
+  tool calls and thinking collapsed into one-line rows (a run of calls
+  folds into one "N tool calls" row), a live working/idle/blocked line, a
+  sticky composer (Enter sends through the same CanType-checked input
+  path, Shift+Enter is a newline, an attach button uses the upload flow),
+  auto-scroll that stops when the reader scrolls up, with a "Jump to latest"
+  pill. A blocked agent's question is read from its screen and shown with
+  quick-reply buttons for numbered or yes/no options.
+- Data (protocol v3): hub to machine `get_transcript {id, pane_id, after?}`;
+  the machine replies `result {id, result:{agent, cursor, items:[{id,
+  role, kind, text?, tool?, input?, ok?, ts?}], source:"jsonl"|"screen"}}`.
+  Only Claude Code and Devin have structured logs; every other agent arrives
+  as `source:"screen"`, one assistant item that the hub cleans with the
+  clean.go port. The hub passes `cursor` back as `after`, so a poll returns
+  only newer items. Machines below v3 fall back to `agent.read`, then
+  `pane.read {source:"recent_unwrapped"}`, cleaned, as one assistant block.
+- One poll per pane, about once a second, shared by every viewer and only
+  while a chat is open. The items stay in hub memory after the last viewer
+  leaves, so coming back paints at once and then fetches only what is newer.
+  Markdown is rendered once per item on arrival, and only the newest 150 rows
+  are in the DOM ("Show earlier" adds more).
+- Navigation: `/m/{machine}/p/{pane}?view=chat|terminal` are real routes.
+  Per browser (localStorage/sessionStorage) the hub keeps the list's search
+  text and scroll, each pane's tab, chat scroll position (or "at latest"),
+  opened tool rows and the composer draft.
+- As built, "open and visible" means the chat tab is mounted in a live
+  page; a backgrounded browser tab keeps polling until its circuit closes.
+- Chat search covers the items that are loaded; `get_transcript` only goes
+  forward (`after`), so older history than the hub holds cannot be fetched.
+
 ## Consequences
-- One image now runs two processes. MinIO is AGPL-3.0, but it is used
-  unmodified as a separate process, so the hub's own license is not affected.
-- MinIO stopped publishing community binaries and images in 2025. The
-  Dockerfile pins the last downloadable release, or builds one from source in
-  a build stage, so the image does not depend on a moving tag.
+- The image stays one process with no third-party server and no AGPL
+  component. Assets share the /data volume with hub.db; the retention sweep
+  bounds them (at most 24 h of uploads by default).
+- One hub node only: the file store is local. A multi-node hub would need a
+  shared `IAssetStore` (for example S3), which this ADR does not add.
 - Kitty graphics drawn inside the terminal (`ServerMessage::Graphics`,
   dropped today) can later flow through the same asset store. That is not
   part of this ADR.

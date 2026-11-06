@@ -237,6 +237,41 @@ public sealed class MachineConnection
             throw new NotSupportedException($"machine {Id} links with protocol {Protocol}; update klark there to receive messages");
     }
 
+    private void RequireProtocol3(string what)
+    {
+        if (Protocol < 3)
+            throw new NotSupportedException($"machine {Id} links with protocol {Protocol}; update klark there to {what}");
+    }
+
+    private readonly ConcurrentDictionary<string, (int Cols, int Rows)> _paneSizes = new();
+
+    /// <summary>The last size the machine reported for a pane (protocol 3), or null.</summary>
+    public (int Cols, int Rows)? PaneSize(string paneId) => _paneSizes.TryGetValue(paneId, out var s) ? s : null;
+
+    /// <summary>Raised with (pane, cols, rows) when a subscribed pane reports a new size.</summary>
+    public event Action<string, int, int>? PaneSizeChanged;
+
+    /// <summary>Ask the machine to download an asset into a pane's agent (ADR 0011). Returns the path it wrote.</summary>
+    public async Task<string> FetchAssetAsync(Asset asset, string caption, TimeSpan timeout)
+    {
+        RequireProtocol3("receive images");
+        var result = await RequestAsync("fetch_asset", id => new
+        {
+            type = "fetch_asset", id, sha256 = asset.Sha256, name = asset.Name, mime = asset.Mime, size = asset.Size,
+            pane_id = asset.PaneId, caption,
+        }, timeout);
+        return result?["path"]?.GetValue<string>() ?? "";
+    }
+
+    /// <summary>Structured transcript items newer than <paramref name="after"/> (protocol 3).</summary>
+    public async Task<JsonNode?> GetTranscriptAsync(string paneId, string? after, TimeSpan timeout)
+    {
+        RequireProtocol3("read transcripts");
+        return await RequestAsync("get_transcript", id => after is null
+            ? new { type = "get_transcript", id, pane_id = paneId }
+            : (object)new { type = "get_transcript", id, pane_id = paneId, after }, timeout);
+    }
+
     /// <summary>Send a request with a fresh id and wait for the machine's `result {id, ...}`.</summary>
     private async Task<JsonNode?> RequestAsync(string what, Func<string, object> build, TimeSpan timeout)
     {
@@ -359,7 +394,8 @@ public sealed class MachineConnection
     }
 
     /// <summary>klark-link PROTOCOL_VERSIONs this hub understands. v2 adds list_agents and deliver (ADR 0009).</summary>
-    public const int MinProtocol = 1, MaxProtocol = 2;
+    /// <remarks>v3 adds pane_size, fetch_asset and get_transcript (ADR 0011).</remarks>
+    public const int MinProtocol = 1, MaxProtocol = 3;
 
     private const byte FrameGzip = 0x01;
     private const byte FrameRaw = 0x02;
@@ -432,6 +468,22 @@ public sealed class MachineConnection
                 _registry.Store.SaveTree(Id, msg["snapshot"]?.ToJsonString() ?? "null");
                 TreeArrived();
                 _registry.NotifyChanged();
+                break;
+            case "pane_size":
+                var sizePane = msg["pane_id"]?.GetValue<string>();
+                var cols = msg["cols"]?.GetValue<int>() ?? 0;
+                var rows = msg["rows"]?.GetValue<int>() ?? 0;
+                if (sizePane is not null && cols is > 0 and <= 1000 && rows is > 0 and <= 1000)
+                {
+                    var changed = !_paneSizes.TryGetValue(sizePane, out var old) || old != (cols, rows);
+                    _paneSizes[sizePane] = (cols, rows);
+                    if (changed)
+                    {
+                        _log.LogInformation("pane_size {Machine}/{Pane} {Cols}x{Rows}", Id, sizePane, cols, rows);
+                        try { PaneSizeChanged?.Invoke(sizePane, cols, rows); }
+                        catch (Exception e) { _log.LogWarning(e, "pane_size handler failed"); }
+                    }
+                }
                 break;
             case "tree_unchanged":
                 TreeArrived();
