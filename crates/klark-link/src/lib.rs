@@ -8,6 +8,7 @@
 pub mod assets;
 pub mod http;
 pub mod protocol;
+pub mod sessions;
 pub mod upstream;
 
 use std::collections::HashMap;
@@ -24,6 +25,7 @@ use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{Message, WebSocket};
 
 use protocol::{call_allowed, AgentMessage, HubMessage, PROTOCOL_VERSION};
+use sessions::{decode_id, SessionSource, DEFAULT_SESSION};
 use upstream::{MsgReply, Observer, Upstream};
 
 /// Upper bound on one loop turn, and so on how long pane output is merged
@@ -46,6 +48,11 @@ pub struct LinkConfig {
     pub bin: PathBuf,
     /// Where `fetch_asset` stores downloads: `<klark data dir>/uploads`.
     pub uploads_dir: PathBuf,
+    /// Every running session on this machine. `socket` serves the default
+    /// session; with a source, the other sessions are exposed too, their ids
+    /// namespaced `<session>/<id>` (see `sessions`). `None` exposes only
+    /// `socket`, as before.
+    pub sessions: Option<SessionSource>,
 }
 
 /// Connect to the hub and serve it forever, reconnecting with backoff.
@@ -137,6 +144,7 @@ pub fn run_once(config: &LinkConfig) -> Result<(), String> {
 
     let upstream = Upstream::new(config.socket.clone(), config.bin.clone());
     let mut session = Session::new(upstream);
+    session.sessions = config.sessions.clone();
     session.assets = Some(AssetTarget {
         hub_base: http::hub_http_base(&config.hub_url)?,
         token: config.token.clone(),
@@ -314,6 +322,10 @@ pub struct Session {
     frames_tx: Sender<AgentMessage>,
     frames_rx: Receiver<AgentMessage>,
     pub assets: Option<AssetTarget>,
+    /// Lists the other running sessions; `None` serves `upstream` alone.
+    pub sessions: Option<SessionSource>,
+    /// Upstreams of non-default sessions, resolved lazily and dropped on error.
+    others: HashMap<String, Upstream>,
 }
 
 impl Session {
@@ -325,7 +337,47 @@ impl Session {
             frames_tx,
             frames_rx,
             assets: None,
+            sessions: None,
+            others: HashMap::new(),
         }
+    }
+
+    /// The upstream serving a session, resolving and caching it on first use.
+    fn upstream_for(&mut self, session: &str) -> Result<Upstream, String> {
+        if session == DEFAULT_SESSION {
+            return Ok(self.upstream.clone());
+        }
+        if let Some(up) = self.others.get(session) {
+            return Ok(up.clone());
+        }
+        let socket = self
+            .sessions
+            .as_ref()
+            .and_then(|src| {
+                src.running()
+                    .into_iter()
+                    .find(|(name, _)| name == session)
+                    .map(|(_, socket)| socket)
+            })
+            .ok_or_else(|| format!("no running klark session {session}"))?;
+        let up = Upstream::new(socket, self.upstream.bin().to_path_buf()).for_session(session);
+        self.others.insert(session.to_string(), up.clone());
+        Ok(up)
+    }
+
+    /// Forget a session's cached upstream after an error (it may have stopped).
+    fn forget(&mut self, session: &str) {
+        self.others.remove(session);
+    }
+
+    /// One local API call for a wire-addressed request; errors drop the cache.
+    fn call_in(&mut self, session: &str, method: &str, params: Value) -> Result<Value, String> {
+        let up = self.upstream_for(session)?;
+        let out = up.call(method, params);
+        if out.is_err() {
+            self.forget(session);
+        }
+        out
     }
 
     pub fn subscribed(&self) -> impl Iterator<Item = &String> {
@@ -338,12 +390,20 @@ impl Session {
                 if self.observers.contains_key(&pane_id) {
                     return vec![];
                 }
-                match self.upstream.observe(&pane_id, self.frames_tx.clone()) {
+                let (session, local) = decode_id(&pane_id);
+                let (session, local) = (session.to_string(), local.to_string());
+                let observed = self
+                    .upstream_for(&session)
+                    .and_then(|up| up.observe(&local, self.frames_tx.clone()));
+                match observed {
                     Ok(obs) => {
                         self.observers.insert(pane_id, obs);
                         vec![]
                     }
-                    Err(reason) => vec![AgentMessage::Closed { pane_id, reason }],
+                    Err(reason) => {
+                        self.forget(&session);
+                        vec![AgentMessage::Closed { pane_id, reason }]
+                    }
                 }
             }
             HubMessage::Unsubscribe { pane_id } => {
@@ -351,14 +411,20 @@ impl Session {
                 vec![]
             }
             HubMessage::Input { pane_id, text } => {
-                self.fire("pane.send_text", json!({"pane_id": pane_id, "text": text}))
+                let (session, local) = decode_id(&pane_id);
+                let params = json!({"pane_id": local, "text": text});
+                self.fire(session, "pane.send_text", params)
             }
             HubMessage::Keys { pane_id, keys } => {
-                self.fire("pane.send_keys", json!({"pane_id": pane_id, "keys": keys}))
+                let (session, local) = decode_id(&pane_id);
+                let params = json!({"pane_id": local, "keys": keys});
+                self.fire(session, "pane.send_keys", params)
             }
             HubMessage::Call { id, method, params } => {
                 let (result, error) = if call_allowed(&method) {
-                    match self.upstream.call(&method, params) {
+                    match sessions::route_params(&params)
+                        .and_then(|(session, params)| self.call_in(&session, &method, params))
+                    {
                         Ok(v) => (Some(v), None),
                         Err(e) => (None, Some(e)),
                     }
@@ -404,12 +470,14 @@ impl Session {
                 before,
                 limit,
             } => {
-                self.upstream.run_msg(
-                    id,
-                    transcript_args(&pane_id, after.as_deref(), before.as_deref(), limit),
-                    MsgReply::Json,
-                    self.frames_tx.clone(),
-                );
+                let (session, local) = decode_id(&pane_id);
+                let mut args = transcript_args(local, after.as_deref(), before.as_deref(), limit);
+                if session != DEFAULT_SESSION {
+                    // The global flag picks the session's socket (src/session.rs).
+                    args.splice(0..0, ["--session".to_string(), session.to_string()]);
+                }
+                self.upstream
+                    .run_msg(id, args, MsgReply::Json, self.frames_tx.clone());
                 vec![]
             }
             HubMessage::FetchAsset {
@@ -428,7 +496,18 @@ impl Session {
                         error: Some("assets are not configured on this link".into()),
                     }];
                 };
-                let up = self.upstream.clone();
+                let (session, local) = decode_id(&pane_id);
+                let (session, pane_id) = (session.to_string(), local.to_string());
+                let up = match self.upstream_for(&session) {
+                    Ok(up) => up,
+                    Err(e) => {
+                        return vec![AgentMessage::Result {
+                            id,
+                            result: None,
+                            error: Some(e),
+                        }]
+                    }
+                };
                 let out = self.frames_tx.clone();
                 let spawned = std::thread::Builder::new()
                     .name(format!("klark-link-asset-{id}"))
@@ -468,8 +547,8 @@ impl Session {
         }
     }
 
-    fn fire(&self, method: &str, params: Value) -> Vec<AgentMessage> {
-        if let Err(e) = self.upstream.call(method, params) {
+    fn fire(&mut self, session: &str, method: &str, params: Value) -> Vec<AgentMessage> {
+        if let Err(e) = self.call_in(session, method, params) {
             eprintln!("klark expose: {e}");
         }
         vec![]
@@ -504,20 +583,62 @@ impl Session {
     }
 
     /// The tree, or `TreeUnchanged` when the hub already holds this revision.
-    pub fn tree(&self, known_rev: Option<String>) -> AgentMessage {
-        let snapshot = match self.upstream.snapshot() {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("klark expose: snapshot: {e}");
-                serde_json::json!({"error": e})
-            }
-        };
+    pub fn tree(&mut self, known_rev: Option<String>) -> AgentMessage {
+        let snapshot = self.snapshot_all();
         let rev = tree_rev(&snapshot);
         if known_rev.as_deref() == Some(rev.as_str()) {
             AgentMessage::TreeUnchanged { rev }
         } else {
             AgentMessage::Tree { rev, snapshot }
         }
+    }
+}
+
+impl Session {
+    /// The default session's snapshot merged with every other running
+    /// session's (namespaced). Sessions that started or stopped since the last
+    /// pull simply appear or disappear. Without other sessions the default
+    /// snapshot goes out unchanged, exactly as before.
+    fn snapshot_all(&mut self) -> Value {
+        let default = self.upstream.snapshot();
+        let mut running: Vec<(String, PathBuf)> = self
+            .sessions
+            .as_ref()
+            .map(SessionSource::running)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|(n, _)| n != DEFAULT_SESSION && sessions::valid_session(n))
+            .collect();
+        running.sort_by(|a, b| a.0.cmp(&b.0));
+        if running.is_empty() {
+            return default.unwrap_or_else(|e| {
+                eprintln!("klark expose: snapshot: {e}");
+                json!({"error": e})
+            });
+        }
+        let mut parts = Vec::with_capacity(running.len() + 1);
+        match default {
+            Ok(s) => parts.push((DEFAULT_SESSION.to_string(), s)),
+            Err(e) => eprintln!("klark expose: snapshot {DEFAULT_SESSION}: {e}"),
+        }
+        self.others
+            .retain(|name, _| running.iter().any(|(n, _)| n == name));
+        let bin = self.upstream.bin().to_path_buf();
+        for (name, socket) in running {
+            let up = self
+                .others
+                .entry(name.clone())
+                .or_insert_with(|| Upstream::new(socket, bin.clone()).for_session(&name))
+                .clone();
+            match up.snapshot() {
+                Ok(s) => parts.push((name, s)),
+                Err(e) => {
+                    eprintln!("klark expose: snapshot {name}: {e}");
+                    self.others.remove(&name);
+                }
+            }
+        }
+        sessions::merge_snapshots(&parts)
     }
 }
 
