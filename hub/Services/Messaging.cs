@@ -60,8 +60,7 @@ public sealed class Messaging
         {
             try
             {
-                var agents = await m.ListAgentsAsync(Timeout);
-                return agents.OfType<JsonObject>().Select(a => ToEntry(m.Id, a)).OfType<AgentEntry>().ToList();
+                return await CachedAgents(m);
             }
             catch (Exception e) when (e is TimeoutException or InvalidOperationException or NotSupportedException)
             {
@@ -70,6 +69,26 @@ public sealed class Messaging
             }
         }));
         return lists.SelectMany(l => l).OrderBy(a => a.Address, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    // One shared answer per machine for ~2 s, so many API clients do not each ask every machine.
+    private static readonly TimeSpan CacheFor = TimeSpan.FromSeconds(2);
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<MachineConnection, (DateTime At, Task<List<AgentEntry>> List)> _agentCache = new();
+
+    private Task<List<AgentEntry>> CachedAgents(MachineConnection m)
+    {
+        var now = DateTime.UtcNow;
+        foreach (var k in _agentCache.Keys) if (!_registry.Machines.Contains(k)) _agentCache.TryRemove(k, out _);
+        var entry = _agentCache.AddOrUpdate(m,
+            _ => (now, Fetch(m)),
+            (_, old) => now - old.At < CacheFor && !old.List.IsFaulted ? old : (now, Fetch(m)));
+        return entry.List;
+    }
+
+    private async Task<List<AgentEntry>> Fetch(MachineConnection m)
+    {
+        var agents = await m.ListAgentsAsync(Timeout);
+        return agents.OfType<JsonObject>().Select(a => ToEntry(m.Id, a)).OfType<AgentEntry>().ToList();
     }
 
     private static AgentEntry? ToEntry(string machineId, JsonObject a)

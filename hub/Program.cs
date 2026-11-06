@@ -57,7 +57,9 @@ builder.Services.AddDataProtection()
     .PersistKeysToFileSystem(new DirectoryInfo(Path.Combine(
         builder.Configuration["Hub:DataDir"] ?? "data", "keys")));
 builder.Services.AddResponseCompression();
-builder.Services.AddRazorComponents().AddInteractiveServerComponents();
+builder.Services.AddRazorComponents().AddInteractiveServerComponents(o =>
+    // A tab that vanished without closing stops its polls after 30 s, not the 3 min default.
+    o.DisconnectedCircuitRetentionPeriod = TimeSpan.FromSeconds(30));
 builder.Services.AddCascadingAuthenticationState();
 builder.Services
     .AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
@@ -136,7 +138,10 @@ app.Map("/agent", async (HttpContext ctx, MachineRegistry registry, IOptionsMoni
     var (machineId, error) = ApiAuth.ResolveMachine(machine, ctx.Request);
     if (machineId is null) return Results.BadRequest(error);
     using var socket = await ctx.WebSockets.AcceptWebSocketAsync();
-    await registry.RunAsync(socket, machineId, ctx.RequestAborted);
+    // Stop with the host too, so SIGTERM is not held up by linked machines.
+    using var linked = CancellationTokenSource.CreateLinkedTokenSource(ctx.RequestAborted,
+        ctx.RequestServices.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping);
+    await registry.RunAsync(socket, machineId, linked.Token);
     return Results.Empty;
 });
 

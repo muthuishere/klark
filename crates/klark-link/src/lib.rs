@@ -332,6 +332,7 @@ pub struct Session {
     pub sessions: Option<SessionSource>,
     /// Upstreams of non-default sessions, resolved lazily and dropped on error.
     others: HashMap<String, Upstream>,
+    default_down_logged: bool,
     /// `--agents`; `None` exposes everything.
     pub agents: Option<AgentFilter>,
     /// Every agent with whether it is exposed, and when that was computed.
@@ -353,6 +354,7 @@ impl Session {
             assets: None,
             sessions: None,
             others: HashMap::new(),
+            default_down_logged: false,
             agents: None,
             exposure: None,
         }
@@ -841,8 +843,16 @@ impl Session {
         }
         let mut parts = Vec::with_capacity(running.len() + 1);
         match default {
-            Ok(s) => parts.push((DEFAULT_SESSION.to_string(), s)),
-            Err(e) => eprintln!("klark expose: snapshot {DEFAULT_SESSION}: {e}"),
+            Ok(s) => {
+                self.default_down_logged = false;
+                parts.push((DEFAULT_SESSION.to_string(), s))
+            }
+            // Other sessions run without the default one: say so once, not every refresh.
+            Err(e) if !self.default_down_logged => {
+                self.default_down_logged = true;
+                eprintln!("klark expose: snapshot {DEFAULT_SESSION}: {e} (not logged again until it is back)");
+            }
+            Err(_) => {}
         }
         self.others
             .retain(|name, _| running.iter().any(|(n, _)| n == name));

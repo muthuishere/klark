@@ -63,6 +63,10 @@ public sealed class MachineRegistry
         {
             await conn.ReceiveLoopAsync(ct);
         }
+        catch (Exception e) when (e is System.Net.WebSockets.WebSocketException or OperationCanceledException)
+        {
+            _log.LogInformation("machine {Machine} link closed: {Error}", conn.Id, e.Message);
+        }
         finally
         {
             _machines.TryRemove(new KeyValuePair<string, MachineConnection>(conn.Id, conn));
