@@ -42,7 +42,7 @@ back its own hub link. (herdr-expose is a separate product for herdr; see ADR 00
 | `crates/klark-link` | the machine side of the hub link |
 | `hub/` | the hub: C# Blazor Server, SQLite, Docker |
 | `api/klark-api.schema.json` | socket API schema (`klark api schema`) |
-| `docs/` | [status](docs/STATUS.md), [ADRs](docs/README.md), [experiments](docs/experiments/README.md) |
+| `docs/` | [handover](docs/HANDOVER.md), [status](docs/STATUS.md), [ADRs](docs/README.md), [experiments](docs/experiments/README.md) |
 | `experiments/` | scripts behind the measured experiments |
 
 Existing users: on first run, klark moves an old `~/.config/herdr` directory to

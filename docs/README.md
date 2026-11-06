@@ -2,6 +2,7 @@
 
 | doc | what |
 |---|---|
+| [HANDOVER.md](HANDOVER.md) | **start here**: what exists, what is verified, first steps |
 | [STATUS.md](STATUS.md) | what is done, what is not, and what comes next (one checklist) |
 | [adr/0001](adr/0001-klark-hub-architecture.md) | the overall architecture: rename, link, hub, wire, storage (D1–D13) |
 | [adr/0002](adr/0002-lazy-pull-protocol.md) | link protocol v1: every message, lazy pull rules |
