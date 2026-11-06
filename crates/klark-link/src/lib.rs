@@ -24,7 +24,10 @@ use tungstenite::{Message, WebSocket};
 use protocol::{call_allowed, AgentMessage, HubMessage, PROTOCOL_VERSION};
 use upstream::{Observer, Upstream};
 
-const READ_TICK: Duration = Duration::from_millis(25);
+/// Upper bound on one loop turn, and so on how long pane output is merged
+/// before sending. 50 ms halves message count vs 25 ms and lets gzip pay off
+/// (docs/experiments/E-03). Input from the hub is handled as soon as it arrives.
+const READ_TICK: Duration = Duration::from_millis(50);
 /// Handshake header carrying the machine's own id.
 pub const MACHINE_HEADER: &str = "X-Klark-Machine";
 const MAX_BACKOFF: Duration = Duration::from_secs(30);

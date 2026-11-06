@@ -35,7 +35,8 @@ klark link --hub ws://hub-host:8080/agent --token <machine token> [--name laptop
 | `crates/klark-link` | the machine side of the hub link |
 | `hub/` | the hub: C# Blazor Server, SQLite, Docker |
 | `api/klark-api.schema.json` | socket API schema (`klark api schema`) |
-| `docs/adr/` | architecture decisions and status |
+| `docs/` | [status](docs/STATUS.md), [ADRs](docs/README.md), [experiments](docs/experiments/README.md) |
+| `experiments/` | scripts behind the measured experiments |
 
 Existing users: on first run, klark moves an old `~/.config/herdr` directory to
 `~/.config/klark`. Environment variables are now `KLARK_*` (for example

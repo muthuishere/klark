@@ -1,7 +1,7 @@
 //! Simulate many klark machines against a hub.
 //!
 //!   klark-loadtest --hub ws://localhost:8080/agent --token <fleet token> \
-//!       [--machines 100] [--panes 8] [--rate 2000] [--seconds 60]
+//!       [--machines 100] [--panes 8] [--rate 2000] [--seconds 60] [--tick-ms 25]
 //!
 //! Each simulated machine speaks the real link protocol (crates/klark-link):
 //! it answers `get_tree` (unchanged most of the time, like a real machine),
@@ -37,6 +37,7 @@ struct Args {
     panes: usize,
     rate: usize,
     seconds: u64,
+    tick_ms: u64,
 }
 
 fn parse_args() -> Args {
@@ -47,6 +48,7 @@ fn parse_args() -> Args {
         panes: 8,
         rate: 2000,
         seconds: 60,
+        tick_ms: 25,
     };
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -59,6 +61,7 @@ fn parse_args() -> Args {
             "--panes" => a.panes = v.parse().expect("--panes"),
             "--rate" => a.rate = v.parse().expect("--rate"),
             "--seconds" => a.seconds = v.parse().expect("--seconds"),
+            "--tick-ms" => a.tick_ms = v.parse().expect("--tick-ms"),
             other => {
                 eprintln!("unknown argument {other}");
                 std::process::exit(2);
@@ -221,8 +224,8 @@ fn simulate(n: usize, args: &Args, stats: &Stats, deadline: Instant) -> Result<(
                 return Err(format!("read: {e}"));
             }
         }
-        // Stream output only for subscribed panes, batched every 25 ms.
-        if last_emit.elapsed() >= Duration::from_millis(25) {
+        // Stream output only for subscribed panes, batched every --tick-ms.
+        if last_emit.elapsed() >= Duration::from_millis(args.tick_ms) {
             let budget = args.rate * last_emit.elapsed().as_millis() as usize / 1000;
             last_emit = Instant::now();
             for pane_id in subscribed.clone() {
