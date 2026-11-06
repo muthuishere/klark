@@ -1,0 +1,21 @@
+@inherits LayoutComponentBase
+
+<header class="topbar">
+    <a class="brand" href="/">klark hub</a>
+    <AuthorizeView>
+        <Authorized>
+            <span class="who">@context.User.Identity?.Name</span>
+            <form method="post" action="/account/logout">
+                <AntiforgeryToken />
+                <button type="submit" class="link">Sign out</button>
+            </form>
+        </Authorized>
+    </AuthorizeView>
+</header>
+<main class="page">
+    @Body
+</main>
+
+<div id="blazor-error-ui">
+    Something went wrong. <a href="" class="reload">Reload</a>
+</div>

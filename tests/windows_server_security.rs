@@ -134,7 +134,7 @@ fn server_integrity_requires_startup_consent_on_both_endpoints() {
             configuration,
         )
         .unwrap();
-        let mut command = Command::new(env!("CARGO_BIN_EXE_herdr"));
+        let mut command = Command::new(env!("CARGO_BIN_EXE_klark"));
         command.args(["--session", "integrity-test", "server"]);
         if allow_unelevated {
             command.arg("--allow-unelevated-clients");

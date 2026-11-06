@@ -185,8 +185,9 @@ fn auto_updates_enabled(background_updates: bool) -> bool {
     background_updates && !cfg!(debug_assertions)
 }
 
-fn background_update_check_enabled(background_updates: bool, check_enabled: bool) -> bool {
-    auto_updates_enabled(background_updates) && check_enabled
+/// klark ships without a hosted update channel: background version checks are off.
+fn background_update_check_enabled(_background_updates: bool, _check_enabled: bool) -> bool {
+    false
 }
 
 fn load_plugin_registry(
@@ -476,8 +477,10 @@ impl App {
             .map(|notes| notes.version.clone());
         let latest_release_notes_available = latest_release_notes.is_some();
         let update_install_command = crate::update::update_install_command().to_string();
-        let startup_product_announcement =
-            crate::product_announcements::load_unseen_for_current_version();
+        // klark has no hosted product announcements.
+        let startup_product_announcement: Option<
+            crate::product_announcements::ProductAnnouncement,
+        > = None;
 
         let mode = if active.is_some() {
             state::Mode::Terminal

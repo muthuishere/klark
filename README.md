@@ -1,3 +1,24 @@
+# klark
+
+klark is a terminal workspace for AI coding agents. It is based on
+[herdr](https://github.com/herdrdev/herdr), with a built-in link to a shared
+web hub.
+
+- **No phoning home.** Self-update, hosted release announcements and the remote
+  agent-detection catalog are disabled. klark uses only what is built into the
+  binary. Set `HERDR_AGENT_DETECTION_MANIFEST_CATALOG_URL` to opt back in to a
+  catalog.
+- **`klark link`.** Connects this machine to a [klark hub](hub/README.md), a
+  Blazor Server app where a team signs in and watches and answers the agents on
+  every linked machine. Panes stream only while someone is looking at them.
+
+Config and socket paths still use the `herdr` names for now, so existing setups
+keep working.
+
+---
+
+## Upstream herdr README
+
 # herdr
 
 

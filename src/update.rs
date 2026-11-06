@@ -2181,6 +2181,10 @@ fn preserve_preview_channel_for_install(
 
 /// Manual self-update command (`herdr update`).
 pub fn self_update(options: SelfUpdateOptions) -> Result<Version, String> {
+    if !cfg!(test) {
+        let _ = options;
+        return Err("self-update is disabled in klark; rebuild or reinstall from source".into());
+    }
     let channel = UpdateChannel::configured();
 
     if is_homebrew_managed_install() {

@@ -16,6 +16,7 @@ mod agent_view_eval;
 mod api;
 mod app;
 mod build_info;
+mod link_cmd;
 mod checksum;
 mod cli;
 mod client;
@@ -577,6 +578,10 @@ fn main() -> io::Result<()> {
         return client::run_client();
     }
 
+    if args.get(1).map(|s| s.as_str()) == Some("link") {
+        link_cmd::run(&args[2..]);
+    }
+
     if args.get(1).map(|s| s.as_str()) == Some("update") {
         let options = match update::parse_self_update_args(&args[2..]) {
             Ok(options) => options,
@@ -613,7 +618,7 @@ fn main() -> io::Result<()> {
         println!("       herdr --remote <ssh-target> [--session <name>]");
         println!("       herdr session attach <name>");
         println!("       herdr completion zsh");
-        println!("       herdr update [--handoff]");
+        println!("       klark link --hub <url> --token <token>");
         println!("       herdr channel set <stable|preview>");
         println!("       herdr machine <subcommand> ...");
         println!("       herdr server stop");
@@ -638,7 +643,6 @@ fn main() -> io::Result<()> {
                 "herdr status [server|client]",
                 "Show local client and running server status",
             ),
-            ("herdr update", "Download and install the latest version"),
             ("herdr completion zsh", "Generate shell completions for zsh"),
             (
                 "herdr server stop",
@@ -766,6 +770,7 @@ fn main() -> io::Result<()> {
                 "client",
                 "remote-client-bridge",
                 "update",
+                "link",
                 "status",
                 "config",
                 "channel",

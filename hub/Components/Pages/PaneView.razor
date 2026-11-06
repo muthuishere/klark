@@ -1,0 +1,102 @@
+@page "/m/{MachineId}/p/{PaneId}"
+@attribute [Authorize]
+@rendermode InteractiveServer
+@implements IAsyncDisposable
+@inject MachineRegistry Registry
+@inject IJSRuntime JS
+
+<PageTitle>@(pane?.Title ?? PaneId) · klark hub</PageTitle>
+
+<nav class="crumbs"><a href="/">Machines</a> / @MachineId / @(pane?.Title ?? PaneId)</nav>
+
+@if (machine is null)
+{
+    <p class="empty">Machine <b>@MachineId</b> is not linked right now.</p>
+}
+else
+{
+    <div class="pane-head">
+        <h1>@(pane?.Title ?? PaneId)</h1>
+        @if (pane is not null)
+        {
+            <span class="status status-@(string.IsNullOrEmpty(pane.AgentStatus) ? "none" : pane.AgentStatus)">@(string.IsNullOrEmpty(pane.AgentStatus) ? "shell" : pane.AgentStatus)</span>
+        }
+        @if (closedReason is not null) { <span class="closed">stream ended: @closedReason</span> }
+    </div>
+
+    <div class="terminal" @ref="terminalHost"></div>
+
+    <form class="reply" @onsubmit="SendAsync">
+        <input placeholder="Type a reply and press Enter…" @bind="reply" autocomplete="off" />
+        <button type="submit">Send</button>
+        <button type="button" @onclick='() => KeysAsync("esc")'>Esc</button>
+        <button type="button" @onclick='() => KeysAsync("ctrl+c")'>Ctrl-C</button>
+    </form>
+}
+
+@code {
+    [Parameter] public string MachineId { get; set; } = "";
+    [Parameter] public string PaneId { get; set; } = "";
+
+    private MachineConnection? machine;
+    private PaneInfo? pane;
+    private ElementReference terminalHost;
+    private IAsyncDisposable? watch;
+    private string reply = "";
+    private string? closedReason;
+    private string termId = Guid.NewGuid().ToString("N");
+
+    protected override void OnInitialized()
+    {
+        Registry.Changed += OnChanged;
+        Refresh();
+    }
+
+    private void Refresh()
+    {
+        machine = Registry.Get(MachineId);
+        pane = machine?.Tree.Panes.FirstOrDefault(p => p.Id == PaneId);
+    }
+
+    private void OnChanged() => InvokeAsync(() => { Refresh(); StateHasChanged(); });
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || machine is null) return;
+        await JS.InvokeVoidAsync("klarkTerm.open", termId, terminalHost);
+
+        // Paint the current screen first, then follow the live stream. The
+        // machine only starts streaming this pane because we are watching it.
+        watch = machine.Watch(PaneId,
+            bytes => InvokeAsync(() => JS.InvokeVoidAsync("klarkTerm.writeBase64", termId, bytes).AsTask()),
+            reason => InvokeAsync(() => { closedReason = reason; StateHasChanged(); }));
+        try
+        {
+            var screen = await machine.ReadScreenAsync(PaneId);
+            await JS.InvokeVoidAsync("klarkTerm.writeText", termId, screen);
+        }
+        catch (Exception e)
+        {
+            closedReason = e.Message;
+            StateHasChanged();
+        }
+    }
+
+    private async Task SendAsync()
+    {
+        if (machine is null || string.IsNullOrEmpty(reply)) return;
+        await machine.SendInputAsync(PaneId, reply);
+        await machine.SendKeysAsync(PaneId, "enter");
+        reply = "";
+    }
+
+    private Task KeysAsync(string key) => machine?.SendKeysAsync(PaneId, key) ?? Task.CompletedTask;
+
+    public async ValueTask DisposeAsync()
+    {
+        Registry.Changed -= OnChanged;
+        if (watch is not null) await watch.DisposeAsync();
+        try { await JS.InvokeVoidAsync("klarkTerm.close", termId); }
+        catch (JSDisconnectedException) { }
+    }
+}

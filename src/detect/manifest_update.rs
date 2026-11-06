@@ -233,6 +233,11 @@ pub(crate) struct ManifestUpdateOutput {
 }
 
 pub(crate) fn check_and_update() -> Result<ManifestUpdateOutput, String> {
+    // klark uses only the manifests bundled in the binary unless a catalog URL is
+    // configured explicitly through the environment.
+    if !cfg!(test) && std::env::var_os(CATALOG_URL_ENV).is_none() {
+        return Err("remote agent-detection catalog is disabled in klark".into());
+    }
     check_and_update_from_url(&catalog_url())
 }
 
