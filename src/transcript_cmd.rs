@@ -4,18 +4,14 @@
 //! conversation as structured items, read from the agent's own session log on
 //! this machine. The hub cannot read local files, so `klark expose` runs this.
 //!
-//! Structured logs: Claude Code JSONL only (`~/.claude/projects/<cwd-slug>/
-//! <session-id>.jsonl`). Every other agent, or no log found, falls back to the
-//! screen (`pane.read recent_unwrapped`) as one assistant text item.
+//! Structured logs: Claude Code JSONL (`~/.claude/projects/<cwd-slug>/
+//! <session-id>.jsonl`, `source:"jsonl"`) and Devin CLI's SQLite store
+//! (`~/.local/share/devin/cli/sessions.db`, `source:"db"`, see `devin.rs`;
+//! its cursors are node ids on the session's main chain). Every other agent,
+//! or no log found, falls back to the screen (`pane.read recent_unwrapped`)
+//! as one assistant text item.
 //!
-//! Devin was looked at (2026-11-06): its live sessions are in a SQLite file
-//! (`~/.local/share/devin/cli/sessions.db`, tables `message_nodes`,
-//! `sessions`, ...) and finished ones are exported as whole-JSON ATIF files
-//! (`.../cli/transcripts/<name>.json`). Neither can be tail-read, and klark has
-//! no SQLite dependency, so Devin uses the screen fallback for now; add a
-//! `LogFormat` variant and a reader in `structured_log` to support it.
-//!
-//! Cursors are decimal byte offsets into the log: an item's `cursor` is the
+//! JSONL cursors are decimal byte offsets into the log: an item's `cursor` is the
 //! offset of the JSONL line it came from, the result's `cursor` is the end of
 //! the last complete line read. They stay valid as the log grows (it is
 //! append-only). Only the tail is ever read: windows grow backwards from the
@@ -27,6 +23,8 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
+
+mod devin;
 
 pub const DEFAULT_LIMIT: usize = 200;
 pub const MAX_LIMIT: usize = 1000;
@@ -369,8 +367,15 @@ pub fn claude_log(
     scoped(root, &candidate)
 }
 
-/// (agent, log path, format) for a pane, from `pane.get`.
-fn structured_log(pane: &Value) -> (Option<String>, Option<(PathBuf, LogFormat)>) {
+/// Where a pane's structured transcript lives.
+enum Log {
+    File(PathBuf, LogFormat),
+    /// Devin's SQLite store and the session id in it.
+    Devin(PathBuf, String),
+}
+
+/// (agent, log) for a pane, from `pane.get`.
+fn structured_log(pane: &Value) -> (Option<String>, Option<Log>) {
     let s = |v: &Value, k: &str| v.get(k).and_then(Value::as_str).map(str::to_string);
     let session = pane.get("agent_session");
     let agent = s(pane, "agent")
@@ -388,7 +393,14 @@ fn structured_log(pane: &Value) -> (Option<String>, Option<(PathBuf, LogFormat)>
                         cwd.as_deref(),
                     )
                 })
-                .map(|p| (p, LogFormat::ClaudeJsonl))
+                .map(|p| Log::File(p, LogFormat::ClaudeJsonl))
+        }
+        Some("devin") | Some("devin-cli") => {
+            let id = session.and_then(|x| s(x, "value"));
+            devin::db_path().and_then(|db| {
+                let sid = devin::find_session(&db, id.as_deref(), cwd.as_deref())?;
+                Some(Log::Devin(db, sid))
+            })
         }
         // Extension point: add other agents' log readers here.
         _ => None,
@@ -441,20 +453,33 @@ fn transcript(o: Opts) -> Result<Value, String> {
     let info = up.call("pane.get", json!({"pane_id": o.pane}))?;
     let pane = info.get("pane").cloned().unwrap_or(info);
     let (agent, log) = structured_log(&pane);
-    if let Some((path, format)) = log {
-        let query = match (cursor(&o.after), cursor(&o.before)) {
-            (_, Some(b)) => Query::Before(b),
-            (Some(a), None) => Query::After(a),
-            _ => Query::Tail,
-        };
-        let page = read_page(&path, format, query, o.limit)
-            .map_err(|e| format!("{}: {e}", path.display()))?;
+    let query = match (cursor(&o.after), cursor(&o.before)) {
+        (_, Some(b)) => Query::Before(b),
+        (Some(a), None) => Query::After(a),
+        _ => Query::Tail,
+    };
+    let structured = match log {
+        Some(Log::File(path, format)) => Some(
+            read_page(&path, format, query, o.limit)
+                .map(|p| (p, "jsonl"))
+                .map_err(|e| format!("{}: {e}", path.display()))?,
+        ),
+        // A locked or unreadable store falls back to the screen.
+        Some(Log::Devin(db, sid)) => devin::read_page(&db, &sid, query, o.limit)
+            .ok()
+            .filter(|p| {
+                !p.items.is_empty() || cursor(&o.after).is_some() || cursor(&o.before).is_some()
+            })
+            .map(|p| (p, "db")),
+        None => None,
+    };
+    if let Some((page, source)) = structured {
         return Ok(json!({
             "agent": agent,
             "cursor": page.cursor.to_string(),
             "items": page.items,
             "has_more": page.has_more,
-            "source": "jsonl",
+            "source": source,
         }));
     }
     let read = up.call(
