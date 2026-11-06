@@ -9,10 +9,11 @@ klark machine ──(outbound wss, machine token)──▶ klark hub ◀──(b
 
 - **Machines dial out.** `klark link` opens one WebSocket to `/agent`. Nothing
   listens on the machine and no tunnel is needed.
-- **Lazy.** On connect a machine sends only its pane tree, and sends it again
-  only when it changes. A pane's terminal bytes flow only while at least one
-  person has that pane open. The first viewer starts the stream and the last
-  one to leave stops it.
+- **Always pull.** A machine never sends anything unasked. The hub pulls pane
+  trees only while someone has the machines page open, and gets "unchanged"
+  when nothing changed. A pane's output flows only while at least one person
+  has that pane open: the first viewer starts it and the last one to leave
+  stops it.
 - **Shared.** Every signed-in user sees every linked machine. Panes whose agent
   is blocked are listed first.
 - **Bounded.** From the hub, a machine accepts only reads (`pane.read`,
@@ -33,6 +34,31 @@ Or with Docker: put your users and machine hashes in `hub/appsettings.Production
 The hub is plain HTTP on port 8080; machines connect with `ws://`. Run it on a
 trusted network or VPN. Tokens and passwords cross the wire unencrypted, so for
 public exposure put a TLS proxy in front and use `wss://` (the link supports both).
+
+## Sign-in
+
+`Hub:Auth:Mode`:
+
+- `MockLdap` (default): a built-in pretend LDAP directory. Demo users are
+  `admin/admin`, `alice/alice` and `bob/bob`; set your own in
+  `Hub:Auth:MockUsers` (`Uid`, `Password`, `DisplayName`, `Groups`).
+- `Ldap`: a real server. Set `Hub:Auth:Ldap` (`Host`, `Port`, `UserDnTemplate`,
+  `GroupSearchBase`). To try it:
+  `HUB_AUTH_MODE=Ldap docker compose --profile ldap up -d --build`, which signs
+  in alice/alice or bob/bob against a test OpenLDAP.
+- `Local`: `Hub:Users` with `dotnet run -- hash-password` hashes.
+
+`Hub:Auth:AllowedGroups`, for example `["klark-users"]`, limits who can sign in.
+
+## Load test
+
+```bash
+# hub config: "Machines": [{ "Name": "load", "Fleet": true, "TokenSha256": "<hash-token fleet-secret>" }]
+cargo run --release -p klark-link --bin klark-loadtest -- \
+  --hub ws://localhost:8080/agent --token fleet-secret --machines 100 --seconds 60
+```
+
+Then sign in and open a few panes: only those panes start streaming.
 
 ## Storage
 
@@ -59,4 +85,4 @@ JSON messages `{"type": ...}`. Machines send them gzip-compressed in binary fram
 
 | machine → hub | hub → machine |
 |---|---|
-| `hello`, `tree`, `frame` (base64 ANSI), `closed`, `result`, `pong` | `subscribe`, `unsubscribe`, `input`, `keys`, `call`, `refresh`, `ping` |
+| `hello`, `tree` / `tree_unchanged` (only when asked), binary output frames, `closed`, `result`, `pong` | `get_tree`, `subscribe`, `unsubscribe`, `input`, `keys`, `call`, `ping` |

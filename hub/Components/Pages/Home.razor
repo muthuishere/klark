@@ -23,7 +23,7 @@
         <h2>@machine.Name <small>@machine.Host · klark @machine.Version · @machine.Tree.Panes.Count panes</small></h2>
         @if (panes.Count == 0)
         {
-            <p class="empty">@(machine.Tree.Panes.Count == 0 ? "Waiting for this machine's panes…" : "No pane matches the filter.")</p>
+            <p class="empty">@(machine.Tree.Panes.Count == 0 ? "Loading this machine's panes…" : "No pane matches the filter.")</p>
         }
         else
         {
@@ -47,7 +47,24 @@
 @code {
     private string filter = "";
 
-    protected override void OnInitialized() => Registry.Changed += OnChanged;
+    private PeriodicTimer? pullTimer;
+
+    // Lazy pull (ADR 0001, D11): trees are fetched only while this page is open,
+    // and a tree younger than 2 s is shared by everyone looking at it.
+    protected override void OnInitialized()
+    {
+        Registry.Changed += OnChanged;
+        pullTimer = new PeriodicTimer(TimeSpan.FromSeconds(3));
+        _ = PullLoopAsync(pullTimer);
+    }
+
+    private async Task PullLoopAsync(PeriodicTimer timer)
+    {
+        do
+        {
+            await Registry.RefreshTreesAsync(TimeSpan.FromSeconds(2));
+        } while (await timer.WaitForNextTickAsync());
+    }
 
     private int renderQueued;
 
@@ -63,7 +80,11 @@
         });
     }
 
-    public void Dispose() => Registry.Changed -= OnChanged;
+    public void Dispose()
+    {
+        Registry.Changed -= OnChanged;
+        pullTimer?.Dispose();
+    }
 
     private IEnumerable<PaneInfo> Visible(IEnumerable<PaneInfo> panes) =>
         string.IsNullOrWhiteSpace(filter)

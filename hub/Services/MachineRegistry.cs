@@ -34,6 +34,14 @@ public sealed class MachineRegistry
 
     public MachineConnection? Get(string id) => _machines.TryGetValue(id, out var m) ? m : null;
 
+    /// <summary>Pull every connected machine's tree that is older than maxAge, in parallel.</summary>
+    public Task RefreshTreesAsync(TimeSpan maxAge) =>
+        Task.WhenAll(_machines.Values.Select(async m =>
+        {
+            try { await m.EnsureTreeAsync(maxAge); }
+            catch (Exception e) when (e is TimeoutException or InvalidOperationException) { }
+        }));
+
     internal void NotifyChanged()
     {
         try { Changed?.Invoke(); }
@@ -41,9 +49,9 @@ public sealed class MachineRegistry
     }
 
     /// <summary>Serve one machine's WebSocket until it closes.</summary>
-    public async Task RunAsync(WebSocket socket, HubMachine machine, CancellationToken ct)
+    public async Task RunAsync(WebSocket socket, string machineId, CancellationToken ct)
     {
-        var conn = new MachineConnection(machine.Name, socket, this, _log);
+        var conn = new MachineConnection(machineId, socket, this, _log);
         if (_machines.TryGetValue(conn.Id, out var previous))
         {
             _log.LogInformation("machine {Machine} reconnected; dropping the old link", conn.Id);
@@ -95,6 +103,58 @@ public sealed class MachineConnection
     public string Version { get; private set; } = "";
     public DateTimeOffset ConnectedAt { get; } = DateTimeOffset.UtcNow;
     public SessionTree Tree { get; private set; } = SessionTree.Empty;
+
+    /// <summary>When the tree was last pulled; null until someone first looked.</summary>
+    public DateTimeOffset? TreeFetchedAt { get; private set; }
+
+    private string? _treeRev;
+    private TaskCompletionSource<bool>? _treePull;
+    private readonly object _treeLock = new();
+
+    /// <summary>
+    /// Pull the pane tree if the copy here is older than <paramref name="maxAge"/>.
+    /// Machines never push trees (ADR 0001, D11): this is the only way one
+    /// arrives, and concurrent viewers share a single in-flight pull.
+    /// </summary>
+    public async Task EnsureTreeAsync(TimeSpan maxAge)
+    {
+        Task pull;
+        lock (_treeLock)
+        {
+            if (TreeFetchedAt is { } at && DateTimeOffset.UtcNow - at < maxAge) return;
+            if (_treePull is null)
+            {
+                _treePull = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                _ = SendAsync(new { type = "get_tree", known_rev = _treeRev });
+            }
+            pull = _treePull.Task;
+        }
+        try
+        {
+            await pull.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        catch (TimeoutException)
+        {
+            // Let the next viewer ask again instead of waiting on a lost reply.
+            lock (_treeLock)
+            {
+                if (_treePull?.Task == pull) _treePull = null;
+            }
+            throw;
+        }
+    }
+
+    private void TreeArrived()
+    {
+        TaskCompletionSource<bool>? done;
+        lock (_treeLock)
+        {
+            TreeFetchedAt = DateTimeOffset.UtcNow;
+            done = _treePull;
+            _treePull = null;
+        }
+        done?.TrySetResult(true);
+    }
 
     /// <summary>
     /// Start watching a pane. The first viewer of a pane makes the machine start
@@ -205,6 +265,11 @@ public sealed class MachineConnection
 
     internal void FailPending()
     {
+        lock (_treeLock)
+        {
+            _treePull?.TrySetException(new InvalidOperationException("machine disconnected"));
+            _treePull = null;
+        }
         foreach (var tcs in _pending.Values)
         {
             tcs.TrySetException(new InvalidOperationException("machine disconnected"));
@@ -245,6 +310,12 @@ public sealed class MachineConnection
 
             try
             {
+                if (result.MessageType == WebSocketMessageType.Binary && message.Length >= 2 &&
+                    message.GetBuffer()[0] is FrameGzip or FrameRaw)
+                {
+                    await HandleBinaryFrameAsync(message);
+                    continue;
+                }
                 await HandleAsync(JsonNode.Parse(Decode(message, result.MessageType)));
             }
             catch (Exception e) when (e is JsonException or InvalidOperationException or FormatException or InvalidDataException)
@@ -252,6 +323,38 @@ public sealed class MachineConnection
                 _log.LogWarning(e, "bad message from {Machine}", Id);
             }
         }
+    }
+
+    private const byte FrameGzip = 0x01;
+    private const byte FrameRaw = 0x02;
+
+    /// <summary>
+    /// Terminal output: [kind][id length][pane id][raw or gzip bytes] (ADR 0001, D5).
+    /// No base64 and no JSON on the hot path.
+    /// </summary>
+    private async Task HandleBinaryFrameAsync(MemoryStream message)
+    {
+        var buf = message.GetBuffer();
+        var len = (int)message.Length;
+        int idLen = buf[1];
+        if (2 + idLen > len) throw new InvalidDataException("short frame");
+        var paneId = Encoding.UTF8.GetString(buf, 2, idLen);
+        byte[] raw;
+        if (buf[0] == FrameGzip)
+        {
+            using var src = new MemoryStream(buf, 2 + idLen, len - 2 - idLen, writable: false);
+            using var gz = new GZipStream(src, CompressionMode.Decompress);
+            using var dst = new MemoryStream();
+            gz.CopyTo(dst);
+            raw = dst.ToArray();
+        }
+        else
+        {
+            raw = buf.AsSpan(2 + idLen, len - 2 - idLen).ToArray();
+        }
+        _registry.Store.AppendOutput(Id, paneId, raw);
+        var b64 = Convert.ToBase64String(raw);
+        await DispatchAsync(paneId, v => v.OnFrame(b64));
     }
 
     /// <summary>Machines send gzip JSON in binary frames (ADR 0001, D5); text frames are plain JSON.</summary>
@@ -278,8 +381,13 @@ public sealed class MachineConnection
                 break;
             case "tree":
                 Tree = SessionTree.Parse(msg["snapshot"]);
+                _treeRev = msg["rev"]?.GetValue<string>();
                 _registry.Store.SaveTree(Id, msg["snapshot"]?.ToJsonString() ?? "null");
+                TreeArrived();
                 _registry.NotifyChanged();
+                break;
+            case "tree_unchanged":
+                TreeArrived();
                 break;
             case "frame":
                 var framePane = msg["pane_id"]?.GetValue<string>();

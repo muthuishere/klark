@@ -4,7 +4,7 @@
     <a class="brand" href="/">klark hub</a>
     <AuthorizeView>
         <Authorized>
-            <span class="who">@context.User.Identity?.Name</span>
+            <span class="who">@(context.User.FindFirst("display_name")?.Value ?? context.User.Identity?.Name)</span>
             <form method="post" action="/account/logout">
                 <AntiforgeryToken />
                 <button type="submit" class="link">Sign out</button>

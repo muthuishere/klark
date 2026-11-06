@@ -50,6 +50,7 @@ else
     {
         Registry.Changed += OnChanged;
         Refresh();
+        if (machine is not null) _ = machine.EnsureTreeAsync(TimeSpan.FromSeconds(5)).ContinueWith(_ => OnChanged());
     }
 
     private void Refresh()

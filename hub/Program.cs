@@ -22,6 +22,10 @@ if (args.Length == 2 && args[0] == "hash-token")
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.Configure<HubOptions>(builder.Configuration.GetSection("Hub"));
+builder.Services.AddSingleton<MockLdapDirectory>();
+builder.Services.AddSingleton<LdapDirectory>();
+builder.Services.AddSingleton<LocalDirectory>();
+builder.Services.AddSingleton<SignInService>();
 builder.Services.AddSingleton<HubStore>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<HubStore>());
 builder.Services.AddSingleton<MachineRegistry>();
@@ -71,22 +75,34 @@ app.Map("/agent", async (HttpContext ctx, MachineRegistry registry, IOptionsMoni
     {
         return Results.Unauthorized();
     }
+    var machineId = machine.Name;
+    if (machine.Fleet)
+    {
+        var member = new string(ctx.Request.Headers["X-Klark-Machine"].ToString()
+            .Where(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.').Take(64).ToArray());
+        if (member.Length == 0) return Results.BadRequest("fleet tokens need an X-Klark-Machine header");
+        machineId = $"{machine.Name}:{member}";
+    }
     using var socket = await ctx.WebSockets.AcceptWebSocketAsync();
-    await registry.RunAsync(socket, machine, ctx.RequestAborted);
+    await registry.RunAsync(socket, machineId, ctx.RequestAborted);
     return Results.Empty;
 });
 
 app.MapPost("/account/login", async (HttpContext ctx, [FromForm] string username, [FromForm] string password,
-    [FromForm] string? returnUrl, IOptionsMonitor<HubOptions> options) =>
+    [FromForm] string? returnUrl, SignInService signIn) =>
 {
-    var user = options.CurrentValue.Users.FirstOrDefault(u => string.Equals(u.Name, username, StringComparison.OrdinalIgnoreCase));
-    var ok = user is not null && !string.IsNullOrEmpty(user.PasswordHash) &&
-             new PasswordHasher<string>().VerifyHashedPassword("", user.PasswordHash, password) != PasswordVerificationResult.Failed;
-    if (!ok)
+    var user = await signIn.SignInAsync(username, password, ctx.RequestAborted);
+    if (user is null)
     {
         return Results.Redirect("/login?failed=1");
     }
-    var identity = new ClaimsIdentity(new[] { new Claim(ClaimTypes.Name, user!.Name) }, CookieAuthenticationDefaults.AuthenticationScheme);
+    var claims = new List<Claim>
+    {
+        new(ClaimTypes.Name, user.Name),
+        new("display_name", user.DisplayName),
+    };
+    claims.AddRange(user.Groups.Select(g => new Claim(ClaimTypes.Role, g)));
+    var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
     await ctx.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, new ClaimsPrincipal(identity));
     var target = !string.IsNullOrEmpty(returnUrl) && returnUrl.StartsWith('/') && !returnUrl.StartsWith("//") ? returnUrl : "/";
     return Results.LocalRedirect(target);

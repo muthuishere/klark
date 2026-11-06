@@ -24,8 +24,9 @@ use tungstenite::{Message, WebSocket};
 use protocol::{call_allowed, AgentMessage, HubMessage, PROTOCOL_VERSION};
 use upstream::{Observer, Upstream};
 
-const TREE_POLL: Duration = Duration::from_secs(2);
 const READ_TICK: Duration = Duration::from_millis(25);
+/// Handshake header carrying the machine's own id.
+pub const MACHINE_HEADER: &str = "X-Klark-Machine";
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone)]
@@ -58,21 +59,25 @@ pub fn run(config: LinkConfig) -> ! {
     }
 }
 
-type Socket = WebSocket<MaybeTlsStream<TcpStream>>;
+pub type Socket = WebSocket<MaybeTlsStream<TcpStream>>;
 
 /// One connection's lifetime.
-pub fn run_once(config: &LinkConfig) -> Result<(), String> {
-    let mut request = config
-        .hub_url
-        .as_str()
-        .into_client_request()
-        .map_err(|e| e.to_string())?;
-    let bearer = HeaderValue::from_str(&format!("Bearer {}", config.token))
+/// Open the hub WebSocket with the auth and machine headers.
+pub fn connect_hub(hub_url: &str, token: &str, machine_id: &str) -> Result<Socket, String> {
+    let mut request = hub_url.into_client_request().map_err(|e| e.to_string())?;
+    let bearer = HeaderValue::from_str(&format!("Bearer {token}"))
         .map_err(|_| "token contains invalid header characters".to_string())?;
     request.headers_mut().insert("Authorization", bearer);
-    let (mut ws, _) =
-        tungstenite::connect(request).map_err(|e| format!("connect {}: {e}", config.hub_url))?;
+    if let Ok(id) = HeaderValue::from_str(machine_id) {
+        request.headers_mut().insert(MACHINE_HEADER, id);
+    }
+    let (ws, _) = tungstenite::connect(request).map_err(|e| format!("connect {hub_url}: {e}"))?;
     set_read_timeout(&ws, Some(READ_TICK));
+    Ok(ws)
+}
+
+pub fn run_once(config: &LinkConfig) -> Result<(), String> {
+    let mut ws = connect_hub(&config.hub_url, &config.token, &config.machine_id)?;
     eprintln!("klark link: connected to {}", config.hub_url);
 
     let upstream = Upstream::new(config.socket.clone(), config.bin.clone());
@@ -107,31 +112,67 @@ pub fn run_once(config: &LinkConfig) -> Result<(), String> {
             Err(e) => return Err(format!("read: {e}")),
         }
 
-        // Outbound: terminal frames, closures, tree changes.
+        // Outbound: only output of panes the hub subscribed to.
         for msg in coalesce(session.drain()) {
             send(&mut ws, &msg)?;
-        }
-        if let Some(tree) = session.poll_tree() {
-            send(&mut ws, &tree)?;
         }
     }
 }
 
-fn send(ws: &mut Socket, msg: &AgentMessage) -> Result<(), String> {
+pub fn send(ws: &mut Socket, msg: &AgentMessage) -> Result<(), String> {
     ws.send(Message::binary(encode(msg)?))
         .map_err(|e| format!("send: {e}"))
 }
 
 /// Wire encoding: gzip-compressed JSON in a binary frame (ADR 0001, D5).
 pub fn encode(msg: &AgentMessage) -> Result<Vec<u8>, String> {
-    use std::io::Write as _;
+    if let AgentMessage::Frame { pane_id, bytes } = msg {
+        use base64::Engine as _;
+        if let Ok(raw) = base64::engine::general_purpose::STANDARD.decode(bytes.as_bytes()) {
+            if pane_id.len() <= u8::MAX as usize {
+                return Ok(encode_frame(pane_id, &raw));
+            }
+        }
+    }
     let json = serde_json::to_vec(msg).map_err(|e| e.to_string())?;
+    Ok(gzip(&json))
+}
+
+/// Binary frame layouts (ADR 0001, D5):
+///   0x1f …                       gzip JSON message (the gzip magic byte)
+///   0x01 len id gzip(raw)        terminal output, compressed
+///   0x02 len id raw              terminal output, too small to be worth gzip
+/// Raw output is never base64'd on the wire: base64 inflates it by a third and
+/// defeats gzip.
+pub const FRAME_GZIP: u8 = 0x01;
+pub const FRAME_RAW: u8 = 0x02;
+
+pub fn encode_frame(pane_id: &str, raw: &[u8]) -> Vec<u8> {
+    let compressed = if raw.len() >= 128 {
+        Some(gzip(raw))
+    } else {
+        None
+    };
+    let (kind, body) = match &compressed {
+        Some(gz) if gz.len() < raw.len() => (FRAME_GZIP, gz.as_slice()),
+        _ => (FRAME_RAW, raw),
+    };
+    let mut out = Vec::with_capacity(2 + pane_id.len() + body.len());
+    out.push(kind);
+    out.push(pane_id.len() as u8);
+    out.extend_from_slice(pane_id.as_bytes());
+    out.extend_from_slice(body);
+    out
+}
+
+fn gzip(data: &[u8]) -> Vec<u8> {
+    use std::io::Write as _;
     let mut gz = flate2::write::GzEncoder::new(
-        Vec::with_capacity(json.len() / 3 + 32),
+        Vec::with_capacity(data.len() / 3 + 32),
         flate2::Compression::fast(),
     );
-    gz.write_all(&json).map_err(|e| e.to_string())?;
-    gz.finish().map_err(|e| e.to_string())
+    let _ = gz.write_all(data);
+    gz.finish().unwrap_or_default()
 }
 
 /// Decode a hub message: gzip JSON in a binary frame, or plain JSON text.
@@ -202,8 +243,6 @@ pub struct Session {
     observers: HashMap<String, Observer>,
     frames_tx: Sender<AgentMessage>,
     frames_rx: Receiver<AgentMessage>,
-    last_tree: Option<Value>,
-    next_tree_poll: Instant,
 }
 
 impl Session {
@@ -214,8 +253,6 @@ impl Session {
             observers: HashMap::new(),
             frames_tx,
             frames_rx,
-            last_tree: None,
-            next_tree_poll: Instant::now(),
         }
     }
 
@@ -258,11 +295,7 @@ impl Session {
                 };
                 vec![AgentMessage::Result { id, result, error }]
             }
-            HubMessage::Refresh => {
-                self.last_tree = None;
-                self.next_tree_poll = Instant::now();
-                vec![]
-            }
+            HubMessage::GetTree { known_rev } => vec![self.tree(known_rev)],
             HubMessage::Ping => vec![AgentMessage::Pong],
         }
     }
@@ -293,25 +326,30 @@ impl Session {
         }
     }
 
-    /// The tree, if it is time to look and it changed since it was last sent.
-    pub fn poll_tree(&mut self) -> Option<AgentMessage> {
-        if Instant::now() < self.next_tree_poll {
-            return None;
-        }
-        self.next_tree_poll = Instant::now() + TREE_POLL;
+    /// The tree, or `TreeUnchanged` when the hub already holds this revision.
+    pub fn tree(&self, known_rev: Option<String>) -> AgentMessage {
         let snapshot = match self.upstream.snapshot() {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("klark link: snapshot: {e}");
-                return None;
+                serde_json::json!({"error": e})
             }
         };
-        if self.last_tree.as_ref() == Some(&snapshot) {
-            return None;
+        let rev = tree_rev(&snapshot);
+        if known_rev.as_deref() == Some(rev.as_str()) {
+            AgentMessage::TreeUnchanged { rev }
+        } else {
+            AgentMessage::Tree { rev, snapshot }
         }
-        self.last_tree = Some(snapshot.clone());
-        Some(AgentMessage::Tree { snapshot })
     }
+}
+
+/// Content revision of a tree: equal trees give equal revisions.
+pub fn tree_rev(snapshot: &Value) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    snapshot.to_string().hash(&mut h);
+    format!("{:016x}", h.finish())
 }
 
 #[cfg(test)]
@@ -345,6 +383,31 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn frames_go_binary_without_base64() {
+        let raw = "compiling crate\r\n".repeat(50);
+        let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &raw);
+        let wire = encode(&AgentMessage::Frame {
+            pane_id: "p1".into(),
+            bytes: b64,
+        })
+        .unwrap();
+        assert_eq!(wire[0], FRAME_GZIP);
+        assert_eq!(&wire[2..4], b"p1");
+        assert!(
+            wire.len() < raw.len() / 4,
+            "{} bytes for {}",
+            wire.len(),
+            raw.len()
+        );
+        let small = encode(&AgentMessage::Frame {
+            pane_id: "p1".into(),
+            bytes: "aGk=".into(),
+        })
+        .unwrap();
+        assert_eq!(small, vec![FRAME_RAW, 2, b'p', b'1', b'h', b'i']);
     }
 
     #[test]

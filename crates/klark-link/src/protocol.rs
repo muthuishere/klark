@@ -20,10 +20,16 @@ pub enum AgentMessage {
         machine_name: String,
         klark_version: String,
     },
-    /// The whole workspace/tab/pane tree (`session.snapshot` result), sent on
-    /// connect and whenever it changes.
+    /// Answer to `get_tree`: the workspace/tab/pane tree (`session.snapshot`)
+    /// with a revision the hub hands back next time.
     Tree {
+        rev: String,
         snapshot: serde_json::Value,
+    },
+    /// Answer to `get_tree` when the tree still has the revision the hub holds:
+    /// nothing is resent.
+    TreeUnchanged {
+        rev: String,
     },
     /// Terminal output for a subscribed pane, base64 ANSI bytes.
     Frame {
@@ -76,7 +82,12 @@ pub enum HubMessage {
         params: serde_json::Value,
     },
     /// Resend the tree now.
-    Refresh,
+    /// Pull the tree. Machines never push it: the hub asks only while someone
+    /// is looking (ADR 0001, D11).
+    GetTree {
+        #[serde(default)]
+        known_rev: Option<String>,
+    },
     Ping,
 }
 

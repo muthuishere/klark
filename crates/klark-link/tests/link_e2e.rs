@@ -84,21 +84,23 @@ fn link_serves_a_hub_lazily() {
         .set_read_timeout(Some(Duration::from_secs(10)))
         .unwrap();
 
-    let mut next = || -> Value {
-        loop {
-            if let Some(v) = decode(ws.read().unwrap()) {
-                return v;
-            }
-        }
-    };
-    let hello = next();
+    let hello = next(&mut ws);
     assert_eq!(hello["type"], "hello");
     assert_eq!(hello["machine_id"], "m1");
-    let tree = next();
+    // Nothing else arrives unasked: the hub pulls the tree.
+    ws.send(Message::text(json!({"type": "get_tree"}).to_string()))
+        .unwrap();
+    let tree = next(&mut ws);
     assert_eq!(tree["type"], "tree");
     assert_eq!(tree["snapshot"]["panes"][0]["pane_id"], "p1");
+    let rev = tree["rev"].as_str().unwrap().to_string();
+    ws.send(Message::text(
+        json!({"type": "get_tree", "known_rev": rev}).to_string(),
+    ))
+    .unwrap();
+    let again = next(&mut ws);
+    assert_eq!(again, json!({"type": "tree_unchanged", "rev": rev}));
 
-    drop(next);
     let send = |ws: &mut tungstenite::WebSocket<std::net::TcpStream>, v: Value| {
         ws.send(Message::text(v.to_string())).unwrap();
     };
@@ -119,7 +121,7 @@ fn link_serves_a_hub_lazily() {
     let mut results = Vec::new();
     while results.len() < 3 {
         if let Some(v) = decode(ws.read().unwrap()) {
-            if v["type"] != "tree" {
+            {
                 results.push(v);
             }
         }
@@ -155,5 +157,13 @@ fn decode(msg: Message) -> Option<Value> {
         }
         Message::Text(t) => Some(serde_json::from_str(&t).unwrap()),
         _ => None,
+    }
+}
+
+fn next(ws: &mut tungstenite::WebSocket<std::net::TcpStream>) -> Value {
+    loop {
+        if let Some(v) = decode(ws.read().unwrap()) {
+            return v;
+        }
     }
 }
