@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.DataProtection;
 using System.Security.Claims;
 using KlarkHub.Components;
 using KlarkHub.Services;
@@ -43,6 +44,11 @@ builder.Services.AddSingleton<JwtIssuer>();
 builder.Services.AddSingleton<Messaging>();
 builder.Services.AddSingleton<IPostConfigureOptions<JwtBearerOptions>, JwtBearerSetup>();
 builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower);
+// Keep cookie/antiforgery keys on the data volume, so a redeploy does not sign everyone out.
+builder.Services.AddDataProtection()
+    .SetApplicationName("klark-hub")
+    .PersistKeysToFileSystem(new DirectoryInfo(Path.Combine(
+        builder.Configuration["Hub:DataDir"] ?? "data", "keys")));
 builder.Services.AddResponseCompression();
 builder.Services.AddRazorComponents().AddInteractiveServerComponents();
 builder.Services.AddCascadingAuthenticationState();

@@ -24,39 +24,37 @@ klark machine ─┼────────────────────
 herdr-expose (`muthuishere/herdr-expose`) is a **separate product** that stays
 as it is. The hub follows its ideas but shares no code with it (ADR 0008).
 
-## ⚠️ The most important fact
+## State (2026-11-06, branch `klark-messaging`)
 
-**The klark binary and the hub have never been compiled or run.** The
-authoring sessions could not download Zig 0.16 or the .NET SDK, because the
-cloud network blocked them. What is verified:
+Both halves now build and run on a Mac:
+- `cargo build --release` works (Rust + Zig 0.16), and `just test` (nextest) passes: 3946 tests.
+- The hub builds on .NET 10, and its Docker image builds and serves requests.
+- Agents can message each other (ADR 0009) across sessions and across machines
+  through the hub. This was proven by `tests/msg_sessions.rs` and by a scripted
+  two-machine run against the real hub.
 
-| part | verified by |
-|---|---|
-| `crates/klark-link` (link protocol, wire encoding, jitter, URLs) | `cargo test -p klark-link`: 13 unit tests + 1 end-to-end test, all pass |
-| 100-machine behavior | `klark-loadtest` against a Python stand-in hub (`experiments/`), see `docs/experiments/E-01..E-04` |
-| maintenance scripts | 62 Python tests pass |
-| `src/` changes (rename, `klark link`, disabled updater) | **not compiled** |
-| `hub/` | **not compiled**; it was written without a compiler, so expect errors on the first build |
+Still unverified: sign-in against a real LDAP server (S-28), and clicking
+through the pane view in a browser (S-03).
 
 ## First steps for whoever picks this up
 
-1. **Build the hub:** `cd hub && docker compose up -d --build`, or
-   `dotnet build`. Fix the compile errors. (STATUS S-02)
-2. **Build klark:** install Zig 0.16 and set `ZIG=/path/to/zig`, then run
-   `cargo build --release` and `just test`. Fix any fallout from the herdr →
-   klark rename. (S-01)
-3. **End to end:**
-   1. Sign in to `http://localhost:8080` as `admin` / `admin` (the default mock
-      LDAP mode).
-   2. Configure a machine token (see `hub/README.md`).
-   3. On a machine, run
-      `klark link --hub ws://localhost:8080/agent --token <token>`.
-   4. Open a pane, type a reply, and check that it lands in the terminal. (S-03)
-4. **Measure the real hub** with `klark-loadtest --machines 100` and a fleet
-   token. Record CPU and RAM. (S-12, E-06)
-5. **GitHub cleanup (by hand):** delete the 10 old herdr workflow files in
-   `.github/workflows/`. There is no CI by decision (ADR 0007), and agent
-   sessions cannot touch that folder. (S-04)
+1. **Hub:**
+   - LDAP (the default):
+     `KLARK_HUB__AUTH__LDAP__HOST=<ldap> ... docker compose up -d --build`
+   - Built-in mock LDAP instead:
+     `KLARK_HUB_AUTH_MODE=MockLdap docker compose up -d --build`
+   - See `hub/README.md`.
+2. **klark:** `cargo build --release`, then `just test`.
+3. **Link a machine:**
+   `klark link --hub ws://<hub>:8080/agent --token <token>`.
+4. **Messaging:**
+   - Find agents: `klark msg ls`.
+   - Send: `klark msg send <machine>/<session>/<agent> "..."`.
+   - The receiving agent answers with `klark msg reply "..."`.
+   - People sign in with `klark msg login --hub <url> --user <name>`.
+5. **Try a real directory** (S-28), and **click through the browser** (S-03).
+6. **Measure the real hub** with `klark-loadtest --machines 100` (S-12, E-06).
+7. **Delete the old workflow files** in `.github/workflows/` by hand (S-04).
 
 ## Where things are
 
@@ -74,6 +72,8 @@ cloud network blocked them. What is verified:
 | `hub/Services/HubAccess.cs` | who sees and who may type |
 | `hub/Components/Pages/` | Home (machines), PaneView (live terminal, transcript), Go (share links), Login |
 | `skills/klark-share/SKILL.md` | "share this" → `klark link url` |
+| `src/msg_cmd.rs`, `skills/klark-msg/SKILL.md` | `klark msg`: agents messaging agents (ADR 0009) |
+| `hub/Services/Messaging.cs`, `ApiAuth.cs` | hub message routing, JWTs and machine-token API auth |
 | `experiments/` | `mockhub.py` and `drive.py` behind the experiments |
 
 ## Decisions (do not undo without a new ADR)
@@ -88,6 +88,7 @@ cloud network blocked them. What is verified:
 | 0006 | budget for 100+ machines |
 | 0007 | **no CI**; build and test by hand |
 | 0008 | the hub is a separate server; herdr-expose is a separate product |
+| 0009 | agents message agents (CLI → hub HTTP → link `deliver`); user JWTs; **LDAP is the default sign-in**, MockLdap opt-in |
 
 Rules for agents working here are in `AGENTS.md`. The contribution flow is in
 `CONTRIBUTING.md`.
@@ -99,7 +100,6 @@ Rules for agents working here are in `AGENTS.md`. The contribution flow is in
 - **Hub features:**
   - S-08 admin page for tokens and users;
   - S-24 guest links (no account, one pane, expiring, QR code);
-  - S-25 agent-to-agent messaging through the hub (write an ADR first);
   - S-26 disconnect or revoke a machine;
   - S-19 / S-21 search and blocked-pane notifications.
 - **klark side:**
@@ -114,8 +114,7 @@ Rules for agents working here are in `AGENTS.md`. The contribution flow is in
 
 - **Plain HTTP:** passwords and tokens cross the network in clear text. Run
   the hub on a trusted LAN or VPN.
-- **Mock LDAP is the default sign-in mode,** with demo passwords
-  (admin/admin…). Switch `Hub:Auth:Mode` before exposing the hub.
+- **MockLdap** (opt-in) has demo passwords (admin/admin…). Use it only for trials.
 - **Untested rename:** the herdr → klark rename touched ~300 files mechanically
   and moves `~/.config/herdr` to `~/.config/klark` on first run. Check this on
   a real install.
