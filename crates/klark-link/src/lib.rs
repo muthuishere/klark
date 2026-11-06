@@ -84,6 +84,32 @@ fn jitter_from(base: Duration, seed: u64) -> Duration {
     base.mul_f64(factor)
 }
 
+/// The browser link to a pane on the hub, built from the hub URL the link uses.
+///
+/// `ws://hub:8080/agent` becomes `http://hub:8080/go?machine=<name>&pane=<id>`
+/// (`wss` becomes `https`). The hub's `/go` route finds the machine by the name
+/// it reported in `hello`. This is what "share this" hands back (ADR 0008).
+pub fn pane_url(hub_url: &str, machine_name: &str, pane_id: &str) -> Result<String, String> {
+    let mut url = url::Url::parse(hub_url).map_err(|e| format!("hub url {hub_url}: {e}"))?;
+    let scheme = match url.scheme() {
+        "ws" | "http" => "http",
+        "wss" | "https" => "https",
+        other => {
+            return Err(format!(
+                "hub url scheme {other} is not ws, wss, http or https"
+            ))
+        }
+    };
+    url.set_scheme(scheme)
+        .map_err(|_| "cannot set url scheme".to_string())?;
+    url.set_path("/go");
+    url.set_query(None);
+    url.query_pairs_mut()
+        .append_pair("machine", machine_name)
+        .append_pair("pane", pane_id);
+    Ok(url.to_string())
+}
+
 pub type Socket = WebSocket<MaybeTlsStream<TcpStream>>;
 
 /// One connection's lifetime.
@@ -380,6 +406,20 @@ pub fn tree_rev(snapshot: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pane_url_maps_the_link_url_to_the_hub_page() {
+        assert_eq!(
+            pane_url("ws://hub.lan:8080/agent", "my laptop", "p 1").unwrap(),
+            "http://hub.lan:8080/go?machine=my+laptop&pane=p+1"
+        );
+        assert_eq!(
+            pane_url("wss://hub.example.com/agent", "m", "p1").unwrap(),
+            "https://hub.example.com/go?machine=m&pane=p1"
+        );
+        assert!(pane_url("ftp://x/agent", "m", "p").is_err());
+        assert!(pane_url("not a url", "m", "p").is_err());
+    }
 
     #[test]
     fn jitter_stays_within_half_to_one_and_a_half() {

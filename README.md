@@ -25,7 +25,11 @@ cargo build --release          # needs Zig 0.16 for the vendored libghostty-vt
 
 ```bash
 klark link --hub ws://hub-host:8080/agent --token <machine token> [--name laptop]
+klark link url            # inside a pane: the hub link to this pane ("share this")
 ```
+
+klark replaces herdr-expose: the hub is the web UI, and the `klark-share`
+skill lets an agent hand back its own link (ADR 0008).
 
 ## Layout
 
