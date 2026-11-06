@@ -30,6 +30,9 @@ var builder = WebApplication.CreateBuilder(args);
 // Command-line arguments are added again so they still win over the environment.
 builder.Configuration.AddEnvironmentVariables("KLARK_");
 builder.Configuration.AddCommandLine(args);
+// `dotnet run` outside Development must still serve Blazor's framework scripts
+// (_framework/blazor.web.js); a published build ignores this.
+builder.WebHost.UseStaticWebAssets();
 
 builder.Services.Configure<HubOptions>(builder.Configuration.GetSection("Hub"));
 builder.Services.AddSingleton<MockLdapDirectory>();
