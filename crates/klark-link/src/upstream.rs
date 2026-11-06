@@ -64,7 +64,7 @@ impl Upstream {
     #[cfg(not(unix))]
     pub fn call(&self, method: &str, _params: Value) -> Result<Value, String> {
         Err(format!(
-            "{method}: klark link is not supported on this platform yet"
+            "{method}: klark expose is not supported on this platform yet"
         ))
     }
 

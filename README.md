@@ -7,7 +7,7 @@ shared web hub.
   detach. Run `klark` to reattach, and `ctrl+b q` to detach.
 - **Agent-aware.** Every pane is marked working, blocked or idle, so you can
   see which agent is waiting for an answer.
-- **Hub link.** `klark link` connects this machine to a [klark hub](hub/README.md),
+- **Hub link.** `klark expose` connects this machine to a [klark hub](hub/README.md),
   a Blazor Server app where a team signs in and watches and answers the agents
   on every linked machine (built for 100+ machines). Panes stream only while
   someone is looking at them.
@@ -24,8 +24,8 @@ cargo build --release          # needs Zig 0.16 for the vendored libghostty-vt
 ## Link a machine to a hub
 
 ```bash
-klark link --hub ws://hub-host:8080/agent --token <machine token> [--name laptop]
-klark link url            # inside a pane: the hub link to this pane ("share this")
+klark expose --hub ws://hub-host:8080/agent --token <machine token> [--name laptop]
+klark expose url            # inside a pane: the hub link to this pane ("share this")
 ```
 
 The hub is a **separate web server**: deploy it anywhere with Docker

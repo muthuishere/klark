@@ -12,7 +12,7 @@ the ADRs and experiments. Last updated 2026-11-06 (first real builds; messaging,
 | D-04 | `crates/klark-link`: Rust port of expose's upstream layer and the hub link | 12 unit and end-to-end tests pass |
 | D-05 | Lazy pull protocol v1 (ADR 0002) | end-to-end test + E-01 |
 | D-06 | Binary output frames, 50 ms merging (E-02, E-03) | tests + experiments |
-| D-07 | `klark link` subcommand | **not compiled** (S-01) |
+| D-07 | `klark expose` subcommand | **not compiled** (S-01) |
 | D-08 | Blazor Server hub: sign-in, machines page, live pane view, reply/Esc/Ctrl-C | **not compiled** (S-02) |
 | D-09 | SQLite store, 10 MB per machine (ADR 0003) | **not compiled** |
 | D-10 | Mock LDAP, LDAP and local sign-in, allowed groups (ADR 0004) | **not compiled** |
@@ -28,7 +28,7 @@ the ADRs and experiments. Last updated 2026-11-06 (first real builds; messaging,
 | D-20 | S-14 reconnect backoff with ±50 % jitter | unit test |
 | D-22 | S-22/S-23 git hooks, commit-format checker, changelog tooling, release perf scripts and justfile release/preview/docs recipes removed; Windows packaging, libghostty-vt tooling and render benchmarks kept | 62 maintenance tests pass |
 | D-23 | Windows ConPTY: vendored portable-pty patches now read `KLARK_WINDOWS_CONPTY` and `klark-conpty.json`, matching the packaging script (the earlier rename had skipped `vendor/`, which would have made Windows reject its own bundle) | patch reverse-apply test + loader test pass; Windows not run |
-| D-24 | "share this" for klark (idea from herdr-expose): `klark link url` prints the hub link for the current pane; hub `/go` resolves the machine by reported name; `skills/klark-share` (ADR 0008) | `pane_url` unit test; `klark` and hub not compiled |
+| D-24 | "share this" for klark (idea from herdr-expose): `klark expose url` prints the hub link for the current pane; hub `/go` resolves the machine by reported name; `skills/klark-share` (ADR 0008) | `pane_url` unit test; `klark` and hub not compiled |
 | D-25 | S-01 first `cargo build --release` of klark (Zig 0.16, macOS); rename fallout fixed in tests (checksum fixture, endpoint shape hashes, announcements test, SIGPIPE leak in unit tests) | `just test` (nextest): 3946 passed |
 | D-26 | S-02 first hub build: .NET 10, Razor fix, SQLite advisory bump, per-machine store index bug (events table was never created), DataProtection keys kept in `/data/keys`, `.dockerignore` | `dotnet build` 0 warnings; `docker build` + `/healthz` + `/api/token` in the container |
 | D-27 | Sign-in: Ldap default (direct / search-then-bind, LDAPS, StartTLS, memberOf); MockLdap opt-in in the same image; `KLARK_` env prefix for hub settings | build + MockLdap runs; **real LDAP not yet tried** |
@@ -50,12 +50,12 @@ the ADRs and experiments. Last updated 2026-11-06 (first real builds; messaging,
 | S-08 | Admin page: machine tokens and users in hub.db | replaces appsettings editing |
 | S-12 | Measure Blazor circuits with 50+ viewers | E-06 |
 | S-15 | Switch the tree source from `session.snapshot` to klark `events.subscribe` (cheaper on the machine) | |
-| S-16 | Windows support for `klark link` (named pipe) | |
+| S-16 | Windows support for `klark expose` (named pipe) | |
 | S-17 | Remove dead updater code in `src/update.rs` | disabled, still compiled |
 
 | S-24 | Hub guest links: one pane, time-boxed, pairing code / QR, no account needed (idea from herdr-expose `share`) | ADR 0008 |
 | S-26 | Hub admin: disconnect a machine, revoke its token (idea from herdr-expose `panic`) | with S-08 |
-| S-27 | `klark link` as an autostart service (systemd user unit, launchd agent) + `klark link doctor` | |
+| S-27 | `klark expose` as an autostart service (systemd user unit, launchd agent) + `klark expose doctor` | |
 | S-21 | Hub: notify (browser notification or sound) when a visible pane turns `blocked` | part of S-19 |
 | S-19 | Pane search, filters and "blocked first" notifications (sound or push) in the hub | |
 

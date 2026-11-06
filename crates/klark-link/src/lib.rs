@@ -51,14 +51,14 @@ pub fn run(config: LinkConfig) -> ! {
     loop {
         let started = Instant::now();
         match run_once(&config) {
-            Ok(()) => eprintln!("klark link: hub closed the connection"),
-            Err(e) => eprintln!("klark link: {e}"),
+            Ok(()) => eprintln!("klark expose: hub closed the connection"),
+            Err(e) => eprintln!("klark expose: {e}"),
         }
         if started.elapsed() > Duration::from_secs(60) {
             backoff = Duration::from_secs(1);
         }
         let wait = jittered(backoff, &config.machine_id);
-        eprintln!("klark link: reconnecting in {:.1}s", wait.as_secs_f64());
+        eprintln!("klark expose: reconnecting in {:.1}s", wait.as_secs_f64());
         std::thread::sleep(wait);
         backoff = (backoff * 2).min(MAX_BACKOFF);
     }
@@ -130,7 +130,7 @@ pub fn connect_hub(hub_url: &str, token: &str, machine_id: &str) -> Result<Socke
 
 pub fn run_once(config: &LinkConfig) -> Result<(), String> {
     let mut ws = connect_hub(&config.hub_url, &config.token, &config.machine_id)?;
-    eprintln!("klark link: connected to {}", config.hub_url);
+    eprintln!("klark expose: connected to {}", config.hub_url);
 
     let upstream = Upstream::new(config.socket.clone(), config.bin.clone());
     let mut session = Session::new(upstream);
@@ -155,7 +155,7 @@ pub fn run_once(config: &LinkConfig) -> Result<(), String> {
                         send(&mut ws, &reply)?;
                     }
                 }
-                Some(Err(e)) => eprintln!("klark link: ignoring unknown hub message: {e}"),
+                Some(Err(e)) => eprintln!("klark expose: ignoring unknown hub message: {e}"),
                 None => {}
             },
             Err(tungstenite::Error::Io(e))
@@ -381,7 +381,7 @@ impl Session {
 
     fn fire(&self, method: &str, params: Value) -> Vec<AgentMessage> {
         if let Err(e) = self.upstream.call(method, params) {
-            eprintln!("klark link: {e}");
+            eprintln!("klark expose: {e}");
         }
         vec![]
     }
@@ -410,7 +410,7 @@ impl Session {
         let snapshot = match self.upstream.snapshot() {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("klark link: snapshot: {e}");
+                eprintln!("klark expose: snapshot: {e}");
                 serde_json::json!({"error": e})
             }
         };

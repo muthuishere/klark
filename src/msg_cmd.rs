@@ -35,7 +35,7 @@ commands:
   logout                                 forget the saved hub token
   status                                 hub, token expiry, running sessions
   deliver --session <s> --from <addr> <agent> <text...>
-                                         deliver locally (used by klark link)
+                                         deliver locally (used by klark expose)
 
 env: KLARK_HUB_URL, KLARK_HUB_JWT, KLARK_HUB_TOKEN (machine token), KLARK_MACHINE_NAME";
 
@@ -338,7 +338,7 @@ fn my_machine() -> String {
         .ok()
         .filter(|s| !s.trim().is_empty())
         .or_else(|| HubConfig::load().and_then(|h| h.name))
-        .unwrap_or_else(crate::link_cmd::hostname)
+        .unwrap_or_else(crate::expose_cmd::hostname)
 }
 
 fn my_pane() -> Option<String> {

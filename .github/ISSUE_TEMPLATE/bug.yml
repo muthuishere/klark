@@ -1,5 +1,5 @@
 name: Bug report
-description: Something in klark, klark link or the hub does not work as it should.
+description: Something in klark, klark expose or the hub does not work as it should.
 labels: ["bug"]
 body:
   - type: markdown
@@ -12,7 +12,7 @@ body:
       label: Area
       options:
         - klark (terminal / panes / agents)
-        - klark link (machine to hub)
+        - klark expose (machine to hub)
         - hub (web UI / sign-in / storage)
     validations:
       required: true

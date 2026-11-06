@@ -25,7 +25,7 @@ you are changing.
 ## Decisions you must not undo without a new ADR
 
 - **No phoning home.** klark makes no network calls of its own: no update
-  checks, announcements or remote catalogs (ADR 0001 D1). `klark link` talks
+  checks, announcements or remote catalogs (ADR 0001 D1). `klark expose` talks
   only to the hub the user configured.
 - **Always pull** (ADR 0002). A linked machine sends nothing unasked except
   `hello`. The hub pulls trees with `get_tree`. Pane output flows only between

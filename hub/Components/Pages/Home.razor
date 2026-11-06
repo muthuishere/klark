@@ -18,7 +18,7 @@
 @if (Mine.Count == 0 && offlineMachines.Count == 0)
 {
     <p class="empty">No machines are linked yet. On a machine, run
-        <code>klark link --hub ws://&lt;this-host&gt;:8080/agent --token &lt;token&gt;</code>.</p>
+        <code>klark expose --hub ws://&lt;this-host&gt;:8080/agent --token &lt;token&gt;</code>.</p>
 }
 
 @foreach (var machine in Mine)

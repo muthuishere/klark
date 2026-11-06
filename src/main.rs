@@ -16,7 +16,7 @@ mod agent_view_eval;
 mod api;
 mod app;
 mod build_info;
-mod link_cmd;
+mod expose_cmd;
 mod msg_cmd;
 mod checksum;
 mod cli;
@@ -579,8 +579,8 @@ fn main() -> io::Result<()> {
         return client::run_client();
     }
 
-    if args.get(1).map(|s| s.as_str()) == Some("link") {
-        link_cmd::run(&args[2..]);
+    if args.get(1).map(|s| s.as_str()) == Some("expose") {
+        expose_cmd::run(&args[2..]);
     }
 
     if args.get(1).map(|s| s.as_str()) == Some("msg") {
@@ -623,7 +623,7 @@ fn main() -> io::Result<()> {
         println!("       klark --remote <ssh-target> [--session <name>]");
         println!("       klark session attach <name>");
         println!("       klark completion zsh");
-        println!("       klark link --hub <url> --token <token>");
+        println!("       klark expose --hub <url> --token <token>");
         println!("       klark msg <whoami|ls|send|reply|log|name|login|status> ...");
         println!("       klark channel set <stable|preview>");
         println!("       klark machine <subcommand> ...");
@@ -776,7 +776,7 @@ fn main() -> io::Result<()> {
                 "client",
                 "remote-client-bridge",
                 "update",
-                "link",
+                "expose",
                 "status",
                 "config",
                 "channel",

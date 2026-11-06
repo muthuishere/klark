@@ -21,7 +21,7 @@ public sealed class HubOptions
     /// <summary>User JWTs for the CLI and /api (ADR 0009).</summary>
     public JwtOptions Jwt { get; set; } = new();
 
-    /// <summary>klark machines allowed to connect with `klark link`.</summary>
+    /// <summary>klark machines allowed to connect with `klark expose`.</summary>
     public List<HubMachine> Machines { get; set; } = new();
 }
 

@@ -12,11 +12,11 @@ Two things in one repository:
    calls.
 2. **klark hub**: a **separate web server** (C# Blazor Server, .NET 9, SQLite,
    Docker) in `hub/`. Deploy it anywhere. Any number of klark machines connect
-   to it with `klark link`, and many people sign in to watch and answer every
+   to it with `klark expose`, and many people sign in to watch and answer every
    machine's agents. It is built for 100+ machines.
 
 ```
-klark machine ─┐  klark link --hub ws://<hub>:8080/agent --token …
+klark machine ─┐  klark expose --hub ws://<hub>:8080/agent --token …
 klark machine ─┼──────────────────────────────▶  hub (Docker)  ◀── browsers
       …        ┘   machines dial out; the hub pulls; nothing is pushed unasked
 ```
@@ -46,7 +46,7 @@ through the pane view in a browser (S-03).
    - See `hub/README.md`.
 2. **klark:** `cargo build --release`, then `just test`.
 3. **Link a machine:**
-   `klark link --hub ws://<hub>:8080/agent --token <token>`.
+   `klark expose --hub ws://<hub>:8080/agent --token <token>`.
 4. **Messaging:**
    - Find agents: `klark msg ls`.
    - Send: `klark msg send <machine>/<session>/<agent> "..."`.
@@ -60,7 +60,7 @@ through the pane view in a browser (S-03).
 
 | path | what |
 |---|---|
-| `src/link_cmd.rs` | `klark link` and `klark link url` |
+| `src/link_cmd.rs` | `klark expose` and `klark expose url` |
 | `crates/klark-link/src/protocol.rs` | wire protocol v1: every message, the read-only call allow-list |
 | `crates/klark-link/src/lib.rs` | connection loop, binary frames, 50 ms merging, reconnect jitter, `pane_url` |
 | `crates/klark-link/src/upstream.rs` | talks to the local klark socket API and `terminal session observe` |
@@ -71,7 +71,7 @@ through the pane view in a browser (S-03).
 | `hub/Services/Directory.cs` | sign-in: MockLdap / Ldap / Local |
 | `hub/Services/HubAccess.cs` | who sees and who may type |
 | `hub/Components/Pages/` | Home (machines), PaneView (live terminal, transcript), Go (share links), Login |
-| `skills/klark-share/SKILL.md` | "share this" → `klark link url` |
+| `skills/klark-share/SKILL.md` | "share this" → `klark expose url` |
 | `src/msg_cmd.rs`, `skills/klark-msg/SKILL.md` | `klark msg`: agents messaging agents (ADR 0009) |
 | `hub/Services/Messaging.cs`, `ApiAuth.cs` | hub message routing, JWTs and machine-token API auth |
 | `experiments/` | `mockhub.py` and `drive.py` behind the experiments |
@@ -104,9 +104,9 @@ Rules for agents working here are in `AGENTS.md`. The contribution flow is in
   - S-19 / S-21 search and blocked-pane notifications.
 - **klark side:**
   - S-15 build the tree from `events.subscribe` instead of polling snapshots;
-  - S-16 Windows `klark link`;
+  - S-16 Windows `klark expose`;
   - S-17 remove the dead updater code;
-  - S-27 `klark link` as an autostart service and `doctor`.
+  - S-27 `klark expose` as an autostart service and `doctor`.
 - **Experiments still to run:** E-05..E-10 (adaptive merging, real hub
   resources, zstd, SQLite load, phone rendering, reconnect storm).
 

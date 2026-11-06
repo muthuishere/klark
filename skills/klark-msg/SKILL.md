@@ -55,7 +55,7 @@ sent and received messages.
 ## Another machine: the hub
 
 Messages to another machine go through the klark hub. The machine needs a hub
-URL and a token: either `klark link` is set up (`KLARK_HUB_URL` and
+URL and a token: either `klark expose` is set up (`KLARK_HUB_URL` and
 `KLARK_HUB_TOKEN`), or a person logs in once:
 
 ```bash

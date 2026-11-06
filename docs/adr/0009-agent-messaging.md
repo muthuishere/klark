@@ -14,7 +14,7 @@ and so does the `klark-msg` skill, which wraps the CLI.
 `<machine>/<session>/<agent>`:
 - `agent`: the agent's name (`klark agent rename`), or a pane id.
 - `session`: a klark session name; the default session is `default`.
-- `machine`: the name the hub knows the machine by (`klark link --name`, or
+- `machine`: the name the hub knows the machine by (`klark expose --name`, or
   `KLARK_MACHINE_NAME`, or the host name).
 
 Short forms resolve locally: `agent` searches every running session on this
@@ -47,7 +47,7 @@ target's existing link.
 
 Hub HTTP API (`http://<hub>:8080`, the same host as `ws://<hub>:8080/agent`).
 Every call takes `Authorization: Bearer <token>`, where the token is either:
-- a **machine token**, the same one `klark link` uses (the caller acts as that machine); or
+- a **machine token**, the same one `klark expose` uses (the caller acts as that machine); or
 - a **user JWT** (see below). The user must be able to see the target machine
   and type into it (ADR 0004 groups).
 

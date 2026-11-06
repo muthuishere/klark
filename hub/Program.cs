@@ -112,7 +112,7 @@ app.UseAuthorization();
 app.UseAntiforgery();
 app.MapStaticAssets();
 
-// klark machines dial in here: `klark link --hub ws://<host>:8080/agent --token <token>`.
+// klark machines dial in here: `klark expose --hub ws://<host>:8080/agent --token <token>`.
 app.Map("/agent", async (HttpContext ctx, MachineRegistry registry, IOptionsMonitor<HubOptions> options) =>
 {
     if (!ctx.WebSockets.IsWebSocketRequest)

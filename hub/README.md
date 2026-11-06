@@ -7,7 +7,7 @@ the coding agents on many klark machines from one place.
 klark machine ──(outbound wss, machine token)──▶ klark hub ◀──(browser, sign-in)── people
 ```
 
-- **Machines dial out.** `klark link` opens one WebSocket to `/agent`. Nothing
+- **Machines dial out.** `klark expose` opens one WebSocket to `/agent`. Nothing
   listens on the machine and no tunnel is needed.
 - **Always pull.** A machine never sends anything unasked. The hub pulls pane
   trees only while someone has the machines page open, and gets "unchanged"
@@ -162,7 +162,7 @@ Writes are batched by one background writer, so disk never slows the machine soc
 ## Link a machine
 
 ```bash
-klark link --hub ws://hub-host:8080/agent --token <machine token> [--name laptop]
+klark expose --hub ws://hub-host:8080/agent --token <machine token> [--name laptop]
 # or KLARK_HUB_URL / KLARK_HUB_TOKEN / KLARK_MACHINE_NAME
 ```
 
