@@ -7,7 +7,8 @@
 
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL_VERSION: u32 = 1;
+/// v2 adds `list_agents` and `deliver` (agent messaging, ADR 0009).
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// Machine -> hub.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -89,6 +90,20 @@ pub enum HubMessage {
         known_rev: Option<String>,
     },
     Ping,
+    /// v2: list every agent in every running local session, answered with
+    /// `result {id, result: [{session, name, agent, pane_id, status, address}]}`.
+    ListAgents {
+        id: String,
+    },
+    /// v2: deliver a message to a local agent as a prompt (ADR 0009), answered
+    /// with `result {id, result: {delivered: true}}` or `result {id, error}`.
+    Deliver {
+        id: String,
+        session: String,
+        agent: String,
+        from: String,
+        text: String,
+    },
 }
 
 /// Socket API methods the hub may invoke through `call`. Anything that can
@@ -138,6 +153,46 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&msg).unwrap(),
             r#"{"type":"frame","pane_id":"p1","bytes":"aGk="}"#
+        );
+    }
+
+    #[test]
+    fn v2_messaging_shapes() {
+        assert_eq!(PROTOCOL_VERSION, 2);
+        let msg: HubMessage = serde_json::from_str(r#"{"type":"list_agents","id":"7"}"#).unwrap();
+        assert_eq!(msg, HubMessage::ListAgents { id: "7".into() });
+
+        let raw = r#"{"type":"deliver","id":"8","session":"work","agent":"reviewer","from":"m/default/cli","text":"hi"}"#;
+        let msg: HubMessage = serde_json::from_str(raw).unwrap();
+        assert_eq!(
+            msg,
+            HubMessage::Deliver {
+                id: "8".into(),
+                session: "work".into(),
+                agent: "reviewer".into(),
+                from: "m/default/cli".into(),
+                text: "hi".into(),
+            }
+        );
+        assert_eq!(serde_json::to_string(&msg).unwrap(), raw);
+
+        let ok = AgentMessage::Result {
+            id: "8".into(),
+            result: Some(serde_json::json!({"delivered": true})),
+            error: None,
+        };
+        assert_eq!(
+            serde_json::to_string(&ok).unwrap(),
+            r#"{"type":"result","id":"8","result":{"delivered":true}}"#
+        );
+        let err = AgentMessage::Result {
+            id: "8".into(),
+            result: None,
+            error: Some("blocked".into()),
+        };
+        assert_eq!(
+            serde_json::to_string(&err).unwrap(),
+            r#"{"type":"result","id":"8","error":"blocked"}"#
         );
     }
 

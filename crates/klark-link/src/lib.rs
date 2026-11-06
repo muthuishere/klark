@@ -5,6 +5,7 @@
 //! the pane tree on connect and on change, terminal bytes only for panes the hub
 //! subscribes to, and reads only when asked.
 
+pub mod http;
 pub mod protocol;
 pub mod upstream;
 
@@ -22,7 +23,7 @@ use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{Message, WebSocket};
 
 use protocol::{call_allowed, AgentMessage, HubMessage, PROTOCOL_VERSION};
-use upstream::{Observer, Upstream};
+use upstream::{MsgReply, Observer, Upstream};
 
 /// Upper bound on one loop turn, and so on how long pane output is merged
 /// before sending. 50 ms halves message count vs 25 ms and lets gzip pay off
@@ -348,6 +349,33 @@ impl Session {
             }
             HubMessage::GetTree { known_rev } => vec![self.tree(known_rev)],
             HubMessage::Ping => vec![AgentMessage::Pong],
+            // v2 messaging (ADR 0009): run our own `klark msg` so local and
+            // remote delivery share one code path. Answered asynchronously
+            // through the frames channel, so a slow pane never stalls the link.
+            HubMessage::ListAgents { id } => {
+                self.upstream.run_msg(
+                    id,
+                    vec!["msg".into(), "ls".into(), "--local".into(), "--json".into()],
+                    MsgReply::Json,
+                    self.frames_tx.clone(),
+                );
+                vec![]
+            }
+            HubMessage::Deliver {
+                id,
+                session,
+                agent,
+                from,
+                text,
+            } => {
+                self.upstream.run_msg(
+                    id,
+                    deliver_args(&session, &agent, &from, &text),
+                    MsgReply::Delivered,
+                    self.frames_tx.clone(),
+                );
+                vec![]
+            }
         }
     }
 
@@ -393,6 +421,22 @@ impl Session {
             AgentMessage::Tree { rev, snapshot }
         }
     }
+}
+
+/// `klark msg deliver` arguments for a hub `deliver` (ADR 0009). `--` keeps a
+/// message that starts with `-` from being read as a flag.
+pub fn deliver_args(session: &str, agent: &str, from: &str, text: &str) -> Vec<String> {
+    vec![
+        "msg".into(),
+        "deliver".into(),
+        "--session".into(),
+        session.into(),
+        "--from".into(),
+        from.into(),
+        agent.into(),
+        "--".into(),
+        text.into(),
+    ]
 }
 
 /// Content revision of a tree: equal trees give equal revisions.
