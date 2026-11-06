@@ -440,7 +440,7 @@ impl HubConfig {
 }
 
 /// The hub's HTTP base: KLARK_HUB_URL, else hub.json.
-fn hub_base() -> Option<Result<String, String>> {
+pub(crate) fn hub_base() -> Option<Result<String, String>> {
     let url = std::env::var("KLARK_HUB_URL")
         .ok()
         .filter(|s| !s.trim().is_empty())

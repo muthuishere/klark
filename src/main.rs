@@ -16,8 +16,6 @@ mod agent_view_eval;
 mod api;
 mod app;
 mod build_info;
-mod expose_cmd;
-mod msg_cmd;
 mod checksum;
 mod cli;
 mod client;
@@ -25,6 +23,10 @@ mod config;
 mod copy_mode;
 mod detect;
 mod events;
+mod expose_cmd;
+mod msg_cmd;
+mod offer_cmd;
+mod transcript_cmd;
 use ghostty_vt as ghostty;
 mod handoff_runtime;
 mod input;
@@ -587,6 +589,15 @@ fn main() -> io::Result<()> {
         msg_cmd::run(&args[2..]);
     }
 
+    if args.get(1).map(|s| s.as_str()) == Some("offer") {
+        offer_cmd::run(&args[2..]);
+    }
+
+    // Hidden: answers the hub's get_transcript for `klark expose` (ADR 0011).
+    if args.get(1).map(|s| s.as_str()) == Some("transcript") {
+        transcript_cmd::run(&args[2..]);
+    }
+
     if args.get(1).map(|s| s.as_str()) == Some("update") {
         let options = match update::parse_self_update_args(&args[2..]) {
             Ok(options) => options,
@@ -777,6 +788,7 @@ fn main() -> io::Result<()> {
                 "remote-client-bridge",
                 "update",
                 "expose",
+                "offer",
                 "status",
                 "config",
                 "channel",

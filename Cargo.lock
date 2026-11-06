@@ -1113,8 +1113,10 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "flate2",
+ "libc",
  "serde",
  "serde_json",
+ "sha2",
  "tungstenite",
  "url",
 ]

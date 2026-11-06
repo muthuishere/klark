@@ -4,8 +4,9 @@
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -73,51 +74,180 @@ impl Upstream {
         Ok(result.get("snapshot").cloned().unwrap_or(result))
     }
 
-    /// Start `klark terminal session observe <pane>`; every output chunk is
-    /// forwarded as an `AgentMessage::Frame`. Observe never resizes the pane.
+    /// The pane's real PTY size (cols, rows).
+    ///
+    /// `terminal session observe` does NOT resize the pane: the server renders
+    /// the pane's grid into a virtual area of the observer's handshake size
+    /// (default 120x40, src/cli.rs), clipping or padding it. So the exposer
+    /// must pass the pane's own size. The API has no size field, but
+    /// `pane.process_info` names the pane's tty, and TIOCGWINSZ on that tty is
+    /// exactly what the program in the pane sees.
+    pub fn pane_size(&self, pane_id: &str) -> Option<(u16, u16)> {
+        let info = self
+            .call("pane.process_info", json!({"pane_id": pane_id}))
+            .ok()?;
+        let info = info.get("process_info").unwrap_or(&info);
+        // `tty` is not filled in by the server today (src/app/api/panes.rs
+        // handle_pane_process_info sets None), so derive it from the shell pid.
+        let tty = match info.get("tty").and_then(Value::as_str) {
+            Some(t) => PathBuf::from(t),
+            None => tty_of_pid(info.get("shell_pid").and_then(Value::as_u64)? as u32)?,
+        };
+        tty_size(&tty)
+    }
+
+    /// Stream `klark terminal session observe <pane>` at the pane's own size.
+    /// Every output chunk is forwarded as an `AgentMessage::Frame`; the size
+    /// as `AgentMessage::PaneSize` on start and on every change. A pane resize
+    /// restarts the observer at the new size (its first frame is full).
     pub fn observe(&self, pane_id: &str, out: Sender<AgentMessage>) -> Result<Observer, String> {
-        let mut child = Command::new(&self.bin)
-            .args(["terminal", "session", "observe", pane_id])
+        let stop = Arc::new(AtomicBool::new(false));
+        let slot: Arc<Mutex<Option<Child>>> = Arc::new(Mutex::new(None));
+        let first = self.spawn_observer(pane_id, self.pane_size(pane_id))?;
+        let up = self.clone();
+        let pane = pane_id.to_string();
+        let (stop2, slot2) = (stop.clone(), slot.clone());
+        thread::Builder::new()
+            .name(format!("klark-link-observe-{pane}"))
+            .spawn(move || up.supervise(pane, first, out, stop2, slot2))
+            .map_err(|e| e.to_string())?;
+        Ok(Observer { stop, child: slot })
+    }
+
+    fn spawn_observer(
+        &self,
+        pane_id: &str,
+        size: Option<(u16, u16)>,
+    ) -> Result<(Child, Option<(u16, u16)>), String> {
+        let mut cmd = Command::new(&self.bin);
+        cmd.args(["terminal", "session", "observe", pane_id]);
+        if let Some((cols, rows)) = size {
+            cmd.args(["--cols", &cols.to_string(), "--rows", &rows.to_string()]);
+        }
+        let child = cmd
             .env("KLARK_SOCKET_PATH", &self.socket)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
             .map_err(|e| format!("observe {pane_id}: {e}"))?;
-        let stdout = child.stdout.take().ok_or("observe: no stdout")?;
-        let pane = pane_id.to_string();
-        thread::Builder::new()
-            .name(format!("klark-link-observe-{pane}"))
-            .spawn(move || {
-                let mut reason = "eof".to_string();
-                for line in BufReader::new(stdout).lines() {
-                    let Ok(line) = line else { break };
-                    match parse_observe_line(&line) {
-                        ObserveLine::Bytes(bytes) => {
-                            if out
-                                .send(AgentMessage::Frame {
-                                    pane_id: pane.clone(),
-                                    bytes,
-                                })
-                                .is_err()
-                            {
+        Ok((child, size))
+    }
+
+    fn supervise(
+        &self,
+        pane: String,
+        first: (Child, Option<(u16, u16)>),
+        out: Sender<AgentMessage>,
+        stop: Arc<AtomicBool>,
+        slot: Arc<Mutex<Option<Child>>>,
+    ) {
+        let mut last_sent: Option<(u16, u16)> = None;
+        let send_size = |size: (u16, u16), last: &mut Option<(u16, u16)>| {
+            if *last != Some(size) && !stop.load(Ordering::SeqCst) {
+                *last = Some(size);
+                let _ = out.send(AgentMessage::PaneSize {
+                    pane_id: pane.clone(),
+                    cols: size.0,
+                    rows: size.1,
+                });
+            }
+        };
+        let mut next = Some(first);
+        loop {
+            let (mut child, size) = match next.take() {
+                Some(c) => c,
+                None => match self.spawn_observer(&pane, self.pane_size(&pane)) {
+                    Ok(c) => c,
+                    Err(reason) => {
+                        if !stop.load(Ordering::SeqCst) {
+                            let _ = out.send(AgentMessage::Closed {
+                                pane_id: pane.clone(),
+                                reason,
+                            });
+                        }
+                        return;
+                    }
+                },
+            };
+            let Some(stdout) = child.stdout.take() else {
+                return;
+            };
+            *slot.lock().unwrap() = Some(child);
+            if stop.load(Ordering::SeqCst) {
+                kill_slot(&slot);
+                return;
+            }
+            if let Some(size) = size {
+                send_size(size, &mut last_sent);
+            }
+            // Poll the pane's size; on a change, kill this observer so the
+            // read loop below ends and we restart at the new size.
+            let resized = Arc::new(AtomicBool::new(false));
+            let done = Arc::new(AtomicBool::new(false));
+            if size.is_some() {
+                let (up, pane, slot, stop) =
+                    (self.clone(), pane.clone(), slot.clone(), stop.clone());
+                let (resized, done) = (resized.clone(), done.clone());
+                let _ = thread::Builder::new()
+                    .name(format!("klark-link-size-{pane}"))
+                    .spawn(move || {
+                        while !done.load(Ordering::SeqCst) && !stop.load(Ordering::SeqCst) {
+                            thread::sleep(SIZE_POLL);
+                            if done.load(Ordering::SeqCst) {
                                 return;
                             }
+                            if let Some(now) = up.pane_size(&pane) {
+                                if Some(now) != size {
+                                    resized.store(true, Ordering::SeqCst);
+                                    kill_slot(&slot);
+                                    return;
+                                }
+                            }
                         }
-                        ObserveLine::Closed(r) => {
-                            reason = r;
-                            break;
+                    });
+            }
+            let mut reason = "eof".to_string();
+            for line in BufReader::new(stdout).lines() {
+                let Ok(line) = line else { break };
+                match parse_observe_line(&line) {
+                    ObserveLine::Frame { bytes, size, .. } => {
+                        if let Some(size) = size {
+                            send_size(size, &mut last_sent);
                         }
-                        ObserveLine::Ignore => {}
+                        if out
+                            .send(AgentMessage::Frame {
+                                pane_id: pane.clone(),
+                                bytes,
+                            })
+                            .is_err()
+                        {
+                            done.store(true, Ordering::SeqCst);
+                            kill_slot(&slot);
+                            return;
+                        }
                     }
+                    ObserveLine::Closed(r) => {
+                        reason = r;
+                        break;
+                    }
+                    ObserveLine::Ignore => {}
                 }
-                let _ = out.send(AgentMessage::Closed {
-                    pane_id: pane,
-                    reason,
-                });
-            })
-            .map_err(|e| e.to_string())?;
-        Ok(Observer { child })
+            }
+            done.store(true, Ordering::SeqCst);
+            kill_slot(&slot);
+            if stop.load(Ordering::SeqCst) {
+                return;
+            }
+            if resized.load(Ordering::SeqCst) {
+                continue;
+            }
+            let _ = out.send(AgentMessage::Closed {
+                pane_id: pane,
+                reason,
+            });
+            return;
+        }
     }
 
     /// Run `klark <args>` (a `klark msg` subcommand) on a thread with a
@@ -234,16 +364,67 @@ fn msg_result(id: String, reply: MsgReply, outcome: RunOutcome) -> AgentMessage 
     AgentMessage::Result { id, result, error }
 }
 
-/// A running pane observer; killed when dropped.
+/// How often a subscribed pane's size is checked for a resize.
+const SIZE_POLL: Duration = Duration::from_secs(1);
+
+/// A running pane observer; killed when dropped, and then silent (no
+/// `closed`, no `pane_size`) since the pane is no longer subscribed.
 pub struct Observer {
-    child: Child,
+    stop: Arc<AtomicBool>,
+    child: Arc<Mutex<Option<Child>>>,
 }
 
 impl Drop for Observer {
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        self.stop.store(true, Ordering::SeqCst);
+        kill_slot(&self.child);
     }
+}
+
+fn kill_slot(slot: &Mutex<Option<Child>>) {
+    if let Some(mut child) = slot.lock().unwrap_or_else(|e| e.into_inner()).take() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+}
+
+/// TIOCGWINSZ on a tty path: (cols, rows), or None.
+#[cfg(unix)]
+pub fn tty_size(tty: &Path) -> Option<(u16, u16)> {
+    use std::os::unix::fs::OpenOptionsExt;
+    use std::os::unix::io::AsRawFd;
+    let f = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOCTTY | libc::O_NONBLOCK)
+        .open(tty)
+        .ok()?;
+    let mut ws: libc::winsize = unsafe { std::mem::zeroed() };
+    let rc = unsafe { libc::ioctl(f.as_raw_fd(), libc::TIOCGWINSZ, &mut ws) };
+    (rc == 0 && ws.ws_col > 0 && ws.ws_row > 0).then_some((ws.ws_col, ws.ws_row))
+}
+
+#[cfg(not(unix))]
+pub fn tty_size(_tty: &Path) -> Option<(u16, u16)> {
+    None
+}
+
+/// The controlling tty of a process: /proc on Linux, `ps` elsewhere.
+pub fn tty_of_pid(pid: u32) -> Option<PathBuf> {
+    if let Ok(p) = std::fs::read_link(format!("/proc/{pid}/fd/0")) {
+        if p.starts_with("/dev/") {
+            return Some(p);
+        }
+    }
+    let out = Command::new("ps")
+        .args(["-o", "tty=", "-p", &pid.to_string()])
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if name.is_empty() || name.contains('?') || name.contains('/') && !name.starts_with("pts/") {
+        return None;
+    }
+    Some(PathBuf::from("/dev").join(name))
 }
 
 fn parse_response(method: &str, line: &str) -> Result<Value, String> {
@@ -262,7 +443,13 @@ fn parse_response(method: &str, line: &str) -> Result<Value, String> {
 
 #[derive(Debug, PartialEq)]
 enum ObserveLine {
-    Bytes(String),
+    /// `size` is the frame's (width, height) when it reports one; `full`
+    /// marks a complete repaint.
+    Frame {
+        bytes: String,
+        size: Option<(u16, u16)>,
+        full: bool,
+    },
     Closed(String),
     Ignore,
 }
@@ -272,7 +459,17 @@ fn parse_observe_line(line: &str) -> ObserveLine {
         return ObserveLine::Ignore;
     };
     if let Some(bytes) = v.get("bytes").and_then(Value::as_str) {
-        return ObserveLine::Bytes(bytes.to_string());
+        let dim = |k: &str| {
+            v.get(k)
+                .and_then(Value::as_u64)
+                .and_then(|n| u16::try_from(n).ok())
+                .filter(|n| *n > 0)
+        };
+        return ObserveLine::Frame {
+            bytes: bytes.to_string(),
+            size: dim("width").zip(dim("height")),
+            full: v.get("full").and_then(Value::as_bool).unwrap_or(false),
+        };
     }
     if v.get("type").and_then(Value::as_str) == Some("terminal.closed") {
         let reason = v.get("reason").and_then(Value::as_str).unwrap_or("closed");
@@ -363,7 +560,21 @@ mod tests {
     fn observe_lines() {
         assert_eq!(
             parse_observe_line(r#"{"bytes":"aGk="}"#),
-            ObserveLine::Bytes("aGk=".into())
+            ObserveLine::Frame {
+                bytes: "aGk=".into(),
+                size: None,
+                full: false
+            }
+        );
+        assert_eq!(
+            parse_observe_line(
+                r#"{"type":"terminal.frame","seq":3,"encoding":"ansi","width":97,"height":31,"full":true,"bytes":"aGk="}"#
+            ),
+            ObserveLine::Frame {
+                bytes: "aGk=".into(),
+                size: Some((97, 31)),
+                full: true
+            }
         );
         assert_eq!(
             parse_observe_line(r#"{"type":"terminal.closed","reason":"exited"}"#),

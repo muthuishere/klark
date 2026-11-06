@@ -5,6 +5,7 @@
 //! the pane tree on connect and on change, terminal bytes only for panes the hub
 //! subscribes to, and reads only when asked.
 
+pub mod assets;
 pub mod http;
 pub mod protocol;
 pub mod upstream;
@@ -43,6 +44,8 @@ pub struct LinkConfig {
     pub klark_version: String,
     pub socket: PathBuf,
     pub bin: PathBuf,
+    /// Where `fetch_asset` stores downloads: `<klark data dir>/uploads`.
+    pub uploads_dir: PathBuf,
 }
 
 /// Connect to the hub and serve it forever, reconnecting with backoff.
@@ -134,6 +137,11 @@ pub fn run_once(config: &LinkConfig) -> Result<(), String> {
 
     let upstream = Upstream::new(config.socket.clone(), config.bin.clone());
     let mut session = Session::new(upstream);
+    session.assets = Some(AssetTarget {
+        hub_base: http::hub_http_base(&config.hub_url)?,
+        token: config.token.clone(),
+        uploads_dir: config.uploads_dir.clone(),
+    });
 
     send(
         &mut ws,
@@ -289,12 +297,23 @@ fn set_read_timeout(ws: &Socket, timeout: Option<Duration>) {
     let _ = tcp.set_read_timeout(timeout);
 }
 
+/// Where `fetch_asset` downloads from and stores to.
+#[derive(Debug, Clone)]
+pub struct AssetTarget {
+    pub hub_base: String,
+    /// The machine token: the hub serves an asset only to the machine it is
+    /// addressed to.
+    pub token: String,
+    pub uploads_dir: PathBuf,
+}
+
 /// Per-connection state: which panes are being streamed, and the last tree sent.
 pub struct Session {
     upstream: Upstream,
     observers: HashMap<String, Observer>,
     frames_tx: Sender<AgentMessage>,
     frames_rx: Receiver<AgentMessage>,
+    pub assets: Option<AssetTarget>,
 }
 
 impl Session {
@@ -305,6 +324,7 @@ impl Session {
             observers: HashMap::new(),
             frames_tx,
             frames_rx,
+            assets: None,
         }
     }
 
@@ -376,6 +396,75 @@ impl Session {
                 );
                 vec![]
             }
+            // v3 (ADR 0011): both run off the loop thread with a timeout.
+            HubMessage::GetTranscript {
+                id,
+                pane_id,
+                after,
+                before,
+                limit,
+            } => {
+                self.upstream.run_msg(
+                    id,
+                    transcript_args(&pane_id, after.as_deref(), before.as_deref(), limit),
+                    MsgReply::Json,
+                    self.frames_tx.clone(),
+                );
+                vec![]
+            }
+            HubMessage::FetchAsset {
+                id,
+                sha256,
+                name,
+                mime,
+                size,
+                pane_id,
+                caption,
+            } => {
+                let Some(target) = self.assets.clone() else {
+                    return vec![AgentMessage::Result {
+                        id,
+                        result: None,
+                        error: Some("assets are not configured on this link".into()),
+                    }];
+                };
+                let up = self.upstream.clone();
+                let out = self.frames_tx.clone();
+                let spawned = std::thread::Builder::new()
+                    .name(format!("klark-link-asset-{id}"))
+                    .spawn({
+                        let id = id.clone();
+                        move || {
+                            let outcome = assets::fetch(
+                                &target.hub_base,
+                                &target.token,
+                                &target.uploads_dir,
+                                &sha256,
+                                size,
+                                mime.as_deref(),
+                            )
+                            .and_then(|path| {
+                                let text =
+                                    assets::prompt_text(name.as_deref(), &path, caption.as_deref());
+                                prompt_pane(&up, &pane_id, &text)?;
+                                Ok(path)
+                            });
+                            let (result, error) = match outcome {
+                                Ok(p) => (Some(json!({"path": p.display().to_string()})), None),
+                                Err(e) => (None, Some(e)),
+                            };
+                            let _ = out.send(AgentMessage::Result { id, result, error });
+                        }
+                    });
+                match spawned {
+                    Ok(_) => vec![],
+                    Err(e) => vec![AgentMessage::Result {
+                        id,
+                        result: None,
+                        error: Some(e.to_string()),
+                    }],
+                }
+            }
         }
     }
 
@@ -392,8 +481,17 @@ impl Session {
         loop {
             match self.frames_rx.try_recv() {
                 Ok(msg) => {
-                    if let AgentMessage::Closed { pane_id, .. } = &msg {
-                        self.observers.remove(pane_id);
+                    match &msg {
+                        AgentMessage::Closed { pane_id, .. } => {
+                            self.observers.remove(pane_id);
+                        }
+                        // Never report the size of a pane nobody watches.
+                        AgentMessage::PaneSize { pane_id, .. }
+                            if !self.observers.contains_key(pane_id) =>
+                        {
+                            continue
+                        }
+                        _ => {}
                     }
                     out.push(msg);
                 }
@@ -437,6 +535,39 @@ pub fn deliver_args(session: &str, agent: &str, from: &str, text: &str) -> Vec<S
         "--".into(),
         text.into(),
     ]
+}
+
+/// Hidden `klark transcript` arguments for a hub `get_transcript`.
+pub fn transcript_args(
+    pane_id: &str,
+    after: Option<&str>,
+    before: Option<&str>,
+    limit: Option<u32>,
+) -> Vec<String> {
+    let mut v = vec!["transcript".into(), "--pane".into(), pane_id.into()];
+    if let Some(a) = after {
+        v.extend(["--after".into(), a.into()]);
+    }
+    if let Some(b) = before {
+        v.extend(["--before".into(), b.into()]);
+    }
+    if let Some(l) = limit {
+        v.extend(["--limit".into(), l.to_string()]);
+    }
+    v.push("--json".into());
+    v
+}
+
+/// Prompt the pane's agent (`agent.prompt`, as `klark msg deliver` does). A
+/// pane with no detected agent gets the text typed instead (`pane.send_text`).
+fn prompt_pane(up: &Upstream, pane_id: &str, text: &str) -> Result<(), String> {
+    match up.call("agent.prompt", json!({"target": pane_id, "text": text})) {
+        Ok(_) => Ok(()),
+        Err(e) => up
+            .call("pane.send_text", json!({"pane_id": pane_id, "text": text}))
+            .map(|_| ())
+            .map_err(|e2| format!("{e}; {e2}")),
+    }
 }
 
 /// Content revision of a tree: equal trees give equal revisions.

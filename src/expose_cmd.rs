@@ -70,6 +70,7 @@ pub fn run(args: &[String]) -> ! {
         klark_version: crate::build_info::version(),
         socket: crate::api::socket_path(),
         bin,
+        uploads_dir: crate::session::data_dir_for(None).join("uploads"),
     })
 }
 

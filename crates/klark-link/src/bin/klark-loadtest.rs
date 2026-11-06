@@ -216,6 +216,18 @@ fn simulate(n: usize, args: &Args, stats: &Stats, deadline: Instant) -> Result<(
                             result: Some(json!({"delivered": true})),
                             error: None,
                         }),
+                        HubMessage::FetchAsset { id, .. } => Some(AgentMessage::Result {
+                            id,
+                            result: Some(json!({"path": "/tmp/loadtest.png"})),
+                            error: None,
+                        }),
+                        HubMessage::GetTranscript { id, .. } => Some(AgentMessage::Result {
+                            id,
+                            result: Some(
+                                json!({"agent": null, "cursor": "0", "items": [], "source": "screen", "has_more": false}),
+                            ),
+                            error: None,
+                        }),
                     };
                     if let Some(reply) = reply {
                         send(&mut ws, &reply)?;

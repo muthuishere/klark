@@ -8,7 +8,8 @@
 use serde::{Deserialize, Serialize};
 
 /// v2 adds `list_agents` and `deliver` (agent messaging, ADR 0009).
-pub const PROTOCOL_VERSION: u32 = 2;
+/// v3 adds `pane_size`, `fetch_asset` and `get_transcript` (ADR 0011).
+pub const PROTOCOL_VERSION: u32 = 3;
 
 /// Machine -> hub.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -51,6 +52,13 @@ pub enum AgentMessage {
         error: Option<String>,
     },
     Pong,
+    /// v3: the size a subscribed pane is observed at. Sent on subscribe and
+    /// whenever it changes; never for a pane that is not subscribed.
+    PaneSize {
+        pane_id: String,
+        cols: u16,
+        rows: u16,
+    },
 }
 
 /// Hub -> machine.
@@ -103,6 +111,33 @@ pub enum HubMessage {
         agent: String,
         from: String,
         text: String,
+    },
+    /// v3: download asset `sha256` from the hub, store it under the uploads
+    /// dir and prompt the pane with its path (ADR 0011 B). Answered with
+    /// `result {id, result: {path}}` or `result {id, error}`.
+    FetchAsset {
+        id: String,
+        sha256: String,
+        #[serde(default)]
+        name: Option<String>,
+        #[serde(default)]
+        mime: Option<String>,
+        size: u64,
+        pane_id: String,
+        #[serde(default)]
+        caption: Option<String>,
+    },
+    /// v3: the pane agent's conversation, read from its local session log
+    /// (or the screen). `after` returns newer items, `before` older ones.
+    GetTranscript {
+        id: String,
+        pane_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        after: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        before: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
     },
 }
 
@@ -158,7 +193,7 @@ mod tests {
 
     #[test]
     fn v2_messaging_shapes() {
-        assert_eq!(PROTOCOL_VERSION, 2);
+        assert!(PROTOCOL_VERSION >= 2);
         let msg: HubMessage = serde_json::from_str(r#"{"type":"list_agents","id":"7"}"#).unwrap();
         assert_eq!(msg, HubMessage::ListAgents { id: "7".into() });
 
@@ -193,6 +228,58 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&err).unwrap(),
             r#"{"type":"result","id":"8","error":"blocked"}"#
+        );
+    }
+
+    #[test]
+    fn v3_shapes() {
+        assert_eq!(PROTOCOL_VERSION, 3);
+        let size = AgentMessage::PaneSize {
+            pane_id: "p1".into(),
+            cols: 80,
+            rows: 24,
+        };
+        assert_eq!(
+            serde_json::to_string(&size).unwrap(),
+            r#"{"type":"pane_size","pane_id":"p1","cols":80,"rows":24}"#
+        );
+        let raw = r#"{"type":"fetch_asset","id":"9","sha256":"ab","name":"a.png","mime":"image/png","size":3,"pane_id":"p1","caption":"look"}"#;
+        let msg: HubMessage = serde_json::from_str(raw).unwrap();
+        assert_eq!(
+            msg,
+            HubMessage::FetchAsset {
+                id: "9".into(),
+                sha256: "ab".into(),
+                name: Some("a.png".into()),
+                mime: Some("image/png".into()),
+                size: 3,
+                pane_id: "p1".into(),
+                caption: Some("look".into()),
+            }
+        );
+        let raw = r#"{"type":"fetch_asset","id":"9","sha256":"ab","name":null,"mime":"image/png","size":3,"pane_id":"p1"}"#;
+        let msg: HubMessage = serde_json::from_str(raw).unwrap();
+        assert!(matches!(
+            msg,
+            HubMessage::FetchAsset {
+                name: None,
+                caption: None,
+                ..
+            }
+        ));
+        let msg: HubMessage = serde_json::from_str(
+            r#"{"type":"get_transcript","id":"1","pane_id":"p1","before":"42","limit":50}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            msg,
+            HubMessage::GetTranscript {
+                id: "1".into(),
+                pane_id: "p1".into(),
+                after: None,
+                before: Some("42".into()),
+                limit: Some(50),
+            }
         );
     }
 

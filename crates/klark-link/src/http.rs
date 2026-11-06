@@ -119,6 +119,177 @@ pub fn request(
     parse_response(&raw)
 }
 
+/// Open a plain-http connection for `url`; returns (stream, host:port, path?query).
+fn open(url: &str, timeout: Duration) -> Result<(TcpStream, String, String), String> {
+    let parsed = url::Url::parse(url).map_err(|e| format!("url {url}: {e}"))?;
+    match parsed.scheme() {
+        "http" => {}
+        "https" => {
+            return Err(format!(
+                "{url}: https is not supported yet; the hub is plain http (ADR 0005)"
+            ))
+        }
+        other => return Err(format!("{url}: unsupported scheme {other}")),
+    }
+    let host = parsed.host_str().ok_or_else(|| format!("{url}: no host"))?;
+    let port = parsed.port_or_known_default().unwrap_or(80);
+    let addr = (host, port)
+        .to_socket_addrs()
+        .map_err(|e| format!("resolve {host}:{port}: {e}"))?
+        .next()
+        .ok_or_else(|| format!("resolve {host}:{port}: no address"))?;
+    let stream = TcpStream::connect_timeout(&addr, timeout)
+        .map_err(|e| format!("connect {host}:{port}: {e}"))?;
+    stream.set_read_timeout(Some(timeout)).ok();
+    stream.set_write_timeout(Some(timeout)).ok();
+    let mut path = parsed.path().to_string();
+    if let Some(q) = parsed.query() {
+        path.push('?');
+        path.push_str(q);
+    }
+    Ok((stream, format!("{host}:{port}"), path))
+}
+
+fn auth_header(bearer: Option<&str>) -> Result<String, String> {
+    match bearer {
+        Some(t) if t.contains(['\r', '\n']) => {
+            Err("token contains invalid header characters".into())
+        }
+        Some(t) => Ok(format!("Authorization: Bearer {t}\r\n")),
+        None => Ok(String::new()),
+    }
+}
+
+/// `PUT url` streaming the file at `path` as the body, with Content-Length.
+/// The file is never held in memory.
+pub fn put_file(
+    url: &str,
+    bearer: Option<&str>,
+    path: &std::path::Path,
+    content_type: &str,
+    timeout: Duration,
+) -> Result<HttpResponse, String> {
+    let mut file = std::fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let len = file
+        .metadata()
+        .map_err(|e| format!("{}: {e}", path.display()))?
+        .len();
+    let (mut stream, hostport, req_path) = open(url, timeout)?;
+    let head = format!(
+        "PUT {req_path} HTTP/1.1\r\nHost: {hostport}\r\nAccept: application/json\r\nConnection: close\r\nUser-Agent: klark-offer\r\n{}Content-Type: {content_type}\r\nContent-Length: {len}\r\n\r\n",
+        auth_header(bearer)?
+    );
+    stream
+        .write_all(head.as_bytes())
+        .map_err(|e| format!("send to {hostport}: {e}"))?;
+    let sent = std::io::copy(&mut (&mut file).take(len), &mut stream)
+        .map_err(|e| format!("send to {hostport}: {e}"))?;
+    if sent != len {
+        return Err(format!("{}: file shrank while sending", path.display()));
+    }
+    let mut raw = Vec::new();
+    BufReader::new(stream)
+        .read_to_end(&mut raw)
+        .map_err(|e| format!("read from {hostport}: {e}"))?;
+    parse_response(&raw)
+}
+
+/// `GET url` streaming a 2xx body into `out`, refusing more than `max` bytes.
+/// Returns the number of body bytes written; a non-2xx is an error carrying
+/// the hub's error text.
+pub fn get_to_writer(
+    url: &str,
+    bearer: Option<&str>,
+    out: &mut dyn Write,
+    max: u64,
+    timeout: Duration,
+) -> Result<u64, String> {
+    let (mut stream, hostport, req_path) = open(url, timeout)?;
+    let head = format!(
+        "GET {req_path} HTTP/1.1\r\nHost: {hostport}\r\nConnection: close\r\nUser-Agent: klark-expose\r\n{}\r\n",
+        auth_header(bearer)?
+    );
+    stream
+        .write_all(head.as_bytes())
+        .map_err(|e| format!("send to {hostport}: {e}"))?;
+    let mut reader = BufReader::new(stream);
+    let mut status_line = String::new();
+    reader
+        .read_line(&mut status_line)
+        .map_err(|e| format!("read from {hostport}: {e}"))?;
+    let status: u16 = status_line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| format!("malformed status line: {}", status_line.trim()))?;
+    let (mut chunked, mut length) = (false, None::<u64>);
+    loop {
+        let mut line = String::new();
+        let n = reader
+            .read_line(&mut line)
+            .map_err(|e| format!("read from {hostport}: {e}"))?;
+        if n == 0 || line == "\r\n" || line == "\n" {
+            break;
+        }
+        if let Some((k, v)) = line.split_once(':') {
+            let (k, v) = (k.trim().to_ascii_lowercase(), v.trim());
+            if k == "transfer-encoding" && v.to_ascii_lowercase().contains("chunked") {
+                chunked = true;
+            } else if k == "content-length" {
+                length = v.parse().ok();
+            }
+        }
+    }
+    if !(200..300).contains(&status) {
+        let mut body = Vec::new();
+        let _ = reader.take(64 * 1024).read_to_end(&mut body);
+        let raw = HttpResponse {
+            status,
+            body: String::from_utf8_lossy(&body).into_owned(),
+        };
+        return Err(raw.error_text());
+    }
+    if length.is_some_and(|n| n > max) {
+        return Err(format!(
+            "body of {} bytes exceeds {max}",
+            length.unwrap_or(0)
+        ));
+    }
+    let mut total = 0u64;
+    let mut copy = |src: &mut dyn Read, n: Option<u64>, total: &mut u64| -> Result<(), String> {
+        let limit = n.unwrap_or(max + 1);
+        let got = std::io::copy(&mut src.take(limit.min(max + 1 - *total)), out)
+            .map_err(|e| format!("read body: {e}"))?;
+        *total += got;
+        if *total > max {
+            return Err(format!("body exceeds {max} bytes"));
+        }
+        if n.is_some_and(|n| got < n) {
+            return Err("truncated body".into());
+        }
+        Ok(())
+    };
+    if chunked {
+        loop {
+            let mut size_line = String::new();
+            reader
+                .read_line(&mut size_line)
+                .map_err(|e| format!("read body: {e}"))?;
+            let size = u64::from_str_radix(size_line.trim().split(';').next().unwrap_or(""), 16)
+                .map_err(|_| format!("bad chunk size: {}", size_line.trim()))?;
+            if size == 0 {
+                break;
+            }
+            copy(&mut reader, Some(size), &mut total)?;
+            let mut crlf = [0u8; 2];
+            let _ = reader.read_exact(&mut crlf);
+        }
+    } else {
+        copy(&mut reader, length, &mut total)?;
+    }
+    Ok(total)
+}
+
 /// Parse a full HTTP/1.1 response (Content-Length, chunked, or read-to-close).
 pub fn parse_response(raw: &[u8]) -> Result<HttpResponse, String> {
     let split = raw
@@ -243,6 +414,83 @@ mod tests {
         )
         .unwrap_err();
         assert!(e.contains("https is not supported"), "{e}");
+    }
+
+    #[test]
+    fn put_streams_a_file_with_content_length() {
+        use std::net::TcpListener;
+        let path = std::env::temp_dir().join(format!("klark-put-{}.bin", std::process::id()));
+        let data: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
+        std::fs::write(&path, &data).unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (s, _) = listener.accept().unwrap();
+            let mut r = BufReader::new(s.try_clone().unwrap());
+            let mut head = String::new();
+            let mut len = 0usize;
+            loop {
+                let mut l = String::new();
+                r.read_line(&mut l).unwrap();
+                if let Some(v) = l.strip_prefix("Content-Length: ") {
+                    len = v.trim().parse().unwrap();
+                }
+                head.push_str(&l);
+                if l == "\r\n" {
+                    break;
+                }
+            }
+            let mut body = vec![0u8; len];
+            r.read_exact(&mut body).unwrap();
+            let mut s = s;
+            s.write_all(b"HTTP/1.1 201 Created\r\nContent-Length: 13\r\n\r\n{\"sha256\":\"x\"}")
+                .unwrap();
+            (head, body)
+        });
+        let r = put_file(
+            &format!("http://127.0.0.1:{port}/api/assets?pane=p1&name=a%20b.bin"),
+            Some("mtok"),
+            &path,
+            "application/octet-stream",
+            Duration::from_secs(5),
+        )
+        .unwrap();
+        let (head, body) = server.join().unwrap();
+        assert!(
+            head.starts_with("PUT /api/assets?pane=p1&name=a%20b.bin HTTP/1.1\r\n"),
+            "{head}"
+        );
+        assert!(head.contains("Authorization: Bearer mtok\r\n"));
+        assert!(head.contains("Content-Length: 200000\r\n"));
+        assert_eq!(body, data);
+        assert_eq!(r.status, 201);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn get_error_status_is_an_error() {
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let (mut s, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 1024];
+            let _ = s.read(&mut buf);
+            s.write_all(
+                b"HTTP/1.1 403 Forbidden\r\nContent-Length: 20\r\n\r\n{\"error\":\"not yours\"}",
+            )
+            .unwrap();
+        });
+        let mut sink = Vec::new();
+        let e = get_to_writer(
+            &format!("http://127.0.0.1:{port}/api/assets/x"),
+            Some("t"),
+            &mut sink,
+            10,
+            Duration::from_secs(5),
+        )
+        .unwrap_err();
+        assert_eq!(e, "not yours");
     }
 
     #[test]
