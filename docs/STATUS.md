@@ -48,7 +48,7 @@ the ADRs and experiments. Last updated 2026-11-06 (first real builds; messaging,
 | id | item | notes |
 |---|---|---|
 | S-08 | Admin page: machine tokens and users in hub.db | replaces appsettings editing |
-| S-12 | Measure Blazor circuits with 50+ viewers | E-06 |
+| S-12 | Measure Blazor circuits with 50+ viewers | **measured at 10 live viewers + 40 chat circuits on one hub (E-06)**: 1.2–13 MiB per circuit, ~0 idle CPU; 100 live viewers extrapolated, not run (one headless tab tops out ~20 circuits). Follow-ups from E-06: Dockerfile `--no-restore` breaks blazor.web.js (bug 1), dead tabs poll 3 min (bug 2), `/api/agents` fan-out unshared, global `Changed` re-renders every pane view |
 | S-15 | Switch the tree source from `session.snapshot` to klark `events.subscribe` (cheaper on the machine) | |
 | S-16 | Windows support for `klark expose` (named pipe) | |
 | S-17 | Remove dead updater code in `src/update.rs` | disabled, still compiled |

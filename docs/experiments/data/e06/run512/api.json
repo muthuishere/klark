@@ -1,0 +1,23 @@
+{
+ "clients": 10,
+ "seconds": 61.0,
+ "errors": {},
+ "endpoints": {
+  "GET /api/agents": {
+   "n": 532,
+   "rps": 8.7,
+   "p50_ms": 68.5,
+   "p95_ms": 213.1,
+   "max_ms": 1206.9,
+   "avg_bytes": 121936
+  },
+  "GET /api/messages": {
+   "n": 532,
+   "rps": 8.7,
+   "p50_ms": 2.6,
+   "p95_ms": 4.7,
+   "max_ms": 18.2,
+   "avg_bytes": 2
+  }
+ }
+}
