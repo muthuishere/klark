@@ -2,7 +2,12 @@
 @attribute [Authorize]
 @rendermode InteractiveServer
 @implements IDisposable
+@using System.Security.Claims
+@using System.Text.Json.Nodes
 @inject MachineRegistry Registry
+@inject HubStore Store
+@inject HubAccess Access
+@inject AuthenticationStateProvider Auth
 
 <PageTitle>klark hub</PageTitle>
 
@@ -10,13 +15,13 @@
 
 <input class="search" placeholder="Filter panes by title, agent, folder…" @bind="filter" @bind:event="oninput" />
 
-@if (Registry.Machines.Count == 0)
+@if (Mine.Count == 0 && offlineMachines.Count == 0)
 {
     <p class="empty">No machines are linked yet. On a machine, run
         <code>klark link --hub ws://&lt;this-host&gt;:8080/agent --token &lt;token&gt;</code>.</p>
 }
 
-@foreach (var machine in Registry.Machines)
+@foreach (var machine in Mine)
 {
     var panes = Visible(machine.Tree.Panes).ToList();
     <section class="machine">
@@ -44,7 +49,80 @@
     </section>
 }
 
+@if (offlineMachines.Count > 0)
+{
+    <h2 class="section">Offline</h2>
+    @foreach (var known in offlineMachines)
+    {
+        <section class="machine offline">
+            <h2>
+                <button type="button" class="link" @onclick="() => ToggleOfflineAsync(known.Id)">@(openOffline.ContainsKey(known.Id) ? "▾" : "▸") @known.Id</button>
+                <small>@known.Host · last seen @known.LastSeen.ToLocalTime().ToString("g")</small>
+            </h2>
+            @if (openOffline.TryGetValue(known.Id, out var tree))
+            {
+                @if (tree is null || tree.Panes.Count == 0)
+                {
+                    <p class="empty">No pane list was recorded for this machine.</p>
+                }
+                else
+                {
+                    <ul class="panes">
+                        @foreach (var pane in Visible(tree.Panes))
+                        {
+                            <li>
+                                <a href="@($"/m/{Uri.EscapeDataString(known.Id)}/p/{Uri.EscapeDataString(pane.Id)}")">
+                                    <span class="status status-none">last</span>
+                                    <span class="title">@pane.Title</span>
+                                    <span class="cwd">@pane.Cwd</span>
+                                </a>
+                            </li>
+                        }
+                    </ul>
+                }
+            }
+        </section>
+    }
+}
+
 @code {
+    private ClaimsPrincipal user = new();
+    private List<KnownMachine> offlineMachines = new();
+    private readonly Dictionary<string, SessionTree?> openOffline = new();
+
+    /// <summary>Connected machines this user may see (STATUS S-05).</summary>
+    private List<MachineConnection> Mine => Registry.Machines.Where(m => Access.CanSee(user, m.Id)).ToList();
+
+    protected override async Task OnInitializedAsync()
+    {
+        user = (await Auth.GetAuthenticationStateAsync()).User;
+        await LoadOfflineAsync();
+        pullTimer = new PeriodicTimer(TimeSpan.FromSeconds(3));
+        _ = PullLoopAsync(pullTimer);
+    }
+
+    /// <summary>Known machines that are not linked right now; their pane lists load only when expanded (STATUS S-07).</summary>
+    private string connectedKey = "";
+
+    private async Task LoadOfflineAsync()
+    {
+        var connected = Registry.Machines.Select(m => m.Id).ToHashSet();
+        var key = string.Join('\n', connected.Order());
+        if (key == connectedKey && offlineMachines.Count > 0) return;
+        connectedKey = key;
+        offlineMachines = (await Store.KnownMachinesAsync())
+            .Where(k => !connected.Contains(k.Id) && Access.CanSee(user, k.Id))
+            .OrderByDescending(k => k.LastSeen)
+            .ToList();
+    }
+
+    private async Task ToggleOfflineAsync(string id)
+    {
+        if (openOffline.Remove(id)) return;
+        var json = await Store.LastTreeAsync(id);
+        openOffline[id] = json is null ? null : SessionTree.Parse(JsonNode.Parse(json));
+    }
+
     private string filter = "";
 
     private PeriodicTimer? pullTimer;
@@ -53,16 +131,17 @@
     // and a tree younger than 2 s is shared by everyone looking at it.
     protected override void OnInitialized()
     {
+        // Both lifecycle methods run: this one subscribes, OnInitializedAsync
+        // loads the user and then starts pulling.
         Registry.Changed += OnChanged;
-        pullTimer = new PeriodicTimer(TimeSpan.FromSeconds(3));
-        _ = PullLoopAsync(pullTimer);
     }
 
     private async Task PullLoopAsync(PeriodicTimer timer)
     {
         do
         {
-            await Registry.RefreshTreesAsync(TimeSpan.FromSeconds(2));
+            // Pull only machines this user can see.
+            await Registry.RefreshTreesAsync(TimeSpan.FromSeconds(2), m => Access.CanSee(user, m.Id));
         } while (await timer.WaitForNextTickAsync());
     }
 
@@ -76,6 +155,7 @@
         {
             await Task.Delay(250);
             Interlocked.Exchange(ref renderQueued, 0);
+            await LoadOfflineAsync();
             StateHasChanged();
         });
     }

@@ -64,7 +64,8 @@ public sealed class SignInService
 /// A pretend LDAP directory held in memory, for development and demos. It
 /// behaves like a bind against ou=users with group membership, without a
 /// server. With no Hub:Auth:MockUsers configured it seeds:
-///   admin/admin (klark-admins, klark-users), alice/alice and bob/bob (klark-users).
+///   admin/admin (klark-admins, klark-users), alice/alice and bob/bob (klark-users),
+///   viewer/viewer (klark-users, klark-readonly: can watch, cannot type).
 /// </summary>
 public sealed class MockLdapDirectory : IUserDirectory
 {
@@ -73,6 +74,7 @@ public sealed class MockLdapDirectory : IUserDirectory
         new() { Uid = "admin", Password = "admin", DisplayName = "Administrator", Groups = new() { "klark-admins", "klark-users" } },
         new() { Uid = "alice", Password = "alice", DisplayName = "Alice", Groups = new() { "klark-users" } },
         new() { Uid = "bob", Password = "bob", DisplayName = "Bob", Groups = new() { "klark-users" } },
+        new() { Uid = "viewer", Password = "viewer", DisplayName = "Viewer (read-only)", Groups = new() { "klark-users", "klark-readonly" } },
     };
 
     private readonly IOptionsMonitor<HubOptions> _options;
@@ -82,7 +84,7 @@ public sealed class MockLdapDirectory : IUserDirectory
         _options = options;
         if (options.CurrentValue.Auth.MockUsers.Count == 0)
         {
-            log.LogWarning("Mock LDAP is using its seeded demo users (admin/admin, alice/alice, bob/bob). Do not expose this hub.");
+            log.LogWarning("Mock LDAP is using its seeded demo users (admin/admin, alice/alice, bob/bob, viewer/viewer). Do not expose this hub.");
         }
     }
 

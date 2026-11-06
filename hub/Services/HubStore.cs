@@ -50,7 +50,9 @@ public sealed partial class HubStore : BackgroundService
     /// <summary>Machines known to the hub, connected or not.</summary>
     public async Task<List<KnownMachine>> KnownMachinesAsync()
     {
-        await using var db = Open(Path.Combine(_options.DataDir, "hub.db"));
+        var hubDb = Path.Combine(_options.DataDir, "hub.db");
+        if (!File.Exists(hubDb)) return new List<KnownMachine>();
+        await using var db = Open(hubDb);
         await using var cmd = db.CreateCommand();
         cmd.CommandText = "SELECT id, host, version, first_seen, last_seen FROM machines ORDER BY id";
         var list = new List<KnownMachine>();
@@ -72,6 +74,32 @@ public sealed partial class HubStore : BackgroundService
         await using var cmd = db.CreateCommand();
         cmd.CommandText = "SELECT json FROM tree WHERE id = 1";
         return await cmd.ExecuteScalarAsync() as string;
+    }
+
+    /// <summary>
+    /// The newest recorded output of a pane, oldest first, at most maxBytes
+    /// (STATUS S-07). Only output someone watched was ever recorded (ADR 0003).
+    /// </summary>
+    public async Task<byte[]> RecentOutputAsync(string machineId, string paneId, int maxBytes = 256 * 1024)
+    {
+        var path = MachineDbPath(machineId);
+        if (!File.Exists(path)) return Array.Empty<byte>();
+        await using var db = Open(path);
+        await using var cmd = db.CreateCommand();
+        cmd.CommandText = "SELECT bytes FROM pane_output WHERE pane_id = $pane ORDER BY rowid DESC";
+        cmd.Parameters.AddWithValue("$pane", paneId);
+        var chunks = new List<byte[]>();
+        var total = 0;
+        await using var r = await cmd.ExecuteReaderAsync();
+        while (total < maxBytes && await r.ReadAsync())
+        {
+            var chunk = (byte[])r[0];
+            chunks.Add(chunk);
+            total += chunk.Length;
+        }
+        chunks.Reverse();
+        var all = chunks.SelectMany(c => c).ToArray();
+        return all.Length > maxBytes ? all[^maxBytes..] : all;
     }
 
     // ---- the single writer ---------------------------------------------------

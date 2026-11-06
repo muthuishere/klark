@@ -6,6 +6,8 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
+using System.Threading.RateLimiting;
+using Microsoft.AspNetCore.RateLimiting;
 
 // Small admin helpers, so no secret ever has to be written to config in clear text.
 if (args.Length == 2 && args[0] == "hash-password")
@@ -26,6 +28,7 @@ builder.Services.AddSingleton<MockLdapDirectory>();
 builder.Services.AddSingleton<LdapDirectory>();
 builder.Services.AddSingleton<LocalDirectory>();
 builder.Services.AddSingleton<SignInService>();
+builder.Services.AddSingleton<HubAccess>();
 builder.Services.AddSingleton<HubStore>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<HubStore>());
 builder.Services.AddSingleton<MachineRegistry>();
@@ -46,6 +49,15 @@ builder.Services
     });
 builder.Services.AddAuthorization();
 
+// STATUS S-11: at most 10 sign-in attempts per minute per client address.
+builder.Services.AddRateLimiter(o =>
+{
+    o.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    o.AddPolicy("login", ctx => RateLimitPartition.GetFixedWindowLimiter(
+        ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        _ => new FixedWindowRateLimiterOptions { PermitLimit = 10, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
+});
+
 var app = builder.Build();
 
 if (!app.Environment.IsDevelopment())
@@ -56,6 +68,7 @@ if (!app.Environment.IsDevelopment())
 
 app.UseResponseCompression();
 app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(20) });
+app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseAntiforgery();
@@ -106,7 +119,8 @@ app.MapPost("/account/login", async (HttpContext ctx, [FromForm] string username
     await ctx.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, new ClaimsPrincipal(identity));
     var target = !string.IsNullOrEmpty(returnUrl) && returnUrl.StartsWith('/') && !returnUrl.StartsWith("//") ? returnUrl : "/";
     return Results.LocalRedirect(target);
-});
+}).RequireRateLimiting("login");
+
 
 app.MapPost("/account/logout", async (HttpContext ctx) =>
 {

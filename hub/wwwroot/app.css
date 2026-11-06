@@ -43,3 +43,10 @@ button[type=submit] { background: var(--accent); color: #fff; border-color: var(
 .error { color: var(--blocked); }
 code { font-size: .85em; }
 #blazor-error-ui { display: none; position: fixed; bottom: 0; left: 0; right: 0; padding: 10px 16px; background: #fde68a; color: #000; }
+.badge { font-size: .75rem; border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; color: var(--muted); }
+.section { font-size: 1rem; color: var(--muted); margin: 20px 0 8px; }
+.machine.offline { opacity: .8; }
+.machine.offline h2 button { font-weight: 600; color: var(--fg); }
+.muted { color: var(--muted); font-size: .85rem; }
+.transcript-head { display: flex; gap: 12px; align-items: baseline; margin: 8px 0; }
+.transcript { white-space: pre-wrap; word-break: break-word; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px; max-height: 65vh; overflow: auto; font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }

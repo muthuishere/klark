@@ -34,6 +34,13 @@ window.klarkTerm = (() => {
       const t = terms.get(id);
       if (t) t.term.write(decode(b64));
     },
+    // A viewer that fell behind gets a fresh screen instead of stale output.
+    reset(id, text) {
+      const t = terms.get(id);
+      if (!t) return;
+      t.term.reset();
+      t.term.write(text.replace(/\r?\n/g, "\r\n"));
+    },
     close(id) {
       const t = terms.get(id);
       if (!t) return;

@@ -42,6 +42,12 @@ public sealed class HubMachine
     /// named "{Name}:{X-Klark-Machine header}" instead of just Name.
     /// </summary>
     public bool Fleet { get; set; }
+
+    /// <summary>
+    /// Groups allowed to see this machine (STATUS S-05). Empty: everyone signed in.
+    /// Members of Auth.AdminGroups always see every machine.
+    /// </summary>
+    public List<string> Groups { get; set; } = new();
 }
 
 public static class TokenHash
@@ -73,6 +79,12 @@ public sealed class AuthOptions
 
     /// <summary>If not empty, only members of one of these groups may sign in.</summary>
     public List<string> AllowedGroups { get; set; } = new();
+
+    /// <summary>Members see every machine, whatever its Groups say.</summary>
+    public List<string> AdminGroups { get; set; } = new() { "klark-admins" };
+
+    /// <summary>Members can watch panes but never type into them (STATUS S-06).</summary>
+    public List<string> ReadOnlyGroups { get; set; } = new() { "klark-readonly" };
 
     public LdapOptions Ldap { get; set; } = new();
 

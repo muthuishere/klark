@@ -35,8 +35,8 @@ public sealed class MachineRegistry
     public MachineConnection? Get(string id) => _machines.TryGetValue(id, out var m) ? m : null;
 
     /// <summary>Pull every connected machine's tree that is older than maxAge, in parallel.</summary>
-    public Task RefreshTreesAsync(TimeSpan maxAge) =>
-        Task.WhenAll(_machines.Values.Select(async m =>
+    public Task RefreshTreesAsync(TimeSpan maxAge, Func<MachineConnection, bool>? only = null) =>
+        Task.WhenAll(_machines.Values.Where(m => only is null || only(m)).Select(async m =>
         {
             try { await m.EnsureTreeAsync(maxAge); }
             catch (Exception e) when (e is TimeoutException or InvalidOperationException) { }
@@ -160,9 +160,14 @@ public sealed class MachineConnection
     /// Start watching a pane. The first viewer of a pane makes the machine start
     /// streaming it; disposing the last viewer stops the stream.
     /// </summary>
-    public IAsyncDisposable Watch(string paneId, Func<string, Task> onFrame, Func<string, Task> onClosed)
+    /// <param name="onReset">
+    /// Called with a fresh screen when this viewer fell too far behind and its
+    /// queued output was dropped; the viewer should clear and repaint.
+    /// </param>
+    public IAsyncDisposable Watch(string paneId, Func<string, Task> onFrame, Func<string, Task> onClosed,
+        Func<string, Task>? onReset = null)
     {
-        var viewer = new PaneViewer(this, paneId, onFrame, onClosed);
+        var viewer = new PaneViewer(this, paneId, onFrame, onClosed, onReset, _log);
         bool first;
         lock (_subsLock)
         {
@@ -282,7 +287,7 @@ public sealed class MachineConnection
         }
         foreach (var v in viewers)
         {
-            _ = v.OnClosed("machine disconnected");
+            v.Close("machine disconnected");
         }
     }
 
@@ -325,6 +330,9 @@ public sealed class MachineConnection
         }
     }
 
+    /// <summary>klark-link PROTOCOL_VERSION this hub understands.</summary>
+    public const int SupportedProtocol = 1;
+
     private const byte FrameGzip = 0x01;
     private const byte FrameRaw = 0x02;
 
@@ -354,7 +362,8 @@ public sealed class MachineConnection
         }
         _registry.Store.AppendOutput(Id, paneId, raw);
         var b64 = Convert.ToBase64String(raw);
-        await DispatchAsync(paneId, v => v.OnFrame(b64));
+        Dispatch(paneId, v => v.Enqueue(b64));
+        await Task.CompletedTask;
     }
 
     /// <summary>Machines send gzip JSON in binary frames (ADR 0001, D5); text frames are plain JSON.</summary>
@@ -374,6 +383,15 @@ public sealed class MachineConnection
         switch (msg?["type"]?.GetValue<string>())
         {
             case "hello":
+                var protocol = msg["protocol"]?.GetValue<int>() ?? 0;
+                if (protocol != SupportedProtocol)
+                {
+                    // A machine on another protocol would misread what we send (STATUS S-10).
+                    _log.LogWarning("machine {Machine} speaks protocol {Protocol}; this hub speaks {Supported}", Id, protocol, SupportedProtocol);
+                    await _socket.CloseAsync(WebSocketCloseStatus.PolicyViolation,
+                        $"unsupported protocol {protocol}; hub speaks {SupportedProtocol}", CancellationToken.None);
+                    return;
+                }
                 Host = msg["machine_name"]?.GetValue<string>() ?? "";
                 Version = msg["klark_version"]?.GetValue<string>() ?? "";
                 _registry.Store.MachineConnected(Id, Host, Version);
@@ -396,12 +414,12 @@ public sealed class MachineConnection
                 {
                     _registry.Store.AppendOutput(Id, framePane, Convert.FromBase64String(b64));
                 }
-                await DispatchAsync(framePane, v => v.OnFrame(b64));
+                Dispatch(framePane, v => v.Enqueue(b64));
                 break;
             case "closed":
                 var paneId = msg["pane_id"]?.GetValue<string>();
                 var reason = msg["reason"]?.GetValue<string>() ?? "closed";
-                await DispatchAsync(paneId, v => v.OnClosed(reason));
+                Dispatch(paneId, v => v.Close(reason));
                 lock (_subsLock)
                 {
                     if (paneId is not null) _viewers.Remove(paneId);
@@ -420,7 +438,12 @@ public sealed class MachineConnection
         }
     }
 
-    private async Task DispatchAsync(string? paneId, Func<PaneViewer, Task> action)
+    /// <summary>
+    /// Hand an event to every viewer of a pane without waiting for any of them:
+    /// each viewer drains its own queue, so one slow browser never delays the
+    /// machine's receive loop or the other viewers (STATUS S-13).
+    /// </summary>
+    private void Dispatch(string? paneId, Action<PaneViewer> action)
     {
         if (paneId is null) return;
         PaneViewer[] targets;
@@ -428,31 +451,86 @@ public sealed class MachineConnection
         {
             targets = _viewers.TryGetValue(paneId, out var list) ? list.ToArray() : Array.Empty<PaneViewer>();
         }
-        foreach (var v in targets)
-        {
-            try { await action(v); }
-            catch (Exception e) { _log.LogDebug(e, "viewer of {Pane} failed", paneId); }
-        }
+        foreach (var v in targets) action(v);
     }
 
     private sealed class PaneViewer : IAsyncDisposable
     {
-        private readonly MachineConnection _owner;
-        private int _disposed;
+        /// <summary>~2.5 s of output at 50 ms batches; past that, drop and repaint.</summary>
+        private const int QueueLimit = 50;
 
-        public PaneViewer(MachineConnection owner, string paneId, Func<string, Task> onFrame, Func<string, Task> onClosed)
+        private readonly MachineConnection _owner;
+        private readonly Func<string, Task> _onFrame;
+        private readonly Func<string, Task> _onClosed;
+        private readonly Func<string, Task>? _onReset;
+        private readonly ILogger _log;
+        private readonly System.Threading.Channels.Channel<string> _queue =
+            System.Threading.Channels.Channel.CreateBounded<string>(new System.Threading.Channels.BoundedChannelOptions(QueueLimit)
+            {
+                SingleReader = true,
+                FullMode = System.Threading.Channels.BoundedChannelFullMode.Wait,
+            });
+        private int _resync;
+        private int _disposed;
+        private string? _closedReason;
+
+        public PaneViewer(MachineConnection owner, string paneId, Func<string, Task> onFrame, Func<string, Task> onClosed,
+            Func<string, Task>? onReset, ILogger log)
         {
             _owner = owner;
             PaneId = paneId;
-            OnFrame = onFrame;
-            OnClosed = onClosed;
+            _onFrame = onFrame;
+            _onClosed = onClosed;
+            _onReset = onReset;
+            _log = log;
+            _ = PumpAsync();
         }
 
         public string PaneId { get; }
-        public Func<string, Task> OnFrame { get; }
-        public Func<string, Task> OnClosed { get; }
 
-        public ValueTask DisposeAsync() =>
-            Interlocked.Exchange(ref _disposed, 1) == 0 ? new ValueTask(_owner.UnwatchAsync(this)) : ValueTask.CompletedTask;
+        public void Enqueue(string b64)
+        {
+            if (_queue.Writer.TryWrite(b64)) return;
+            // Full: this browser can't keep up. Drop what is queued and repaint
+            // it from the current screen instead of replaying stale output.
+            Interlocked.Exchange(ref _resync, 1);
+            while (_queue.Reader.TryRead(out _)) { }
+            _queue.Writer.TryWrite("");
+        }
+
+        public void Close(string reason)
+        {
+            _closedReason = reason;
+            _queue.Writer.TryComplete();
+        }
+
+        private async Task PumpAsync()
+        {
+            try
+            {
+                await foreach (var b64 in _queue.Reader.ReadAllAsync())
+                {
+                    if (Interlocked.Exchange(ref _resync, 0) == 1 && _onReset is not null)
+                    {
+                        var screen = await _owner.ReadScreenAsync(PaneId);
+                        await _onReset(screen);
+                        continue;
+                    }
+                    if (b64.Length > 0) await _onFrame(b64);
+                }
+                if (_closedReason is not null) await _onClosed(_closedReason);
+            }
+            catch (Exception e)
+            {
+                _log.LogDebug(e, "viewer of {Pane} stopped", PaneId);
+            }
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) != 0) return ValueTask.CompletedTask;
+            _queue.Writer.TryComplete();
+            return new ValueTask(_owner.UnwatchAsync(this));
+        }
     }
 }

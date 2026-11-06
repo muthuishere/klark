@@ -50,6 +50,27 @@ public exposure put a TLS proxy in front and use `wss://` (the link supports bot
 
 `Hub:Auth:AllowedGroups`, for example `["klark-users"]`, limits who can sign in.
 
+### Who sees and drives what
+
+- `Hub:Machines[].Groups`: only members of these groups see that machine.
+  Empty means everyone signed in. Fleet members inherit their entry's groups.
+- `Hub:Auth:AdminGroups` (default `klark-admins`): its members see every machine.
+- `Hub:Auth:ReadOnlyGroups` (default `klark-readonly`): its members can watch
+  but cannot type. This is enforced on the server, not only by hiding the
+  reply box.
+- The mock directory's `viewer/viewer` user is read-only, for trying this out.
+- Sign-in is limited to 10 attempts per minute per address.
+
+### Pane page
+
+- **Live terminal.** A viewer whose browser falls behind (more than ~2.5 s of
+  queued output) gets a fresh screen instead of a pile of stale output. Other
+  viewers are not slowed down.
+- **Transcript.** Recent agent text, fetched only when you open it or press Refresh.
+- **Offline machines** are listed with their last-seen time. Expanding one
+  shows its last recorded pane list, and opening a pane shows the output that
+  was recorded while someone watched it.
+
 ## Load test
 
 ```bash

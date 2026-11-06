@@ -56,10 +56,32 @@ pub fn run(config: LinkConfig) -> ! {
         if started.elapsed() > Duration::from_secs(60) {
             backoff = Duration::from_secs(1);
         }
-        eprintln!("klark link: reconnecting in {}s", backoff.as_secs());
-        std::thread::sleep(backoff);
+        let wait = jittered(backoff, &config.machine_id);
+        eprintln!("klark link: reconnecting in {:.1}s", wait.as_secs_f64());
+        std::thread::sleep(wait);
         backoff = (backoff * 2).min(MAX_BACKOFF);
     }
+}
+
+/// Backoff with ±50% jitter, so 100 machines that lost the same hub don't all
+/// reconnect in the same instant (STATUS S-14, experiment E-10). The jitter is
+/// seeded from the machine id and the clock: no RNG dependency is needed.
+pub fn jittered(base: Duration, machine_id: &str) -> Duration {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    machine_id.hash(&mut h);
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or_default()
+        .hash(&mut h);
+    jitter_from(base, h.finish())
+}
+
+fn jitter_from(base: Duration, seed: u64) -> Duration {
+    // Uniform in [0.5, 1.5) × base.
+    let factor = 0.5 + (seed % 1_000_000) as f64 / 1_000_000.0;
+    base.mul_f64(factor)
 }
 
 pub type Socket = WebSocket<MaybeTlsStream<TcpStream>>;
@@ -358,6 +380,19 @@ pub fn tree_rev(snapshot: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn jitter_stays_within_half_to_one_and_a_half() {
+        let base = Duration::from_secs(8);
+        for seed in [0u64, 1, 499_999, 999_999, u64::MAX, 123_456_789] {
+            let d = jitter_from(base, seed);
+            assert!(
+                d >= Duration::from_secs(4) && d < Duration::from_secs(12),
+                "{d:?}"
+            );
+        }
+        assert_ne!(jitter_from(base, 1), jitter_from(base, 600_000));
+    }
 
     #[test]
     fn frames_coalesce_per_pane_and_keep_close_order() {
