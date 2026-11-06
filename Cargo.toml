@@ -1,19 +1,18 @@
 [package]
-name = "herdr"
+name = "klark"
 version = "0.9.5"
 edition = "2021"
 build = "build.rs"
-description = "terminal workspace manager for AI coding agents"
+description = "klark — terminal workspace manager for AI coding agents, with a built-in hub link"
 license = "Apache-2.0"
-repository = "https://github.com/herdrdev/herdr"
-homepage = "https://herdr.dev"
+repository = "https://github.com/muthuishere/klark"
 keywords = ["terminal", "tui", "ai", "agents", "multiplexer"]
 categories = ["command-line-utilities"]
 include = [
     "src/**/*",
     "assets/sounds/*",
-    "docs/next/api/herdr-api.schema.json",
-    "skills/herdr/SKILL.md",
+    "api/klark-api.schema.json",
+    "skills/klark/SKILL.md",
     "distribution/install.ps1",
     "README.md",
     "LICENSE",
@@ -21,11 +20,12 @@ include = [
 ]
 
 [workspace]
-members = ["crates/ghostty-vt"]
-default-members = [".", "crates/ghostty-vt"]
+members = ["crates/ghostty-vt", "crates/klark-link"]
+default-members = [".", "crates/ghostty-vt", "crates/klark-link"]
 
 [dependencies]
 ghostty-vt = { path = "crates/ghostty-vt" }
+klark-link = { path = "crates/klark-link" }
 base64 = "0.22.1"
 bincode = { version = "2", features = ["serde"] }
 bytes = "1"

@@ -1,0 +1,178 @@
+@page "/"
+@attribute [Authorize]
+@rendermode InteractiveServer
+@implements IDisposable
+@using System.Security.Claims
+@using System.Text.Json.Nodes
+@inject MachineRegistry Registry
+@inject HubStore Store
+@inject HubAccess Access
+@inject AuthenticationStateProvider Auth
+
+<PageTitle>klark hub</PageTitle>
+
+<h1>Machines</h1>
+
+<input class="search" placeholder="Filter panes by title, agent, folder…" @bind="filter" @bind:event="oninput" />
+
+@if (Mine.Count == 0 && offlineMachines.Count == 0)
+{
+    <p class="empty">No machines are linked yet. On a machine, run
+        <code>klark link --hub ws://&lt;this-host&gt;:8080/agent --token &lt;token&gt;</code>.</p>
+}
+
+@foreach (var machine in Mine)
+{
+    var panes = Visible(machine.Tree.Panes).ToList();
+    <section class="machine">
+        <h2>@machine.Name <small>@machine.Host · klark @machine.Version · @machine.Tree.Panes.Count panes</small></h2>
+        @if (panes.Count == 0)
+        {
+            <p class="empty">@(machine.Tree.Panes.Count == 0 ? "Loading this machine's panes…" : "No pane matches the filter.")</p>
+        }
+        else
+        {
+            <ul class="panes">
+                @foreach (var pane in panes.OrderByDescending(p => Rank(p.AgentStatus)))
+                {
+                    <li>
+                        <a href="@($"/m/{Uri.EscapeDataString(machine.Id)}/p/{Uri.EscapeDataString(pane.Id)}")">
+                            <span class="status status-@Css(pane.AgentStatus)">@Label(pane.AgentStatus)</span>
+                            <span class="title">@pane.Title</span>
+                            @if (!string.IsNullOrEmpty(pane.Agent)) { <span class="agent">@pane.Agent</span> }
+                            <span class="cwd">@machine.Tree.WorkspaceLabel(pane.WorkspaceId) · @pane.Cwd</span>
+                        </a>
+                    </li>
+                }
+            </ul>
+        }
+    </section>
+}
+
+@if (offlineMachines.Count > 0)
+{
+    <h2 class="section">Offline</h2>
+    @foreach (var known in offlineMachines)
+    {
+        <section class="machine offline">
+            <h2>
+                <button type="button" class="link" @onclick="() => ToggleOfflineAsync(known.Id)">@(openOffline.ContainsKey(known.Id) ? "▾" : "▸") @known.Id</button>
+                <small>@known.Host · last seen @known.LastSeen.ToLocalTime().ToString("g")</small>
+            </h2>
+            @if (openOffline.TryGetValue(known.Id, out var tree))
+            {
+                @if (tree is null || tree.Panes.Count == 0)
+                {
+                    <p class="empty">No pane list was recorded for this machine.</p>
+                }
+                else
+                {
+                    <ul class="panes">
+                        @foreach (var pane in Visible(tree.Panes))
+                        {
+                            <li>
+                                <a href="@($"/m/{Uri.EscapeDataString(known.Id)}/p/{Uri.EscapeDataString(pane.Id)}")">
+                                    <span class="status status-none">last</span>
+                                    <span class="title">@pane.Title</span>
+                                    <span class="cwd">@pane.Cwd</span>
+                                </a>
+                            </li>
+                        }
+                    </ul>
+                }
+            }
+        </section>
+    }
+}
+
+@code {
+    private ClaimsPrincipal user = new();
+    private List<KnownMachine> offlineMachines = new();
+    private readonly Dictionary<string, SessionTree?> openOffline = new();
+
+    /// <summary>Connected machines this user may see (STATUS S-05).</summary>
+    private List<MachineConnection> Mine => Registry.Machines.Where(m => Access.CanSee(user, m.Id)).ToList();
+
+    protected override async Task OnInitializedAsync()
+    {
+        user = (await Auth.GetAuthenticationStateAsync()).User;
+        await LoadOfflineAsync();
+        pullTimer = new PeriodicTimer(TimeSpan.FromSeconds(3));
+        _ = PullLoopAsync(pullTimer);
+    }
+
+    /// <summary>Known machines that are not linked right now; their pane lists load only when expanded (STATUS S-07).</summary>
+    private string connectedKey = "";
+
+    private async Task LoadOfflineAsync()
+    {
+        var connected = Registry.Machines.Select(m => m.Id).ToHashSet();
+        var key = string.Join('\n', connected.Order());
+        if (key == connectedKey && offlineMachines.Count > 0) return;
+        connectedKey = key;
+        offlineMachines = (await Store.KnownMachinesAsync())
+            .Where(k => !connected.Contains(k.Id) && Access.CanSee(user, k.Id))
+            .OrderByDescending(k => k.LastSeen)
+            .ToList();
+    }
+
+    private async Task ToggleOfflineAsync(string id)
+    {
+        if (openOffline.Remove(id)) return;
+        var json = await Store.LastTreeAsync(id);
+        openOffline[id] = json is null ? null : SessionTree.Parse(JsonNode.Parse(json));
+    }
+
+    private string filter = "";
+
+    private PeriodicTimer? pullTimer;
+
+    // Lazy pull (ADR 0001, D11): trees are fetched only while this page is open,
+    // and a tree younger than 2 s is shared by everyone looking at it.
+    protected override void OnInitialized()
+    {
+        // Both lifecycle methods run: this one subscribes, OnInitializedAsync
+        // loads the user and then starts pulling.
+        Registry.Changed += OnChanged;
+    }
+
+    private async Task PullLoopAsync(PeriodicTimer timer)
+    {
+        do
+        {
+            // Pull only machines this user can see.
+            await Registry.RefreshTreesAsync(TimeSpan.FromSeconds(2), m => Access.CanSee(user, m.Id));
+        } while (await timer.WaitForNextTickAsync());
+    }
+
+    private int renderQueued;
+
+    // Many machines can change at once; repaint at most four times a second.
+    private void OnChanged()
+    {
+        if (Interlocked.Exchange(ref renderQueued, 1) == 1) return;
+        _ = InvokeAsync(async () =>
+        {
+            await Task.Delay(250);
+            Interlocked.Exchange(ref renderQueued, 0);
+            await LoadOfflineAsync();
+            StateHasChanged();
+        });
+    }
+
+    public void Dispose()
+    {
+        Registry.Changed -= OnChanged;
+        pullTimer?.Dispose();
+    }
+
+    private IEnumerable<PaneInfo> Visible(IEnumerable<PaneInfo> panes) =>
+        string.IsNullOrWhiteSpace(filter)
+            ? panes
+            : panes.Where(p => $"{p.Title} {p.Agent} {p.Cwd}".Contains(filter, StringComparison.OrdinalIgnoreCase));
+
+    // Blocked agents first: those are the ones waiting for a person.
+    private static int Rank(string status) => status switch { "blocked" => 3, "working" => 2, "idle" => 1, _ => 0 };
+    private static string Css(string status) => string.IsNullOrEmpty(status) ? "none" : status;
+    private static string Label(string status) => string.IsNullOrEmpty(status) ? "shell" : status;
+}

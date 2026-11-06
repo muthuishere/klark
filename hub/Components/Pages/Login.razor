@@ -1,0 +1,24 @@
+@page "/login"
+@layout MainLayout
+
+<PageTitle>Sign in · klark hub</PageTitle>
+
+<section class="login">
+    <h1>Sign in</h1>
+    @if (Failed == 1)
+    {
+        <p class="error">That name and password did not match, or the account is not allowed on this hub.</p>
+    }
+    <form method="post" action="/account/login">
+        <AntiforgeryToken />
+        <input type="hidden" name="returnUrl" value="@ReturnUrl" />
+        <label>Name <input name="username" autocomplete="username" required autofocus /></label>
+        <label>Password <input name="password" type="password" autocomplete="current-password" required /></label>
+        <button type="submit">Sign in</button>
+    </form>
+</section>
+
+@code {
+    [SupplyParameterFromQuery] public int? Failed { get; set; }
+    [SupplyParameterFromQuery] public string? ReturnUrl { get; set; }
+}

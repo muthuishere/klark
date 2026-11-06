@@ -1,0 +1,200 @@
+@page "/m/{MachineId}/p/{PaneId}"
+@attribute [Authorize]
+@rendermode InteractiveServer
+@implements IAsyncDisposable
+@using System.Security.Claims
+@using System.Text.Json.Nodes
+@inject MachineRegistry Registry
+@inject HubStore Store
+@inject HubAccess Access
+@inject AuthenticationStateProvider Auth
+@inject IJSRuntime JS
+
+<PageTitle>@(pane?.Title ?? PaneId) · klark hub</PageTitle>
+
+<nav class="crumbs"><a href="/">Machines</a> / @MachineId / @(pane?.Title ?? PaneId)</nav>
+
+@if (!allowed)
+{
+    <p class="empty">Machine <b>@MachineId</b> is not available to you.</p>
+}
+else
+{
+    <div class="pane-head">
+        <h1>@(pane?.Title ?? PaneId)</h1>
+        @if (pane is not null)
+        {
+            <span class="status status-@(string.IsNullOrEmpty(pane.AgentStatus) ? "none" : pane.AgentStatus)">@(string.IsNullOrEmpty(pane.AgentStatus) ? "shell" : pane.AgentStatus)</span>
+        }
+        @if (offline) { <span class="closed">machine offline: showing what was last recorded</span> }
+        else if (closedReason is not null) { <span class="closed">stream ended: @closedReason</span> }
+        @if (readOnly) { <span class="badge">read-only</span> }
+        @if (!offline)
+        {
+            <button type="button" class="link" @onclick="ToggleTranscriptAsync">@(transcript is null ? "Transcript" : "Terminal")</button>
+        }
+    </div>
+
+    <div class="terminal" @ref="terminalHost" style="@(transcript is null ? "" : "display:none")"></div>
+
+    @if (transcript is not null)
+    {
+        <div class="transcript-head">
+            <span class="muted">Recent text from the agent (pulled on request).</span>
+            <button type="button" class="link" @onclick="LoadTranscriptAsync">Refresh</button>
+        </div>
+        <pre class="transcript">@transcript</pre>
+    }
+
+    @if (!offline && !readOnly)
+    {
+        <form class="reply" @onsubmit="SendAsync">
+            <input placeholder="Type a reply and press Enter…" @bind="reply" autocomplete="off" />
+            <button type="submit">Send</button>
+            <button type="button" @onclick='() => KeysAsync("esc")'>Esc</button>
+            <button type="button" @onclick='() => KeysAsync("ctrl+c")'>Ctrl-C</button>
+        </form>
+    }
+}
+
+@code {
+    [Parameter] public string MachineId { get; set; } = "";
+    [Parameter] public string PaneId { get; set; } = "";
+
+    private ClaimsPrincipal user = new();
+    private bool allowed;
+    private bool readOnly;
+    private bool offline;
+    private MachineConnection? machine;
+    private PaneInfo? pane;
+    private ElementReference terminalHost;
+    private IAsyncDisposable? watch;
+    private string reply = "";
+    private string? closedReason;
+    private string? transcript;
+    private readonly string termId = Guid.NewGuid().ToString("N");
+
+    protected override async Task OnInitializedAsync()
+    {
+        user = (await Auth.GetAuthenticationStateAsync()).User;
+        allowed = Access.CanSee(user, MachineId);
+        readOnly = !Access.CanType(user, MachineId);
+        if (!allowed) return;
+
+        Registry.Changed += OnChanged;
+        Refresh();
+        if (machine is not null)
+        {
+            _ = machine.EnsureTreeAsync(TimeSpan.FromSeconds(5)).ContinueWith(_ => OnChanged());
+        }
+        else if (await Store.LastTreeAsync(MachineId) is { } json)
+        {
+            // Offline: the last tree recorded in this machine's SQLite file (STATUS S-07).
+            offline = true;
+            pane = SessionTree.Parse(JsonNode.Parse(json)).Panes.FirstOrDefault(p => p.Id == PaneId);
+        }
+    }
+
+    private void Refresh()
+    {
+        machine = Registry.Get(MachineId);
+        if (machine is not null)
+        {
+            pane = machine.Tree.Panes.FirstOrDefault(p => p.Id == PaneId) ?? pane;
+        }
+    }
+
+    private void OnChanged() => InvokeAsync(() => { Refresh(); StateHasChanged(); });
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || !allowed) return;
+        await JS.InvokeVoidAsync("klarkTerm.open", termId, terminalHost);
+
+        if (machine is null)
+        {
+            var recorded = await Store.RecentOutputAsync(MachineId, PaneId);
+            if (recorded.Length > 0)
+            {
+                await JS.InvokeVoidAsync("klarkTerm.writeBase64", termId, Convert.ToBase64String(recorded));
+            }
+            else
+            {
+                await JS.InvokeVoidAsync("klarkTerm.writeText", termId, "(nothing was recorded for this pane while it was watched)");
+            }
+            return;
+        }
+
+        // Paint the current screen first, then follow the live stream. The
+        // machine only starts streaming this pane because we are watching it.
+        watch = machine.Watch(PaneId,
+            bytes => InvokeAsync(() => JS.InvokeVoidAsync("klarkTerm.writeBase64", termId, bytes).AsTask()),
+            reason => InvokeAsync(() => { closedReason = reason; StateHasChanged(); }),
+            screen => InvokeAsync(() => JS.InvokeVoidAsync("klarkTerm.reset", termId, screen).AsTask()));
+        try
+        {
+            var screen = await machine.ReadScreenAsync(PaneId);
+            await JS.InvokeVoidAsync("klarkTerm.writeText", termId, screen);
+        }
+        catch (Exception e)
+        {
+            closedReason = e.Message;
+            StateHasChanged();
+        }
+    }
+
+    private async Task ToggleTranscriptAsync()
+    {
+        if (transcript is not null)
+        {
+            transcript = null;
+            return;
+        }
+        transcript = "Loading…";
+        await LoadTranscriptAsync();
+    }
+
+    /// <summary>STATUS S-09: agent.read, fetched only when asked for.</summary>
+    private async Task LoadTranscriptAsync()
+    {
+        if (machine is null) return;
+        try
+        {
+            var result = await machine.CallAsync("agent.read", new { target = PaneId, source = "recent", format = "text", strip_ansi = true, lines = 500 });
+            transcript = result?["read"]?["text"]?.GetValue<string>() is { Length: > 0 } text ? text : "(no text)";
+        }
+        catch (Exception e)
+        {
+            // agent.read only works on panes with a detected agent; fall back to the pane's own text.
+            try
+            {
+                var result = await machine.CallAsync("pane.read", new { pane_id = PaneId, source = "recent", format = "text", strip_ansi = true, lines = 500 });
+                transcript = result?["read"]?["text"]?.GetValue<string>() ?? $"(unavailable: {e.Message})";
+            }
+            catch (Exception e2)
+            {
+                transcript = $"(unavailable: {e2.Message})";
+            }
+        }
+    }
+
+    private async Task SendAsync()
+    {
+        // Checked here, on the server, not just by hiding the form (STATUS S-06).
+        if (machine is null || string.IsNullOrEmpty(reply) || !Access.CanType(user, MachineId)) return;
+        await machine.SendInputAsync(PaneId, reply);
+        await machine.SendKeysAsync(PaneId, "enter");
+        reply = "";
+    }
+
+    private Task KeysAsync(string key) =>
+        machine is not null && Access.CanType(user, MachineId) ? machine.SendKeysAsync(PaneId, key) : Task.CompletedTask;
+
+    public async ValueTask DisposeAsync()
+    {
+        Registry.Changed -= OnChanged;
+        if (watch is not null) await watch.DisposeAsync();
+        try { await JS.InvokeVoidAsync("klarkTerm.close", termId); }
+        catch (JSDisconnectedException) { }
+    }
+}

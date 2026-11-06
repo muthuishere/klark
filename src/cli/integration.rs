@@ -26,7 +26,7 @@ fn integration_status(args: &[String]) -> std::io::Result<i32> {
         [] => false,
         [flag] if flag == "--outdated-only" => true,
         _ => {
-            eprintln!("usage: herdr integration status [--outdated-only]");
+            eprintln!("usage: klark integration status [--outdated-only]");
             return Ok(2);
         }
     };
@@ -147,13 +147,13 @@ fn parse_integration_target(
 ) -> std::io::Result<Option<IntegrationCommandTarget>> {
     let Some(target) = args.first().map(|arg| arg.as_str()) else {
         eprintln!(
-            "usage: herdr integration {action} <pi|omp|claude|codex|copilot|devin|droid|kimi|opencode|kilo|hermes|qodercli|qwen|letta|cursor|mastracode|grok>"
+            "usage: klark integration {action} <pi|omp|claude|codex|copilot|devin|droid|kimi|opencode|kilo|hermes|qodercli|qwen|letta|cursor|mastracode|grok>"
         );
         return Ok(None);
     };
     if args.len() != 1 {
         eprintln!(
-            "usage: herdr integration {action} <pi|omp|claude|codex|copilot|devin|droid|kimi|opencode|kilo|hermes|qodercli|qwen|letta|cursor|mastracode|grok>"
+            "usage: klark integration {action} <pi|omp|claude|codex|copilot|devin|droid|kimi|opencode|kilo|hermes|qodercli|qwen|letta|cursor|mastracode|grok>"
         );
         return Ok(None);
     }
@@ -192,42 +192,42 @@ fn parse_integration_target(
 }
 
 fn print_integration_help() {
-    eprintln!("herdr integration commands:");
-    eprintln!("  herdr integration install pi");
-    eprintln!("  herdr integration install omp");
-    eprintln!("  herdr integration install claude");
-    eprintln!("  herdr integration install codex");
-    eprintln!("  herdr integration install copilot");
-    eprintln!("  herdr integration install devin");
-    eprintln!("  herdr integration install droid");
-    eprintln!("  herdr integration install kimi");
-    eprintln!("  herdr integration install opencode");
-    eprintln!("  herdr integration install kilo");
-    eprintln!("  herdr integration install hermes");
-    eprintln!("  herdr integration install qodercli");
-    eprintln!("  herdr integration install qwen");
-    eprintln!("  herdr integration install letta");
-    eprintln!("  herdr integration install cursor");
-    eprintln!("  herdr integration install mastracode");
-    eprintln!("  herdr integration install antigravity-cli");
-    eprintln!("  herdr integration install grok");
-    eprintln!("  herdr integration uninstall pi");
-    eprintln!("  herdr integration uninstall omp");
-    eprintln!("  herdr integration uninstall claude");
-    eprintln!("  herdr integration uninstall codex");
-    eprintln!("  herdr integration uninstall copilot");
-    eprintln!("  herdr integration uninstall devin");
-    eprintln!("  herdr integration uninstall droid");
-    eprintln!("  herdr integration uninstall kimi");
-    eprintln!("  herdr integration uninstall opencode");
-    eprintln!("  herdr integration uninstall kilo");
-    eprintln!("  herdr integration uninstall hermes");
-    eprintln!("  herdr integration uninstall qodercli");
-    eprintln!("  herdr integration uninstall qwen");
-    eprintln!("  herdr integration uninstall letta");
-    eprintln!("  herdr integration uninstall cursor");
-    eprintln!("  herdr integration uninstall mastracode");
-    eprintln!("  herdr integration uninstall antigravity-cli");
-    eprintln!("  herdr integration uninstall grok");
-    eprintln!("  herdr integration status [--outdated-only]");
+    eprintln!("klark integration commands:");
+    eprintln!("  klark integration install pi");
+    eprintln!("  klark integration install omp");
+    eprintln!("  klark integration install claude");
+    eprintln!("  klark integration install codex");
+    eprintln!("  klark integration install copilot");
+    eprintln!("  klark integration install devin");
+    eprintln!("  klark integration install droid");
+    eprintln!("  klark integration install kimi");
+    eprintln!("  klark integration install opencode");
+    eprintln!("  klark integration install kilo");
+    eprintln!("  klark integration install hermes");
+    eprintln!("  klark integration install qodercli");
+    eprintln!("  klark integration install qwen");
+    eprintln!("  klark integration install letta");
+    eprintln!("  klark integration install cursor");
+    eprintln!("  klark integration install mastracode");
+    eprintln!("  klark integration install antigravity-cli");
+    eprintln!("  klark integration install grok");
+    eprintln!("  klark integration uninstall pi");
+    eprintln!("  klark integration uninstall omp");
+    eprintln!("  klark integration uninstall claude");
+    eprintln!("  klark integration uninstall codex");
+    eprintln!("  klark integration uninstall copilot");
+    eprintln!("  klark integration uninstall devin");
+    eprintln!("  klark integration uninstall droid");
+    eprintln!("  klark integration uninstall kimi");
+    eprintln!("  klark integration uninstall opencode");
+    eprintln!("  klark integration uninstall kilo");
+    eprintln!("  klark integration uninstall hermes");
+    eprintln!("  klark integration uninstall qodercli");
+    eprintln!("  klark integration uninstall qwen");
+    eprintln!("  klark integration uninstall letta");
+    eprintln!("  klark integration uninstall cursor");
+    eprintln!("  klark integration uninstall mastracode");
+    eprintln!("  klark integration uninstall antigravity-cli");
+    eprintln!("  klark integration uninstall grok");
+    eprintln!("  klark integration status [--outdated-only]");
 }

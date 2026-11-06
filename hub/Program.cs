@@ -1,0 +1,135 @@
+using System.Security.Claims;
+using KlarkHub.Components;
+using KlarkHub.Services;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
+using System.Threading.RateLimiting;
+using Microsoft.AspNetCore.RateLimiting;
+
+// Small admin helpers, so no secret ever has to be written to config in clear text.
+if (args.Length == 2 && args[0] == "hash-password")
+{
+    Console.WriteLine(new PasswordHasher<string>().HashPassword("", args[1]));
+    return;
+}
+if (args.Length == 2 && args[0] == "hash-token")
+{
+    Console.WriteLine(TokenHash.Sha256Hex(args[1]));
+    return;
+}
+
+var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.Configure<HubOptions>(builder.Configuration.GetSection("Hub"));
+builder.Services.AddSingleton<MockLdapDirectory>();
+builder.Services.AddSingleton<LdapDirectory>();
+builder.Services.AddSingleton<LocalDirectory>();
+builder.Services.AddSingleton<SignInService>();
+builder.Services.AddSingleton<HubAccess>();
+builder.Services.AddSingleton<HubStore>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<HubStore>());
+builder.Services.AddSingleton<MachineRegistry>();
+builder.Services.AddResponseCompression();
+builder.Services.AddRazorComponents().AddInteractiveServerComponents();
+builder.Services.AddCascadingAuthenticationState();
+builder.Services
+    .AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
+    .AddCookie(o =>
+    {
+        o.LoginPath = "/login";
+        o.ExpireTimeSpan = TimeSpan.FromDays(14);
+        o.SlidingExpiration = true;
+        o.Cookie.HttpOnly = true;
+        o.Cookie.SameSite = SameSiteMode.Lax;
+        // The hub is served over plain HTTP, so the cookie cannot require HTTPS.
+        o.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+    });
+builder.Services.AddAuthorization();
+
+// STATUS S-11: at most 10 sign-in attempts per minute per client address.
+builder.Services.AddRateLimiter(o =>
+{
+    o.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    o.AddPolicy("login", ctx => RateLimitPartition.GetFixedWindowLimiter(
+        ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        _ => new FixedWindowRateLimiterOptions { PermitLimit = 10, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
+});
+
+var app = builder.Build();
+
+if (!app.Environment.IsDevelopment())
+{
+    // Plain HTTP by design (ADR 0001, D9): no HSTS, no HTTPS redirect.
+    app.UseExceptionHandler("/error", createScopeForErrors: true);
+}
+
+app.UseResponseCompression();
+app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(20) });
+app.UseRateLimiter();
+app.UseAuthentication();
+app.UseAuthorization();
+app.UseAntiforgery();
+app.MapStaticAssets();
+
+// klark machines dial in here: `klark link --hub ws://<host>:8080/agent --token <token>`.
+app.Map("/agent", async (HttpContext ctx, MachineRegistry registry, IOptionsMonitor<HubOptions> options) =>
+{
+    if (!ctx.WebSockets.IsWebSocketRequest)
+    {
+        return Results.BadRequest("websocket required");
+    }
+    var auth = ctx.Request.Headers.Authorization.ToString();
+    var token = auth.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) ? auth["Bearer ".Length..].Trim() : "";
+    var machine = token.Length == 0 ? null : TokenHash.Match(options.CurrentValue.Machines, token);
+    if (machine is null)
+    {
+        return Results.Unauthorized();
+    }
+    var machineId = machine.Name;
+    if (machine.Fleet)
+    {
+        var member = new string(ctx.Request.Headers["X-Klark-Machine"].ToString()
+            .Where(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.').Take(64).ToArray());
+        if (member.Length == 0) return Results.BadRequest("fleet tokens need an X-Klark-Machine header");
+        machineId = $"{machine.Name}:{member}";
+    }
+    using var socket = await ctx.WebSockets.AcceptWebSocketAsync();
+    await registry.RunAsync(socket, machineId, ctx.RequestAborted);
+    return Results.Empty;
+});
+
+app.MapPost("/account/login", async (HttpContext ctx, [FromForm] string username, [FromForm] string password,
+    [FromForm] string? returnUrl, SignInService signIn) =>
+{
+    var user = await signIn.SignInAsync(username, password, ctx.RequestAborted);
+    if (user is null)
+    {
+        return Results.Redirect("/login?failed=1");
+    }
+    var claims = new List<Claim>
+    {
+        new(ClaimTypes.Name, user.Name),
+        new("display_name", user.DisplayName),
+    };
+    claims.AddRange(user.Groups.Select(g => new Claim(ClaimTypes.Role, g)));
+    var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
+    await ctx.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, new ClaimsPrincipal(identity));
+    var target = !string.IsNullOrEmpty(returnUrl) && returnUrl.StartsWith('/') && !returnUrl.StartsWith("//") ? returnUrl : "/";
+    return Results.LocalRedirect(target);
+}).RequireRateLimiting("login");
+
+
+app.MapPost("/account/logout", async (HttpContext ctx) =>
+{
+    await ctx.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+    return Results.Redirect("/login");
+}).RequireAuthorization();
+
+app.MapGet("/healthz", () => Results.Ok("ok"));
+
+app.MapRazorComponents<App>().AddInteractiveServerRenderMode();
+
+app.Run();

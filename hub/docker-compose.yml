@@ -1,0 +1,36 @@
+services:
+  hub:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      # MockLdap (built-in demo users) by default. With the ldap profile below:
+      #   Hub__Auth__Mode=Ldap Hub__Auth__Ldap__Host=ldap Hub__Auth__Ldap__Port=1389
+      Hub__Auth__Mode: ${HUB_AUTH_MODE:-MockLdap}
+      Hub__Auth__Ldap__Host: ldap
+      Hub__Auth__Ldap__Port: "1389"
+      Hub__Auth__Ldap__UserDnTemplate: "cn={0},ou=users,dc=klark,dc=local"
+      Hub__Auth__Ldap__GroupSearchBase: "dc=klark,dc=local"
+    volumes:
+      - hub-data:/data
+      - ./appsettings.Production.json:/app/appsettings.Production.json:ro
+    restart: unless-stopped
+
+  # A throwaway OpenLDAP server with test users, for trying Mode=Ldap:
+  #   HUB_AUTH_MODE=Ldap docker compose --profile ldap up -d --build
+  # Users alice/alice and bob/bob, both in group "readers".
+  ldap:
+    profiles: ["ldap"]
+    image: bitnami/openldap:2.6
+    environment:
+      LDAP_ROOT: "dc=klark,dc=local"
+      LDAP_ADMIN_USERNAME: admin
+      LDAP_ADMIN_PASSWORD: adminpassword
+      LDAP_USERS: alice,bob
+      LDAP_PASSWORDS: alice,bob
+      LDAP_GROUP: readers
+    ports:
+      - "1389:1389"
+
+volumes:
+  hub-data:

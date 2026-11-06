@@ -1,0 +1,64 @@
+@page "/go"
+@attribute [Authorize]
+@inject MachineRegistry Registry
+@inject HubStore Store
+@inject HubAccess Access
+@inject AuthenticationStateProvider Auth
+@inject NavigationManager Nav
+
+@* A shared link from `klark link url` (ADR 0008). The machine only knows its
+   own host name, so find the hub machine that reported it, then open the pane. *@
+
+<PageTitle>Opening pane · klark hub</PageTitle>
+
+@if (matches is null)
+{
+    <p class="empty">Opening…</p>
+}
+else if (matches.Count == 0)
+{
+    <p class="empty">No machine called <b>@Machine</b> that you can see is linked to this hub.</p>
+}
+else
+{
+    <h1>Which machine?</h1>
+    <p class="empty">More than one machine reported the name <b>@Machine</b>.</p>
+    <ul class="panes">
+        @foreach (var id in matches)
+        {
+            <li><a href="@PaneHref(id)">@id</a></li>
+        }
+    </ul>
+}
+
+@code {
+    [SupplyParameterFromQuery] public string? Machine { get; set; }
+    [SupplyParameterFromQuery] public string? Pane { get; set; }
+
+    private List<string>? matches;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var user = (await Auth.GetAuthenticationStateAsync()).User;
+        if (string.IsNullOrEmpty(Machine) || string.IsNullOrEmpty(Pane))
+        {
+            matches = new();
+            return;
+        }
+        bool Named(string id, string host) =>
+            string.Equals(id, Machine, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(host, Machine, StringComparison.OrdinalIgnoreCase) ||
+            id.EndsWith(":" + Machine, StringComparison.OrdinalIgnoreCase);
+
+        var online = Registry.Machines.Where(m => Named(m.Id, m.Host)).Select(m => m.Id);
+        var known = (await Store.KnownMachinesAsync()).Where(k => Named(k.Id, k.Host)).Select(k => k.Id);
+        matches = online.Concat(known).Distinct().Where(id => Access.CanSee(user, id)).ToList();
+        if (matches.Count == 1)
+        {
+            Nav.NavigateTo(PaneHref(matches[0]), replace: true);
+        }
+    }
+
+    private string PaneHref(string machineId) =>
+        $"/m/{Uri.EscapeDataString(machineId)}/p/{Uri.EscapeDataString(Pane ?? "")}";
+}
