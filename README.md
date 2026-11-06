@@ -28,8 +28,11 @@ klark link --hub ws://hub-host:8080/agent --token <machine token> [--name laptop
 klark link url            # inside a pane: the hub link to this pane ("share this")
 ```
 
-The hub is klark's web UI, and the `klark-share` skill lets an agent hand back
-its own link. (herdr-expose is a separate product for herdr; see ADR 0008.)
+The hub is a **separate web server**: deploy it anywhere with Docker
+(`hub/`, `docker compose up -d`), then link any number of klark machines to it.
+Each machine connects out to whichever hub URL it is given; one hub is built
+for 100+ machines and many users. The `klark-share` skill lets an agent hand
+back its own hub link. (herdr-expose is a separate product for herdr; see ADR 0008.)
 
 ## Layout
 

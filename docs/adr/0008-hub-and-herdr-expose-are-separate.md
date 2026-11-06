@@ -15,7 +15,11 @@ machines and many users share.
   (`crates/klark-link`, Rust). They follow herdr-expose's ideas (dial out,
   read a pane without resizing it, pull instead of push) but share no code or
   runtime with it.
-- klark has no local LAN web UI. The hub is klark's web UI.
+- **The hub is a separate web server**, deployed on its own (Docker, any host).
+  It is not built into klark. A klark machine connects to any hub with
+  `klark link --hub ws://<hub>:8080/agent --token <token>`, and one hub serves
+  many klark machines (designed and load-tested for 100) and many users.
+- klark itself has no web UI. Without a hub, the TUI is its interface.
 - herdr-expose features that klark wants are built klark's way:
 
 | idea in herdr-expose | klark equivalent | status |
@@ -32,4 +36,5 @@ machines and many users share.
 ## Consequences
 - Two products, maintained independently: herdr + herdr-expose, and klark +
   hub.
-- Without a hub, a klark machine has no web view; the TUI is its interface.
+- To use a different hub, point `klark link` at a different URL. To appear
+  on two hubs at once, run two `klark link` processes.
