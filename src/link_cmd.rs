@@ -96,12 +96,34 @@ fn print_url(args: &[String]) -> ! {
     }
 }
 
-fn hostname() -> String {
+pub(crate) fn hostname() -> String {
     std::fs::read_to_string("/etc/hostname")
         .ok()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .or_else(|| std::env::var("HOSTNAME").ok())
         .or_else(|| std::env::var("COMPUTERNAME").ok())
+        .or_else(os_hostname)
         .unwrap_or_else(|| "klark-machine".to_string())
+}
+
+/// gethostname(2): macOS has no /etc/hostname and zsh does not export
+/// HOSTNAME, so without this every Mac reported "klark-machine". `klark msg`
+/// needs the same name the link reports (ADR 0009 addresses).
+#[cfg(unix)]
+fn os_hostname() -> Option<String> {
+    let mut buf = [0u8; 256];
+    let rc = unsafe { libc::gethostname(buf.as_mut_ptr() as *mut libc::c_char, buf.len()) };
+    if rc != 0 {
+        return None;
+    }
+    let end = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+    let name = String::from_utf8_lossy(&buf[..end]).trim().to_string();
+    let name = name.strip_suffix(".local").unwrap_or(&name).to_string();
+    (!name.is_empty()).then_some(name)
+}
+
+#[cfg(not(unix))]
+fn os_hostname() -> Option<String> {
+    None
 }

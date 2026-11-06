@@ -17,6 +17,7 @@ mod api;
 mod app;
 mod build_info;
 mod link_cmd;
+mod msg_cmd;
 mod checksum;
 mod cli;
 mod client;
@@ -582,6 +583,10 @@ fn main() -> io::Result<()> {
         link_cmd::run(&args[2..]);
     }
 
+    if args.get(1).map(|s| s.as_str()) == Some("msg") {
+        msg_cmd::run(&args[2..]);
+    }
+
     if args.get(1).map(|s| s.as_str()) == Some("update") {
         let options = match update::parse_self_update_args(&args[2..]) {
             Ok(options) => options,
@@ -619,6 +624,7 @@ fn main() -> io::Result<()> {
         println!("       klark session attach <name>");
         println!("       klark completion zsh");
         println!("       klark link --hub <url> --token <token>");
+        println!("       klark msg <whoami|ls|send|reply|log|name|login|status> ...");
         println!("       klark channel set <stable|preview>");
         println!("       klark machine <subcommand> ...");
         println!("       klark server stop");

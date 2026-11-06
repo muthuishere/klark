@@ -206,6 +206,16 @@ fn simulate(n: usize, args: &Args, stats: &Stats, deadline: Instant) -> Result<(
                         }
                         HubMessage::Ping => Some(AgentMessage::Pong),
                         HubMessage::Input { .. } | HubMessage::Keys { .. } => None,
+                        HubMessage::ListAgents { id } => Some(AgentMessage::Result {
+                            id,
+                            result: Some(json!([])),
+                            error: None,
+                        }),
+                        HubMessage::Deliver { id, .. } => Some(AgentMessage::Result {
+                            id,
+                            result: Some(json!({"delivered": true})),
+                            error: None,
+                        }),
                     };
                     if let Some(reply) = reply {
                         send(&mut ws, &reply)?;
