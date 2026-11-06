@@ -49,7 +49,7 @@ pub(crate) const AGENT_HELP_FOOTER: &str = concat!(
     "  Control Klark panes, agents, or workspaces:\n",
     "    SKIP if a Klark skill is already in your context. Otherwise run: klark --skill\n",
     "  Help a human understand or set up Klark, or debug a problem with it:\n",
-    "    read the source and docs: https://github.com/klarkdev/klark",
+    "    read the source and docs: https://github.com/muthuishere/klark",
 );
 
 pub(crate) fn parse_token_assignment(raw: &str) -> Result<(String, Option<String>), String> {

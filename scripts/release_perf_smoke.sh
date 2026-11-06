@@ -40,7 +40,7 @@ if [[ -z "$baseline" ]]; then
   baseline_version=$(jq -er '.version' "$repo_root/distribution/latest.json")
   baseline="$root/klark-baseline"
   curl -fL --retry 3 \
-    "https://github.com/klarkdev/klark/releases/download/v${baseline_version}/klark-${platform}-${arch}" \
+    "https://github.com/muthuishere/klark/releases/download/v${baseline_version}/klark-${platform}-${arch}" \
     -o "$baseline"
   chmod +x "$baseline"
 else

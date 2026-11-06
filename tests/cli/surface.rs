@@ -288,7 +288,7 @@ fn root_and_command_group_help_point_agents_to_plain_text_docs() {
         for expected in [
             "Are you an AI? Use these resources ONLY IF your task specifically asks you to:",
             "klark --skill",
-            "https://github.com/klarkdev/klark",
+            "https://github.com/muthuishere/klark",
         ] {
             assert!(
                 stdout.contains(expected),

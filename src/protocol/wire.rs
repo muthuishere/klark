@@ -2208,7 +2208,7 @@ mod tests {
     #[tokio::test]
     async fn client_shell_remote_altgr_dead_key_emits_only_composed_text() {
         // Spanish ISO AltGr+4, then Space, captured in #3948:
-        // https://github.com/klarkdev/klark/issues/3948#issuecomment-5633222390
+        // upstream: https://github.com/herdrdev/herdr/issues/3948#issuecomment-5633222390
         let records = [
             ('4', ClientKeyKind::Press, 52, 5, 0, 9),
             ('4', ClientKeyKind::Release, 52, 5, 0, 9),

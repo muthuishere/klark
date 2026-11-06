@@ -15,7 +15,7 @@ DEFAULT_LIVE_MANIFEST_URL = "https://klark.dev/latest.json"
 
 SECTION_RE = re.compile(r"^##\s+(?:\[(?P<bracketed>[^\]]+)\]|(?P<plain>.+?))\s*$", re.MULTILINE)
 VERSION_WITH_DATE_RE = re.compile(r"^(?P<version>.+?)\s+-\s+\d{4}-\d{2}-\d{2}$")
-DEFAULT_RELEASE_REPO = "klarkdev/klark"
+DEFAULT_RELEASE_REPO = "muthuishere/klark"
 DEFAULT_LATEST_JSON_PATH = Path("distribution/latest.json")
 DEFAULT_PRODUCT_ANNOUNCEMENT_PATH = Path("docs/next/product-announcement.json")
 PROTOCOL_SOURCE_PATH = Path("src/protocol/wire.rs")

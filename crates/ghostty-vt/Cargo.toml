@@ -4,7 +4,7 @@ version = "0.0.0"
 edition = "2021"
 description = "Klark's binding to its vendored libghostty-vt"
 license = "Apache-2.0"
-repository = "https://github.com/klarkdev/klark"
+repository = "https://github.com/muthuishere/klark"
 publish = false
 
 [dependencies]

@@ -7,15 +7,15 @@ description: Triage open klark GitHub issues into a concise decision-first Markd
 
 Use this skill only inside the klark repository.
 
-When the user says `triage`, inspect open GitHub issues for `klarkdev/klark` and return a concise Markdown table. Prefer GitHub MCP tools when available. If they are unavailable, use `gh issue list` / `gh issue view` only when authenticated access is already configured.
+When the user says `triage`, inspect open GitHub issues for `muthuishere/klark` and return a concise Markdown table. Prefer GitHub MCP tools when available. If they are unavailable, use `gh issue list` / `gh issue view` only when authenticated access is already configured.
 
 Use this table shape:
 
 | Light | Recommendation | Issue | Age | Reactions | Why |
 |---|---|---|---:|---:|---|
-| 🔴 | fix now | [#123](https://github.com/klarkdev/klark/issues/123) | 18d | 5 | user-visible regression |
-| 🟡 | queue | [#124](https://github.com/klarkdev/klark/issues/124) | 42d | 2 | useful but not blocking |
-| 🔵 | defer | [#125](https://github.com/klarkdev/klark/issues/125) | 7d | 0 | cosmetic polish |
+| 🔴 | fix now | [#123](https://github.com/muthuishere/klark/issues/123) | 18d | 5 | user-visible regression |
+| 🟡 | queue | [#124](https://github.com/muthuishere/klark/issues/124) | 42d | 2 | useful but not blocking |
+| 🔵 | defer | [#125](https://github.com/muthuishere/klark/issues/125) | 7d | 0 | cosmetic polish |
 
 Keep issue numbers as Markdown links. Use days since issue creation for `Age`. Use total reactions for `Reactions`; include a compact breakdown only when it changes interpretation, such as `7 (5 👍, 2 👀)`.
 
