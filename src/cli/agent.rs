@@ -50,7 +50,7 @@ pub(super) fn run_agent_command(args: &[String]) -> std::io::Result<i32> {
         Err(ParseError::Io(error)) => return Err(error),
     };
     match operation {
-        Operation::List => agent_list(),
+        Operation::List { all_sessions } => agent_list(all_sessions),
         Operation::Get(params) => agent_get(params),
         Operation::Focus(params) => agent_focus(params),
         Operation::Read(params) => agent_read(params),
@@ -346,29 +346,215 @@ fn agent_start(params: AgentStartParams) -> std::io::Result<i32> {
     }
 }
 
-fn agent_list() -> std::io::Result<i32> {
-    super::print_response(&super::send_request(&Request {
+fn agent_list(all_sessions: bool) -> std::io::Result<i32> {
+    if all_sessions {
+        if super::target::is_remote() {
+            eprintln!("--all-sessions lists the sessions of this machine; it cannot be combined with --machine");
+            return Ok(2);
+        }
+        return agent_list_all_sessions();
+    }
+    let mut response = super::send_request(&Request {
         id: "cli:agent:list".into(),
         method: Method::AgentList(EmptyParams::default()),
-    })?)
+    })?;
+    if !super::target::is_remote() {
+        if let Some(session) = current_session_name() {
+            let machine = crate::msg_cmd::my_machine();
+            if let Some(agents) = response["result"]["agents"].as_array_mut() {
+                for agent in agents {
+                    annotate_agent(agent, &machine, &session);
+                }
+            }
+        }
+    }
+    super::print_response(&response)
+}
+
+/// `klark agent list -a`: the same JSON shape as `agent list`, with the agents
+/// of every running session. A session that cannot answer is reported under
+/// `result.errors` (and on stderr) instead of failing the whole list.
+fn agent_list_all_sessions() -> std::io::Result<i32> {
+    let machine = crate::msg_cmd::my_machine();
+    let listed = crate::agent_index::list_running();
+    if listed.is_empty() {
+        return super::print_response(&cli_agent_error(
+            "cli:agent:list",
+            "server_not_running",
+            "no klark session is running on this machine (see: klark session list)",
+        ));
+    }
+    let mut agents = Vec::new();
+    let mut sessions = Vec::new();
+    let mut errors = Vec::new();
+    for (session, result) in listed {
+        match result {
+            Ok(mut result) => {
+                if let Some(list) = result["agents"].as_array_mut() {
+                    for mut agent in list.drain(..) {
+                        annotate_agent(&mut agent, &machine, &session);
+                        agents.push(agent);
+                    }
+                }
+                sessions.push(session);
+            }
+            Err(error) => {
+                eprintln!("klark agent list: session {session}: {error}");
+                errors.push(serde_json::json!({"session": session, "error": error}));
+            }
+        }
+    }
+    let mut result = serde_json::json!({"agents": agents, "sessions": sessions});
+    if !errors.is_empty() {
+        result["errors"] = serde_json::Value::Array(errors);
+    }
+    super::print_response(&serde_json::json!({"id": "cli:agent:list", "result": result}))
+}
+
+/// Adds `session` and `address` (machine/session/name-or-pane, the form every
+/// TARGET and `klark msg send` accept) to one `agent.list` entry.
+fn annotate_agent(agent: &mut serde_json::Value, machine: &str, session: &str) {
+    let Some(object) = agent.as_object_mut() else {
+        return;
+    };
+    let handle = object
+        .get("name")
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| object.get("pane_id").and_then(serde_json::Value::as_str))
+        .map(str::to_owned);
+    object.insert("session".into(), session.into());
+    if let Some(handle) = handle {
+        object.insert(
+            "address".into(),
+            format!("{machine}/{session}/{handle}").into(),
+        );
+    }
+}
+
+/// The name of the session this command talks to by default, when it is a
+/// named session directory (not a raw `KLARK_SOCKET_PATH` override).
+fn current_session_name() -> Option<String> {
+    let name = crate::session::active_name()
+        .unwrap_or_else(|| crate::session::DEFAULT_SESSION_NAME.to_owned());
+    (crate::agent_index::session_socket(&name) == crate::session::active_api_socket_path())
+        .then_some(name)
+}
+
+/// Sends one targeted agent request, honouring cross-session targets:
+///
+/// - `session/agent` or `machine/session/agent` (machine = this one) goes to
+///   that session's socket;
+/// - a bare pane id or name goes to the current session exactly as before;
+///   only if that session answers `agent_not_found` for a *name* is it looked
+///   up in the other running sessions: one match is used, several are an
+///   `agent_target_ambiguous` error listing every full address.
+fn send_routed(
+    target: &str,
+    request_id: &str,
+    send: impl Fn(String) -> std::io::Result<serde_json::Value>,
+) -> std::io::Result<serde_json::Value> {
+    if super::target::is_remote() {
+        return send(target.to_owned());
+    }
+    let machine = crate::msg_cmd::my_machine();
+    match crate::agent_index::split_agent_target(target, &machine) {
+        Err(message) => return Ok(cli_agent_error(request_id, "invalid_agent_target", message)),
+        Ok(Some((session, agent))) => return send_to_session(&session, agent, request_id, &send),
+        Ok(None) => {}
+    }
+    let mut response = send(target.to_owned())?;
+    if response["error"]["code"].as_str() != Some("agent_not_found") {
+        return Ok(response);
+    }
+    let current = current_session_name();
+    let agents: Vec<crate::agent_index::LocalAgent> = crate::agent_index::list_running()
+        .into_iter()
+        .filter_map(|(session, result)| {
+            result
+                .ok()
+                .map(|r| crate::agent_index::agents_from_list(&session, &machine, &r))
+        })
+        .flatten()
+        .collect();
+    match crate::agent_index::find_elsewhere(target, &agents, current.as_deref()) {
+        Ok(Some(found)) => {
+            let (session, agent) = (found.session.clone(), found.handle().to_owned());
+            send_to_session(&session, agent, request_id, &send)
+        }
+        Ok(None) => {
+            if let Some(message) = response["error"]["message"].as_str() {
+                let place = current
+                    .map(|s| format!(" in session {s}"))
+                    .unwrap_or_default();
+                response["error"]["message"] = format!(
+                    "{message}{place}, nor in any other running session (see: klark agent list -a)"
+                )
+                .into();
+            }
+            Ok(response)
+        }
+        Err(message) => Ok(cli_agent_error(
+            request_id,
+            "agent_target_ambiguous",
+            message,
+        )),
+    }
+}
+
+fn send_to_session(
+    session: &str,
+    agent: String,
+    request_id: &str,
+    send: &impl Fn(String) -> std::io::Result<serde_json::Value>,
+) -> std::io::Result<serde_json::Value> {
+    let name = match crate::session::parse_target_name(session) {
+        Ok(name) => name,
+        Err(message) => return Ok(cli_agent_error(request_id, "invalid_session_name", message)),
+    };
+    let socket = crate::session::api_socket_path_for(name.as_deref());
+    if socket == crate::session::active_api_socket_path() {
+        return send(agent);
+    }
+    if !crate::session::session_info(name.as_deref()).running {
+        return Ok(cli_agent_error(
+            request_id,
+            "session_not_running",
+            format!("session {session} is not running (see: klark session list)"),
+        ));
+    }
+    super::target::with_session_socket(socket, || send(agent))
 }
 
 fn agent_get(params: AgentTarget) -> std::io::Result<i32> {
-    super::print_response(&super::send_request(&Request {
-        id: "cli:agent:get".into(),
-        method: Method::AgentGet(params),
+    super::print_response(&send_routed(&params.target, "cli:agent:get", |target| {
+        super::send_request(&Request {
+            id: "cli:agent:get".into(),
+            method: Method::AgentGet(AgentTarget { target }),
+        })
     })?)
 }
 
 fn agent_focus(params: AgentTarget) -> std::io::Result<i32> {
-    super::print_response(&super::send_request(&Request {
-        id: "cli:agent:focus".into(),
-        method: Method::AgentFocus(params),
+    super::print_response(&send_routed(&params.target, "cli:agent:focus", |target| {
+        super::send_request(&Request {
+            id: "cli:agent:focus".into(),
+            method: Method::AgentFocus(AgentTarget { target }),
+        })
     })?)
 }
 
 fn agent_attach(params: bindings::Attach) -> std::io::Result<i32> {
     let bindings::Attach { target, takeover } = params;
+    if target.contains('/') && !super::target::is_remote() {
+        if let Ok(Some((session, agent))) =
+            crate::agent_index::split_agent_target(&target, &crate::msg_cmd::my_machine())
+        {
+            eprintln!(
+                "klark agent attach works within one session; run: KLARK_SESSION={session} klark agent attach {agent}"
+            );
+            return Ok(2);
+        }
+    }
 
     let response = resolve_agent_target(&target, "cli:agent:attach:resolve")?;
     if response.get("error").is_some() {
@@ -384,10 +570,17 @@ fn agent_attach(params: bindings::Attach) -> std::io::Result<i32> {
 }
 
 fn agent_wait(params: AgentWaitParams) -> std::io::Result<i32> {
-    super::print_response(&super::send_request(&Request {
-        id: "cli:agent:wait".into(),
-        method: Method::AgentWait(params),
-    })?)
+    let target = params.target.clone();
+    let response = send_routed(&target, "cli:agent:wait", |target| {
+        super::send_request(&Request {
+            id: "cli:agent:wait".into(),
+            method: Method::AgentWait(AgentWaitParams {
+                target,
+                ..params.clone()
+            }),
+        })
+    })?;
+    super::print_response(&response)
 }
 
 fn wait_for_named_agent(
@@ -586,31 +779,57 @@ fn agent_get_request(target: &str, request_id: &str) -> Request {
 }
 
 fn agent_rename(params: AgentRenameParams) -> std::io::Result<i32> {
-    super::print_response(&super::send_request(&Request {
-        id: "cli:agent:rename".into(),
-        method: Method::AgentRename(params),
-    })?)
+    let target = params.target.clone();
+    let response = send_routed(&target, "cli:agent:rename", |target| {
+        super::send_request(&Request {
+            id: "cli:agent:rename".into(),
+            method: Method::AgentRename(AgentRenameParams {
+                target,
+                ..params.clone()
+            }),
+        })
+    })?;
+    super::print_response(&response)
 }
 
 fn agent_prompt(params: AgentPromptParams) -> std::io::Result<i32> {
-    let response = super::send_request(&Request {
-        id: "cli:agent:prompt".into(),
-        method: Method::AgentPrompt(params),
+    let target = params.target.clone();
+    let response = send_routed(&target, "cli:agent:prompt", |target| {
+        super::send_request(&Request {
+            id: "cli:agent:prompt".into(),
+            method: Method::AgentPrompt(AgentPromptParams {
+                target,
+                ..params.clone()
+            }),
+        })
     })?;
     super::print_response(&response)
 }
 
 fn agent_send_keys(params: AgentSendKeysParams) -> std::io::Result<i32> {
-    super::print_response(&super::send_request(&Request {
-        id: "cli:agent:send-keys".into(),
-        method: Method::AgentSendKeys(params),
-    })?)
+    let target = params.target.clone();
+    let response = send_routed(&target, "cli:agent:send-keys", |target| {
+        super::send_request(&Request {
+            id: "cli:agent:send-keys".into(),
+            method: Method::AgentSendKeys(AgentSendKeysParams {
+                target,
+                ..params.clone()
+            }),
+        })
+    })?;
+    super::print_response(&response)
 }
 
 fn agent_read(params: AgentReadParams) -> std::io::Result<i32> {
-    let response = super::send_request(&Request {
-        id: "cli:agent:read".into(),
-        method: Method::AgentRead(params),
+    let target = params.target.clone();
+    let response = send_routed(&target, "cli:agent:read", |target| {
+        super::send_request(&Request {
+            id: "cli:agent:read".into(),
+            method: Method::AgentRead(AgentReadParams {
+                target,
+                ..params.clone()
+            }),
+        })
     })?;
     super::print_read_response(&response)
 }

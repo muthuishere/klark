@@ -23,7 +23,9 @@ const STATUSES: &[Choice<AgentStatus>] = &[
 const EXPLAIN_FORMATS: &[Choice<bool>] = &[Choice::new("text", false), Choice::new("json", true)];
 
 pub(crate) fn target() -> Input<String> {
-    text_position("target", "TARGET", 0)
+    text_position("target", "TARGET", 0).help(
+        "Pane id or agent name in this session, or session/agent and machine/session/agent for another klark session on this machine",
+    )
 }
 
 pub(crate) fn text_position(
@@ -225,7 +227,7 @@ cli_projection! {
 }
 
 pub(crate) enum Operation {
-    List,
+    List { all_sessions: bool },
     Get(AgentTarget),
     Focus(AgentTarget),
     Read(AgentReadParams),
@@ -246,7 +248,14 @@ pub(crate) fn command() -> Command {
     Command::new("agent")
         .about("Control and inspect agent panes")
         .subcommand_required(true)
-        .subcommand(leaf("list", Vec::new(), "List agents"))
+        .subcommand(leaf("list", vec![
+                clap::Arg::new("all-sessions")
+                    .long("all-sessions")
+                    .short('a')
+                    .action(clap::ArgAction::SetTrue)
+                    .help("List the agents of every running klark session on this machine"),
+            ], "List agents (this session; -a for every session)")
+            .after_help("Each agent carries `session` and `address` (machine/session/name-or-pane). Any command that takes a TARGET accepts that address, or session/agent."))
         .subcommand(leaf("get", TargetProjection::arguments(), "Show an agent"))
         .subcommand(leaf("focus", TargetProjection::arguments(), "Focus an agent"))
         .subcommand(leaf("read", AgentReadProjection::arguments(), "Read agent terminal output")
@@ -277,7 +286,9 @@ pub(crate) fn from_matches(matches: &ArgMatches) -> Result<Operation, ParseError
         return Err(ParseError::Usage("missing agent command".into()));
     };
     Ok(match name {
-        "list" => Operation::List,
+        "list" => Operation::List {
+            all_sessions: matches.get_flag("all-sessions"),
+        },
         "get" => Operation::Get(TargetProjection::from_matches(matches)?),
         "focus" => Operation::Focus(TargetProjection::from_matches(matches)?),
         "read" => {

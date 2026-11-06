@@ -11,13 +11,12 @@ const NESTED_KLARK_MESSAGES: [&str; 6] = [
     "recursion detected. base case not found. aborting.",
 ];
 
+mod agent_index;
 mod agent_resume;
 mod agent_view_eval;
 mod api;
 mod app;
 mod build_info;
-mod expose_cmd;
-mod msg_cmd;
 mod checksum;
 mod cli;
 mod client;
@@ -25,6 +24,8 @@ mod config;
 mod copy_mode;
 mod detect;
 mod events;
+mod expose_cmd;
+mod msg_cmd;
 use ghostty_vt as ghostty;
 mod handoff_runtime;
 mod input;

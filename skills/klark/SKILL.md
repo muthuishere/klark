@@ -88,6 +88,8 @@ klark agent list
 
 Creation responses expose the IDs to use next. `workspace create` returns `.result.workspace`, `.result.tab`, and `.result.root_pane`. `tab create` returns `.result.tab` and `.result.root_pane`. `pane split` returns the new pane as `.result.pane`.
 
+Other klark sessions on this machine: `klark agent list -a` lists the agents of every running session, each with `session` and `address`. Agent TARGETs accept `session/agent` (e.g. `klark agent read work/reviewer`); a bare name missing from your session is looked up in the others. To message another agent, use the `klark-msg` skill.
+
 IDs and live agent names are scoped to one server. Two saved SSH machines can both have `w1:p1` or an agent named `reviewer`. Selecting a machine in the TUI does not retarget commands running in your pane: without `--machine`, they still use the inherited session and socket context.
 
 To control a saved SSH machine, use the same global prefix for discovery and every later command:

@@ -25,7 +25,7 @@ Addresses: <agent> | <session>/<agent> | <machine>/<session>/<agent>
 commands:
   whoami [--json]                        this agent's own address
   ls [--local] [--json]                  agents in every running session (+ the hub's, unless --local)
-  send <to> <text...> [--from <addr>] [--json]
+  send [--from <addr>] [--json] <to> <text...>
                                          deliver a message as a prompt to another agent
   reply <text...>                        answer the last agent that messaged this pane
   log [-n N] [--json]                    recent sent/received messages
@@ -36,6 +36,9 @@ commands:
   status                                 hub, token expiry, running sessions
   deliver --session <s> --from <addr> <agent> <text...>
                                          deliver locally (used by klark expose)
+
+Options go before <to>; everything after <to> is the message, verbatim
+(so the text may contain --json or --from).
 
 env: KLARK_HUB_URL, KLARK_HUB_JWT, KLARK_HUB_TOKEN (machine token), KLARK_MACHINE_NAME";
 
@@ -104,7 +107,11 @@ type R<T> = Result<T, Fail>;
 
 // ---------------------------------------------------------------- arguments
 
-/// Flags (with or without values) and positionals; `--` ends flags.
+/// Flags (with or without values) and positionals. Options come first: the
+/// first positional (`<to>`, `<agent>` or the first text word) ends option
+/// parsing, and everything after it is taken verbatim as text, so a message
+/// may contain `--json` or `--from`. A `--` before the first positional, or
+/// right after it, is consumed as the explicit end of options.
 #[derive(Debug, Default)]
 struct Args {
     flags: Vec<(String, Option<String>)>,
@@ -132,10 +139,16 @@ impl Args {
                 out.flags.push((a.clone(), Some(v.clone())));
             } else if switches.contains(&a.as_str()) {
                 out.flags.push((a.clone(), None));
-            } else if a.starts_with('-') && a.len() > 1 && out.positional.is_empty() {
+            } else if a.starts_with('-') && a.len() > 1 {
                 return Err(Fail::Usage(format!("unknown flag {a}")));
             } else {
                 out.positional.push(a.clone());
+                let mut rest = it.by_ref().peekable();
+                if rest.peek().is_some_and(|next| *next == "--") {
+                    rest.next();
+                }
+                out.positional.extend(rest.cloned());
+                break;
             }
         }
         Ok(out)
@@ -156,175 +169,14 @@ impl Args {
 
 // ---------------------------------------------------------------- addresses
 
-/// `[machine/][session/]agent`
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Address {
-    pub machine: Option<String>,
-    pub session: Option<String>,
-    pub agent: String,
-}
-
-pub fn parse_address(s: &str) -> Result<Address, String> {
-    let parts: Vec<&str> = s.trim().split('/').collect();
-    if parts.iter().any(|p| p.trim().is_empty()) {
-        return Err(format!(
-            "bad address {s:?}: use <agent>, <session>/<agent> or <machine>/<session>/<agent>"
-        ));
-    }
-    let owned = |p: &str| p.trim().to_string();
-    match parts.as_slice() {
-        [a] => Ok(Address {
-            machine: None,
-            session: None,
-            agent: owned(a),
-        }),
-        [s, a] => Ok(Address {
-            machine: None,
-            session: Some(owned(s)),
-            agent: owned(a),
-        }),
-        [m, s, a] => Ok(Address {
-            machine: Some(owned(m)),
-            session: Some(owned(s)),
-            agent: owned(a),
-        }),
-        _ => Err(format!(
-            "bad address {s:?}: at most <machine>/<session>/<agent>"
-        )),
-    }
-}
-
-/// One agent in a local session; `--local --json` prints exactly these fields
-/// (the shape the link answers `list_agents` with).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct LocalAgent {
-    pub session: String,
-    pub name: Option<String>,
-    pub agent: Option<String>,
-    pub pane_id: String,
-    pub status: String,
-    pub address: String,
-}
-
-impl LocalAgent {
-    fn matches(&self, agent: &str) -> bool {
-        self.name.as_deref() == Some(agent) || self.pane_id == agent
-    }
-    /// The agent part of its address: the name if it has one, else the pane id.
-    fn handle(&self) -> &str {
-        self.name.as_deref().unwrap_or(&self.pane_id)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum Route {
-    Local { session: String, agent: String },
-    Remote { to: String },
-}
-
-/// Resolve an address per ADR 0009: short forms search local agents only; a
-/// full address on this machine is local; another machine goes via the hub.
-pub fn resolve(addr: &Address, agents: &[LocalAgent], my_machine: &str) -> Result<Route, String> {
-    if let Some(machine) = &addr.machine {
-        if machine != my_machine {
-            return Ok(Route::Remote {
-                to: format!(
-                    "{machine}/{}/{}",
-                    addr.session.as_deref().unwrap_or("default"),
-                    addr.agent
-                ),
-            });
-        }
-    }
-    let found: Vec<&LocalAgent> = agents
-        .iter()
-        .filter(|a| addr.session.as_deref().is_none_or(|s| a.session == s))
-        .filter(|a| a.matches(&addr.agent))
-        .collect();
-    match found.as_slice() {
-        [one] => Ok(Route::Local {
-            session: one.session.clone(),
-            agent: one.pane_id.clone(),
-        }),
-        [] => {
-            let place = match &addr.session {
-                Some(s) => format!("in session {s}"),
-                None => "in any running session".to_string(),
-            };
-            Err(format!(
-                "no agent {} {place} on this machine (see: klark msg ls)",
-                addr.agent
-            ))
-        }
-        many => Err(format!(
-            "{} is ambiguous; use one of: {}",
-            addr.agent,
-            many.iter()
-                .map(|a| format!("{}/{}", a.session, a.pane_id))
-                .collect::<Vec<_>>()
-                .join(", ")
-        )),
-    }
-}
+// Addresses, resolution and the per-session agent index live in
+// `crate::agent_index`, shared with `klark agent` (cross-session targets).
+use crate::agent_index::{agents_from_list, call, local_agents, running_sessions, session_socket};
+pub use crate::agent_index::{parse_address, resolve, Address, LocalAgent, Route};
 
 /// The prompt the receiving agent sees (ADR 0009, Delivery).
 pub fn format_prompt(from: &str, text: &str) -> String {
     format!("[klark msg from {from}] {text}\n(reply: klark msg reply \"<text>\")")
-}
-
-// ---------------------------------------------------------------- local sessions
-
-fn session_socket(session: &str) -> PathBuf {
-    let name = (session != crate::session::DEFAULT_SESSION_NAME).then_some(session);
-    crate::session::api_socket_path_for(name)
-}
-
-fn call(socket: &Path, method: &str, params: Value) -> Result<Value, String> {
-    let bin = std::env::current_exe().unwrap_or_else(|_| "klark".into());
-    klark_link::upstream::Upstream::new(socket.to_path_buf(), bin).call(method, params)
-}
-
-fn agents_from_list(session: &str, machine: &str, result: &Value) -> Vec<LocalAgent> {
-    result
-        .get("agents")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|a| {
-            let pane_id = a.get("pane_id")?.as_str()?.to_string();
-            let s = |k: &str| a.get(k).and_then(Value::as_str).map(str::to_string);
-            let mut agent = LocalAgent {
-                session: session.to_string(),
-                name: s("name"),
-                agent: s("agent").or_else(|| s("display_agent")),
-                pane_id,
-                status: s("agent_status").unwrap_or_else(|| "unknown".into()),
-                address: String::new(),
-            };
-            agent.address = format!("{machine}/{session}/{}", agent.handle());
-            Some(agent)
-        })
-        .collect()
-}
-
-fn running_sessions() -> Vec<String> {
-    crate::session::list_sessions()
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|s| s.running)
-        .map(|s| s.name)
-        .collect()
-}
-
-fn local_agents(machine: &str) -> Vec<LocalAgent> {
-    let mut out = Vec::new();
-    for session in running_sessions() {
-        match call(&session_socket(&session), "agent.list", json!({})) {
-            Ok(result) => out.extend(agents_from_list(&session, machine, &result)),
-            Err(e) => eprintln!("klark msg: session {session}: {e}"),
-        }
-    }
-    out
 }
 
 // ---------------------------------------------------------------- identity
@@ -333,7 +185,7 @@ fn my_session() -> String {
     crate::session::active_name().unwrap_or_else(|| crate::session::DEFAULT_SESSION_NAME.into())
 }
 
-fn my_machine() -> String {
+pub(crate) fn my_machine() -> String {
     std::env::var("KLARK_MACHINE_NAME")
         .ok()
         .filter(|s| !s.trim().is_empty())
@@ -647,7 +499,12 @@ fn cmd_ls(args: &[String]) -> R<()> {
                     } else {
                         "remote"
                     };
-                    [s("address"), s("status"), s("agent"), place.to_string()]
+                    [
+                        s("address"),
+                        shown_status(&s("status")),
+                        s("agent"),
+                        place.to_string(),
+                    ]
                 })
                 .collect(),
         );
@@ -655,10 +512,19 @@ fn cmd_ls(args: &[String]) -> R<()> {
     Ok(())
 }
 
+/// Table cell for a status: `-` when klark cannot classify the agent's
+/// screen (`unknown`); `--json` keeps the raw value.
+fn shown_status(status: &str) -> String {
+    match status {
+        "" | "unknown" => "-".to_string(),
+        other => other.to_string(),
+    }
+}
+
 fn row(l: &LocalAgent, place: &str) -> [String; 4] {
     [
         l.address.clone(),
-        l.status.clone(),
+        shown_status(&l.status),
         l.agent.clone().unwrap_or_default(),
         place.to_string(),
     ]
@@ -797,8 +663,44 @@ fn send_via_hub(to: &str, from: &str, text: &str) -> Result<(), String> {
     if resp.ok() {
         Ok(())
     } else {
-        Err(format!("hub refused: {}", resp.error_text()))
+        Err(hub_error(to, &resp.error_text()))
     }
+}
+
+/// A hub refusal as one readable line. The hub relays the remote `klark msg
+/// deliver` stderr, which carries its own `klark msg:` and `agent.prompt:`
+/// prefixes; drop those and name the agent: `m/s/a: no such agent (agent_not_found)`.
+pub fn hub_error(to: &str, raw: &str) -> String {
+    let mut rest = raw.trim();
+    loop {
+        let before = rest;
+        for prefix in ["klark msg:", "hub refused:", "agent.prompt:"] {
+            if let Some(stripped) = rest.strip_prefix(prefix) {
+                rest = stripped.trim_start();
+            }
+        }
+        if rest == before {
+            break;
+        }
+    }
+    let (code, detail) = match rest.split_once(' ') {
+        Some((code, detail)) => (code, detail.trim()),
+        None => (rest, ""),
+    };
+    let is_code = !code.is_empty()
+        && code.contains('_')
+        && code.chars().all(|c| c.is_ascii_lowercase() || c == '_');
+    if !is_code {
+        return format!("{to}: hub refused: {rest}");
+    }
+    let plain = match code {
+        "agent_not_found" => "no such agent",
+        "agent_blocked" => "the agent is blocked, waiting on a person",
+        "agent_target_ambiguous" => "ambiguous agent name; use its pane id",
+        _ if detail.is_empty() => code,
+        _ => detail,
+    };
+    format!("{to}: {plain} ({code})")
 }
 
 /// Prompt a local agent; returns its pane id. Records the sender for reply and
@@ -824,20 +726,29 @@ fn deliver(session: &str, agent: &str, from: &str, text: &str) -> Result<String,
             .map(str::to_string)
     });
     let pane = pane.unwrap_or_else(|| agent.to_string());
+    let to = received_address(&my_machine(), session, agent, result.as_ref().ok());
     if result.is_ok() {
         if let Err(e) = record_sender(&data_dir(), session, &pane, from) {
             eprintln!("klark msg: could not record sender: {e}");
         }
     }
     let err = result.as_ref().err().cloned();
-    log(
-        "received",
-        from,
-        &format!("{session}/{pane}"),
-        text,
-        err.as_deref(),
-    );
+    log("received", from, &to, text, err.as_deref());
     result.map(|_| pane)
+}
+
+/// The receiver's full address for the log: `machine/session/name`, or the
+/// pane id when the agent has no name, or the target as given on failure.
+pub fn received_address(
+    machine: &str,
+    session: &str,
+    target: &str,
+    prompt_result: Option<&Value>,
+) -> String {
+    let agent = prompt_result.and_then(|r| r.get("agent"));
+    let field = |k: &str| agent.and_then(|a| a.get(k)).and_then(Value::as_str);
+    let handle = field("name").or_else(|| field("pane_id")).unwrap_or(target);
+    format!("{machine}/{session}/{handle}")
 }
 
 fn cmd_deliver(args: &[String]) -> R<()> {
@@ -880,7 +791,14 @@ fn cmd_reply(args: &[String]) -> R<()> {
         .ok_or("nobody has messaged this pane yet; use klark msg send <to> <text>")?;
     let from = whoami().address;
     let (to_addr, outcome) = send(&to, &from, &text);
-    outcome?;
+    outcome.map_err(|e| {
+        if to.ends_with("/cli") && e.starts_with("no agent cli ") {
+            // A plain shell outside any pane sent it: nobody to prompt.
+            format!("{e}; the last message came from {to}, a shell outside any klark pane, so there is no agent to reply to")
+        } else {
+            e
+        }
+    })?;
     println!("delivered to {to_addr}");
     Ok(())
 }
@@ -1337,16 +1255,90 @@ mod tests {
     }
 
     #[test]
+    fn hub_errors_are_one_clean_line() {
+        assert_eq!(
+            hub_error(
+                "alpha/default/nobody",
+                "klark msg: agent.prompt: agent_not_found agent target nobody not found"
+            ),
+            "alpha/default/nobody: no such agent (agent_not_found)"
+        );
+        assert_eq!(
+            hub_error(
+                "m/s/a",
+                "hub refused: klark msg: klark msg: agent.prompt: agent_blocked busy"
+            ),
+            "m/s/a: the agent is blocked, waiting on a person (agent_blocked)"
+        );
+        assert_eq!(
+            hub_error("m/s/a", "machine m is not linked"),
+            "m/s/a: hub refused: machine m is not linked"
+        );
+        assert_eq!(
+            hub_error("m/s/a", "HTTP 502"),
+            "m/s/a: hub refused: HTTP 502"
+        );
+    }
+
+    #[test]
+    fn received_log_names_the_agent_by_full_address() {
+        let named = json!({"agent": {"name": "rev", "pane_id": "w1:p1"}});
+        assert_eq!(
+            received_address("m1", "work", "w1:p1", Some(&named)),
+            "m1/work/rev"
+        );
+        let unnamed = json!({"agent": {"pane_id": "w1:p2"}});
+        assert_eq!(
+            received_address("m1", "work", "x", Some(&unnamed)),
+            "m1/work/w1:p2"
+        );
+        assert_eq!(
+            received_address("m1", "work", "ghost", None),
+            "m1/work/ghost"
+        );
+    }
+
+    #[test]
+    fn unknown_status_shows_as_dash_in_tables() {
+        assert_eq!(shown_status("unknown"), "-");
+        assert_eq!(shown_status(""), "-");
+        assert_eq!(shown_status("working"), "working");
+        let l = agent("work", Some("rev"), "p1");
+        let mut l2 = l.clone();
+        l2.status = "unknown".into();
+        assert_eq!(row(&l2, "local")[1], "-");
+        // JSON keeps the raw value.
+        assert_eq!(serde_json::to_value(&l2).unwrap()["status"], "unknown");
+    }
+
+    #[test]
     fn args_keep_message_text_verbatim() {
         let v = |s: &[&str]| s.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        // Options before <to>; after it, every word is text, flags included.
         let a = Args::parse(
-            &v(&["work/rev", "hello", "--from", "x/y/z", "there"]),
+            &v(&[
+                "--from", "x/y/z", "work/rev", "hello", "--from", "a/b/c", "--json", "there",
+            ]),
             &["--from"],
             &["--json"],
         )
         .unwrap();
-        assert_eq!(a.positional, ["work/rev", "hello", "there"]);
+        assert_eq!(
+            a.positional,
+            ["work/rev", "hello", "--from", "a/b/c", "--json", "there"]
+        );
         assert_eq!(a.value("--from").as_deref(), Some("x/y/z"));
+        assert!(!a.has("--json"));
+        // `klark msg deliver ... <agent> -- <text>` (klark-link's form).
+        let a = Args::parse(
+            &v(&["--session", "w", "rev", "--", "-starts with a dash"]),
+            &["--session"],
+            &[],
+        )
+        .unwrap();
+        assert_eq!(a.positional, ["rev", "-starts with a dash"]);
+        let a = Args::parse(&v(&["--", "--json"]), &[], &["--json"]).unwrap();
+        assert_eq!(a.positional, ["--json"]);
         let a = Args::parse(&v(&["rev", "--", "--json", "-n"]), &["--from"], &["--json"]).unwrap();
         assert_eq!(a.positional, ["rev", "--json", "-n"]);
         assert!(!a.has("--json"));
