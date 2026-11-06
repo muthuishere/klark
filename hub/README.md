@@ -81,18 +81,27 @@ arguments still win over the environment.
 
 `/m/<machine>/p/<pane>?view=chat|terminal` (ADR 0011). One full-height
 column, phone first; desktops centre it. Phones open on **Chat**, desktops on
-**Terminal**, and each browser remembers the last tab per pane.
+**Terminal**, and each browser remembers the last tab per pane. The header is
+just back, the agent's name (else agent and folder, never a raw pane id), a
+status dot, and a ⋯ menu holding Terminal/Chat, Search and the machine,
+session and folder.
 
 - **Chat.** User and agent turns, markdown (tables scroll inside the
   message, code blocks have a language label, copy button and highlighting),
   tool calls and thinking folded into one-line rows, a live
   working/idle/blocked line, and a "Jump to latest" pill once you scroll up.
   A blocked agent's question shows with buttons for its numbered or yes/no
-  options. Search (⌕) covers the loaded messages. Data comes from the
+  options. Search (⋯ menu) covers the loaded messages. Data comes from the
   machine's `get_transcript` (Claude Code logs; everything else is the
   cleaned screen) about once a second, only while a chat is open, shared by
   all viewers of the pane; older machines fall back to `agent.read` /
   `pane.read`. Only the newest 150 rows are drawn ("Show earlier" for more).
+  A screen is cleaned of the agent's TUI chrome (rules, prompt-box borders,
+  context meters, mode banners, key hints, spinner/timing lines, version
+  banners) and split into turns: `> `/`❯ `/`› ` is the person, `⏺ Tool(args)`
+  a collapsed tool row, `⎿ ` its result. Structured items never show
+  system/meta items, `<system-reminder>` or local-command wrappers, or empty
+  items; `<command-name>/x</command-name>` shows as `/x`.
 - **Terminal.** Drawn at the pane's real size (`pane_size` from the
   machine; 120x40 before one arrives) and scaled to the width, scrolling
   sideways below 55 %. A viewer whose browser falls behind (more than ~2.5 s
@@ -100,8 +109,16 @@ column, phone first; desktops centre it. Phones open on **Chat**, desktops on
   web-links addons and highlight.js 11.11.1 are bundled in `wwwroot/lib`, so
   the hub needs no CDN.
 - **Composer.** Enter sends, Shift+Enter is a new line; Esc and Ctrl-C on the
-  terminal tab. Drafts, scroll position, opened tool rows and the list's
-  search text survive leaving and coming back (browser storage).
+  terminal tab.
+- **Back and state.** Back (browser, phone gesture or the header arrow)
+  returns to the list at the same scroll position and search, with the chat
+  you came from marked. The arrow on a chat opened directly (link, bookmark,
+  after sign-in) replaces it with the list, so back never leaves the app or
+  bounces. Tab switches replace the history entry. Per chat the browser keeps
+  the scroll position (or "at latest"), opened tool rows, the draft, the
+  search and its current match, the chosen quick reply and the file panel's
+  state, through reloads, reconnects and app switches. Sign-in keeps the
+  return URL's query string and replaces its own history entry.
 - **Images and files.** See *Assets* below.
 - **Offline machines** are listed with their last-seen time. Expanding one
   shows its last recorded pane list, and opening a pane shows the output that
@@ -161,6 +178,12 @@ the agent receives it as a prompt.
 tokens. Every attempt is stored in `hub.db` (`messages`), with `sender` set to
 who really called (`user:<name>` or `machine:<id>`), whatever `from` says.
 The **Messages** page (`/messages`) lists them and sends as the signed-in user.
+
+## Tests
+
+```bash
+dotnet test hub.Tests     # xUnit: screen cleaning (Claude Code, Codex, Devin fixtures), turns, structured items
+```
 
 ## Load test
 

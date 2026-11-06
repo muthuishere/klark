@@ -8,6 +8,14 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- The tests are their own project: `dotnet test hub.Tests`. -->
+    <Compile Remove="hub.Tests/**" />
+    <Content Remove="hub.Tests/**" />
+    <None Remove="hub.Tests/**" />
+    <InternalsVisibleTo Include="hub.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.0" />
     <PackageReference Include="Markdig" Version="1.6.0" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.0" />

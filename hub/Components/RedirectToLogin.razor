@@ -3,6 +3,7 @@
     protected override void OnInitialized()
     {
         var returnUrl = Uri.EscapeDataString("/" + Nav.ToBaseRelativePath(Nav.Uri));
-        Nav.NavigateTo($"/login?returnUrl={returnUrl}", forceLoad: true);
+        // Replace: the page that needed a sign-in is not a history entry of its own.
+        Nav.NavigateTo($"/login?returnUrl={returnUrl}", forceLoad: true, replace: true);
     }
 }

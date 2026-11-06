@@ -140,6 +140,23 @@ be able to see the asset's machine. The hub streams the object from its file sto
   Per browser (localStorage/sessionStorage) the hub keeps the list's search
   text and scroll, each pane's tab, chat scroll position (or "at latest"),
   opened tool rows and the composer draft.
+- (Amended) Back never leaves the app: the header arrow goes back when the
+  chat was opened from the list in this tab (same path, nothing pushed since),
+  otherwise it replaces the entry with the list. Tab switches replace the
+  history entry. Also kept per tab: the open search and its current match,
+  the chosen quick reply and the file panel's state; the list marks the chat
+  you came from. The sign-in form replaces its own history entry and keeps
+  the return URL's query string.
+- (Amended) Screen text (`source:"screen"` and machines below v3) is split
+  into turns after cleaning: `> `/`❯ `/`› ` at column 0 is the person,
+  `⏺ Tool(args)` (or `• Tool(args)`) a collapsed tool row, `⎿ `/`└ ` lines its
+  result, other `⏺ `/`• ` blocks the agent. Cleaning also drops prompt-box
+  borders, "Context left until auto-compact", "? for shortcuts", "esc to
+  interrupt", "(ctrl+r to expand)", plan/accept-edits/bypass banners, spinner
+  and cost/token lines, and Claude Code/Codex/Devin version banners; nothing
+  inside a fenced code block is touched, and table borders and short `---`
+  rules are content. Structured items drop system/meta items, harness
+  wrappers (`<system-reminder>`, `<local-command-stdout>`) and empty items.
 - As built, "open and visible" means the chat tab is mounted in a live
   page; a backgrounded browser tab keeps polling until its circuit closes.
 - Chat search covers the items that are loaded; `get_transcript` only goes

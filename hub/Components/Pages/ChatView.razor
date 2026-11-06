@@ -23,15 +23,13 @@
         }
         @if (rows.Count == 0)
         {
-            <p class="empty chat-empty">@(feed.Error is { } e ? $"Transcript unavailable: {e}" : feed.Version == 0 ? "Loading…" : "Nothing here yet.")</p>
+            @if (feed.Error is { } e) { <p class="empty chat-empty">Transcript unavailable: @e</p> }
+            else if (feed.Version == 0) { <ChatSkeleton /> }
+            else { <p class="empty chat-empty">Nothing here yet.</p> }
         }
         @foreach (var row in rows.Skip(hidden))
         {
             <ChatRow @key="row.Key" Row="row" />
-        }
-        @if (feed.Source == "screen" && rows.Count > 0)
-        {
-            <p class="muted chat-note">Read from the screen: this agent has no structured transcript.</p>
         }
         @if (feed.Blocked is { } b)
         {
@@ -41,7 +39,7 @@
                 <div class="quick">
                     @foreach (var o in b.Options)
                     {
-                        <button type="button" disabled="@ReadOnly" @onclick="() => QuickReply.InvokeAsync((o.Send, o.Enter))">@o.Label</button>
+                        <button type="button" class="@(chosen == b.Question + "\n" + o.Send ? "chosen" : null)" disabled="@ReadOnly" @onclick="() => ChooseAsync(b.Question, o.Send, o.Enter)">@o.Label</button>
                     }
                     <button type="button" class="ghost" disabled="@ReadOnly" @onclick='() => QuickReply.InvokeAsync(("\u001b", false))'>Esc</button>
                 </div>
@@ -50,10 +48,7 @@
     </div>
 </div>
 <button type="button" class="jump" @ref="pill">Jump to latest ↓</button>
-@if (feed.Status is "working" or "blocked" or "idle")
-{
-    <div class="live live-@feed.Status"><span class="dot"></span>@(feed.Status switch { "working" => "Working…", "blocked" => "Needs your answer", _ => "Idle" })</div>
-}
+<div class="live live-@feed.Status">@if (feed.Status is "working" or "blocked") {<span class="dot"></span>@(feed.Status == "working" ? "Working…" : "Needs your answer")}</div>
 
 @code {
     [Parameter, EditorRequired] public string MachineId { get; set; } = "";
@@ -124,22 +119,59 @@
             // Polling starts only in a live circuit, never during prerendering.
             if (Live) lease = Feeds.Watch(MachineId, PaneId, OnFeed);
             await JS.InvokeVoidAsync("klarkChat.attach", Key, scroller, pill);
+            chosen = await JS.InvokeAsync<string?>("klarkState.get", "qr:" + Key, "s");
+            if (SearchOpen) await RestoreSearchAsync();
+            else if (chosen is not null) StateHasChanged();
         }
     }
 
     protected override async Task OnParametersSetAsync()
     {
-        if (!SearchOpen && query.Length > 0)
+        if (!SearchOpen && searchWasOpen)
         {
             query = "";
             hits = at = 0;
-            if (attached) await JS.InvokeAsync<int>("klarkChat.search", Key, "");
+            if (attached)
+            {
+                await JS.InvokeAsync<int>("klarkChat.search", Key, "");
+                await JS.InvokeVoidAsync("klarkState.set", "searchq:" + Key, "", "s");
+            }
         }
+        else if (SearchOpen && !searchWasOpen && attached)
+        {
+            searchWasOpen = true;
+            await RestoreSearchAsync();
+        }
+        searchWasOpen = SearchOpen;
+    }
+
+    private bool searchWasOpen;
+    /// <summary>The quick reply last chosen for the question on screen, as "question\nkey".</summary>
+    private string? chosen;
+
+    private async Task ChooseAsync(string question, string send, bool enter)
+    {
+        chosen = question + "\n" + send;
+        try { await JS.InvokeVoidAsync("klarkState.set", "qr:" + Key, chosen, "s"); } catch (JSException) { }
+        await QuickReply.InvokeAsync((send, enter));
+    }
+
+    /// <summary>Search left open comes back with its text and the same match selected.</summary>
+    private async Task RestoreSearchAsync()
+    {
+        searchWasOpen = true;
+        var saved = await JS.InvokeAsync<string?>("klarkState.get", "searchq:" + Key, "s");
+        if (string.IsNullOrEmpty(saved)) return;
+        query = saved;
+        hits = await JS.InvokeAsync<int>("klarkChat.search", Key, query, true);
+        at = hits > 0 ? await JS.InvokeAsync<int>("klarkChat.current", Key) : 0;
+        StateHasChanged();
     }
 
     private async Task OnSearchAsync(ChangeEventArgs e)
     {
         query = e.Value?.ToString() ?? "";
+        await JS.InvokeVoidAsync("klarkState.set", "searchq:" + Key, query, "s");
         hits = await JS.InvokeAsync<int>("klarkChat.search", Key, query);
         at = hits > 0 ? hits : 0;
     }

@@ -3,3 +3,4 @@ obj/
 data/
 appsettings.Development.json
 appsettings.Production.json
+hub.Tests/

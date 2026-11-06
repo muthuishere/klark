@@ -1,16 +1,21 @@
 @inherits LayoutComponentBase
 
 <header class="topbar">
-    <a class="brand" href="/">klark hub</a>
+    <a class="brand" href="/">klark</a>
     <AuthorizeView>
         <Authorized>
-            <a href="/messages">Messages</a>
-            <a href="/token">CLI token</a>
-            <span class="who">@(context.User.FindFirst("display_name")?.Value ?? context.User.Identity?.Name)</span>
-            <form method="post" action="/account/logout">
-                <AntiforgeryToken />
-                <button type="submit" class="link">Sign out</button>
-            </form>
+            <details class="menu">
+                <summary class="icon" aria-label="Menu">⋯</summary>
+                <div class="menu-pop">
+                    <div class="menu-info">@(context.User.FindFirst("display_name")?.Value ?? context.User.Identity?.Name)</div>
+                    <a href="/messages">Messages</a>
+                    <a href="/token">CLI token</a>
+                    <form method="post" action="/account/logout">
+                        <AntiforgeryToken />
+                        <button type="submit" class="menu-item">Sign out</button>
+                    </form>
+                </div>
+            </details>
         </Authorized>
     </AuthorizeView>
 </header>

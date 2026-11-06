@@ -27,6 +27,7 @@ public sealed class TranscriptFeed
     public string Agent { get; internal set; } = "";
     public string Status { get; internal set; } = "";
     public string? Cursor { get; internal set; }
+    internal string? ScreenText { get; set; }
     public string? Error { get; internal set; }
     public TranscriptClean.BlockedPrompt? Blocked { get; internal set; }
     public DateTimeOffset LastUsed { get; internal set; } = DateTimeOffset.UtcNow;
@@ -240,19 +241,47 @@ public sealed class TranscriptFeeds
         SetScreen(feed, text);
     }
 
-    private static void SetScreen(TranscriptFeed feed, string raw)
+    internal static void SetScreen(TranscriptFeed feed, string raw)
     {
         var cleaned = TranscriptClean.Clean(raw);
         Set(feed, error: null);
-        if (feed.Source == "screen" && feed.Items.Count == 1 && feed.Items[0].Text == cleaned) return;
+        if (feed.Source == "screen" && feed.ScreenText == cleaned) return;
         feed.Source = "screen";
+        feed.ScreenText = cleaned;
         feed.Cursor = null;
-        feed.Items = new[]
-        {
-            new ChatItem("screen", "assistant", "text", cleaned, null, null, "", null, null,
-                cleaned.Length == 0 ? Array.Empty<MdSegment>() : ChatMarkdown.Render(cleaned, fromScreen: true)),
-        };
+        feed.Items = ScreenItems(cleaned);
         feed.Version++;
+    }
+
+    /// <summary>
+    /// A cleaned screen as turns: the person's prompts, the agent's text, tool calls with
+    /// their results. Ids come from each turn's first line and its occurrence, so a row
+    /// keeps its identity (and its opened state) while the screen grows under it.
+    /// </summary>
+    internal static List<ChatItem> ScreenItems(string cleaned)
+    {
+        var items = new List<ChatItem>();
+        var seen = new Dictionary<string, int>();
+        foreach (var t in TranscriptClean.Turns(cleaned))
+        {
+            var head = t.Kind == "tool_use" ? $"{t.Tool}({t.Summary})" : t.Text.Split('\n')[0];
+            var baseId = $"s:{t.Kind}:{(uint)StableHash(head):x8}";
+            seen[baseId] = seen.TryGetValue(baseId, out var n) ? n + 1 : 0;
+            var id = $"{baseId}:{seen[baseId]}";
+            var md = t.Kind == "text" && t.Role == "assistant" ? ChatMarkdown.Render(t.Text, fromScreen: true) : null;
+            items.Add(new ChatItem(id, t.Role, t.Kind, t.Kind == "tool_use" ? null : t.Text, t.Tool, null, t.Summary, null, null, md));
+        }
+        return items;
+    }
+
+    private static int StableHash(string s)
+    {
+        unchecked
+        {
+            var h = (int)2166136261;
+            foreach (var c in s) h = (h ^ c) * 16777619;
+            return h;
+        }
     }
 
     /// <summary>Merge a get_transcript result: append new items after the cursor; a screen result replaces all.</summary>
@@ -297,10 +326,16 @@ public sealed class TranscriptFeeds
         }
     }
 
-    private static ChatItem? ToItem(JsonObject o, int index)
+    internal static ChatItem? ToItem(JsonObject o, int index)
     {
         var role = Str(o["role"]) ?? "assistant";
         var kind = Str(o["kind"]) ?? "text";
+        // Only what a person said, what the agent said, and its tool work is shown:
+        // system/meta items, harness wrappers and empty items never reach the chat.
+        if (role is not ("user" or "assistant" or "tool")) return null;
+        if (role == "tool" && kind != "tool_result") return null;
+        if (kind is not ("text" or "tool_use" or "tool_result" or "thinking")) return null;
+        if (Flag(o["meta"]) || Flag(o["is_meta"]) || Flag(o["isMeta"])) return null;
         var id = Str(o["id"]) ?? $"i{index}";
         var text = Str(o["text"]);
         var tool = Str(o["tool"]);
@@ -318,6 +353,15 @@ public sealed class TranscriptFeeds
             JsonValue jv when jv.TryGetValue<string>(out var s) => s,
             _ => input.ToJsonString(new JsonSerializerOptions { WriteIndented = true }),
         };
+        if (kind is "text" or "thinking")
+        {
+            text = TranscriptClean.CleanStructured(text);
+            if (text.Length == 0) return null;
+        }
+        else if (kind == "tool_result" && text is not null)
+        {
+            text = TranscriptClean.CleanStructured(text);
+        }
         if (kind is "tool_use" or "tool_result")
         {
             text = Cap(text);
@@ -355,6 +399,8 @@ public sealed class TranscriptFeeds
         arg = arg.ReplaceLineEndings(" ").Trim();
         return arg.Length > 70 ? arg[..67] + "…" : arg;
     }
+
+    private static bool Flag(JsonNode? n) => n is JsonValue v && v.TryGetValue<bool>(out var b) && b;
 
     private static string? Str(JsonNode? n) => n is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
 }
