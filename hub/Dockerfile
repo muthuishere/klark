@@ -3,7 +3,7 @@ WORKDIR /src
 COPY KlarkHub.csproj .
 RUN dotnet restore
 COPY . .
-RUN dotnet publish -c Release -o /app --no-restore
+RUN dotnet publish -c Release -o /app
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
 WORKDIR /app
