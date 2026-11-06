@@ -601,7 +601,10 @@ impl Session {
             | HubMessage::Input { pane_id, .. }
             | HubMessage::Keys { pane_id, .. } => {
                 let (s, l) = decode_id(pane_id);
-                (!self.exposed(s, l)).then(|| {
+                // Anything that types into a pane is checked against a fresh
+                // agent list, so a just-renamed agent never takes input.
+                let writes = !matches!(msg, HubMessage::Subscribe { .. });
+                (!self.exposed(s, l, writes)).then(|| {
                     let reason = self.not_exposed(&format!("pane {pane_id}"));
                     eprintln!("klark expose: refused: {reason}");
                     vec![AgentMessage::Closed {
@@ -613,11 +616,12 @@ impl Session {
             HubMessage::GetTranscript { id, pane_id, .. }
             | HubMessage::FetchAsset { id, pane_id, .. } => {
                 let (s, l) = decode_id(pane_id);
-                (!self.exposed(s, l)).then(|| answer(id, format!("pane {pane_id}"), self))
+                let writes = matches!(msg, HubMessage::FetchAsset { .. });
+                (!self.exposed(s, l, writes)).then(|| answer(id, format!("pane {pane_id}"), self))
             }
             HubMessage::Deliver {
                 id, session, agent, ..
-            } => (!self.exposed(session, agent))
+            } => (!self.exposed(session, agent, true))
                 .then(|| answer(id, format!("agent {session}/{agent}"), self)),
             HubMessage::Call { id, params, .. } => {
                 let (session, params) = sessions::route_params(params).ok()?;
@@ -625,7 +629,7 @@ impl Session {
                     .iter()
                     .find_map(|k| params.get(*k).and_then(Value::as_str))?
                     .to_string();
-                (!self.exposed(&session, &target)).then(|| {
+                (!self.exposed(&session, &target, false)).then(|| {
                     let wire = sessions::encode_id(&session, &target);
                     answer(id, format!("pane {wire}"), self)
                 })
@@ -692,8 +696,9 @@ impl Session {
     }
 
     /// Whether `id` (a local pane id, or an agent name) in `session` is an
-    /// exposed agent. A stale answer, or a miss, is recomputed once.
-    fn exposed(&mut self, session: &str, id: &str) -> bool {
+    /// exposed agent. A stale answer, or a miss, is recomputed once; with
+    /// `fresh_only` (anything that writes to the pane) it is always recomputed.
+    fn exposed(&mut self, session: &str, id: &str, fresh_only: bool) -> bool {
         if self.agents.is_none() {
             return true;
         }
@@ -708,10 +713,11 @@ impl Session {
                 })
             })
         };
-        let fresh = self
-            .exposure
-            .as_ref()
-            .is_some_and(|(at, _)| at.elapsed() < EXPOSURE_TTL);
+        let fresh = !fresh_only
+            && self
+                .exposure
+                .as_ref()
+                .is_some_and(|(at, _)| at.elapsed() < EXPOSURE_TTL);
         if fresh && check(self) {
             return true;
         }

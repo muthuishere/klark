@@ -490,4 +490,27 @@ fn expose_agents_filter_shows_and_accepts_only_listed_agents() {
     );
     let panes = tree_panes(&mut ws);
     assert!(panes.contains(&b_wire), "{panes:?}");
+
+    // Renamed away from a listed name: input is refused at once, even though
+    // the exposure was computed moments ago (writes never use a cached answer).
+    call(
+        &default,
+        "agent.rename",
+        json!({"target": reviewer, "name": "gone"}),
+    );
+    send(
+        &mut ws,
+        json!({"type": "input", "pane_id": reviewer, "text": "RENAMED_LEAK"}),
+    );
+    until(&mut ws, "refusal after rename", |m| match m {
+        In::Json(v) if v["type"] == "closed" && v["pane_id"] == json!(reviewer) => Some(()),
+        _ => None,
+    });
+    thread::sleep(Duration::from_millis(300));
+    let read = call(
+        &default,
+        "pane.read",
+        json!({"pane_id": reviewer, "source": "recent", "lines": 40}),
+    );
+    assert!(!read.to_string().contains("RENAMED_LEAK"), "{read}");
 }

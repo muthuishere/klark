@@ -82,9 +82,11 @@ impl AgentFilter {
                         session: s.to_string(),
                         agent: a.to_string(),
                     },
-                    _ => return Err(format!(
+                    _ => {
+                        return Err(format!(
                         "bad --agents entry {item:?}: use <name>, <agent-type> or <session>/<name>"
-                    )),
+                    ))
+                    }
                 };
                 if !raw.iter().any(|r: &String| r.eq_ignore_ascii_case(item)) {
                     entries.push(entry);
