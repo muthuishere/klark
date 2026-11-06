@@ -5,7 +5,7 @@ namespace KlarkHub.Components.Pages;
 /// <summary>A row of the chat view. Stamp changes only when the row's content does.</summary>
 public sealed record ChatRowModel(string Key, string Kind, IReadOnlyList<ChatItem> Items)
 {
-    public string Stamp { get; } = $"{Items.Count}:{Items[^1].Id}";
+    public string Stamp { get; } = $"{Items.Count}:{Items[^1].Id}:{Items.Sum(i => i.Text?.Length ?? 0)}";
 
     /// <summary>Consecutive tool calls, results and thinking fold into one row.</summary>
     public static List<ChatRowModel> Build(IReadOnlyList<ChatItem> items)

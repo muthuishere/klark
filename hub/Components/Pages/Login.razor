@@ -1,7 +1,8 @@
 @page "/login"
 @layout MainLayout
+@inject NavigationManager Nav
 
-<PageTitle>Sign in · klark hub</PageTitle>
+<PageTitle>Sign in · klark</PageTitle>
 
 <section class="login">
     <h1>Sign in</h1>
@@ -9,9 +10,11 @@
     {
         <p class="error">That name and password did not match, or the account is not allowed on this hub.</p>
     }
-    <form method="post" action="/account/login">
+    @* data-klark-login: chat.js posts it and replaces this page's history entry with
+       where you were going, so back never lands on the sign-in page. *@
+    <form method="post" action="/account/login" data-klark-login>
         <AntiforgeryToken />
-        <input type="hidden" name="returnUrl" value="@ReturnUrl" />
+        <input type="hidden" name="returnUrl" value="@Target" />
         <label>Name <input name="username" autocomplete="username" required autofocus /></label>
         <label>Password <input name="password" type="password" autocomplete="current-password" required /></label>
         <button type="submit">Sign in</button>
@@ -21,4 +24,15 @@
 @code {
     [SupplyParameterFromQuery] public int? Failed { get; set; }
     [SupplyParameterFromQuery] public string? ReturnUrl { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthState { get; set; }
+
+    /// <summary>Only a local path (with its query string) is a place to return to.</summary>
+    private string Target => !string.IsNullOrEmpty(ReturnUrl) && ReturnUrl.StartsWith('/') && !ReturnUrl.StartsWith("//") && !ReturnUrl.StartsWith("/login") ? ReturnUrl : "/";
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Already signed in (say, back into a stale sign-in page): go on to where it led.
+        if (AuthState is not null && (await AuthState).User.Identity?.IsAuthenticated == true)
+            Nav.NavigateTo(Target, replace: true);
+    }
 }

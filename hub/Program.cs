@@ -146,7 +146,8 @@ app.MapPost("/account/login", async (HttpContext ctx, [FromForm] string username
     var user = await signIn.SignInAsync(username, password, ctx.RequestAborted);
     if (user is null)
     {
-        return Results.Redirect("/login?failed=1");
+        // Keep where the person was going (query string and all) for the next try.
+        return Results.Redirect("/login?failed=1" + (string.IsNullOrEmpty(returnUrl) ? "" : "&returnUrl=" + Uri.EscapeDataString(returnUrl)));
     }
     var claims = new List<Claim>
     {

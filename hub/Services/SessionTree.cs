@@ -37,4 +37,23 @@ public sealed record SessionTree(IReadOnlyList<WorkspaceInfo> Workspaces, IReadO
 
 public sealed record WorkspaceInfo(string Id, string Label, int Number, string AgentStatus);
 public sealed record TabInfo(string Id, string WorkspaceId, string Label, int Number);
-public sealed record PaneInfo(string Id, string WorkspaceId, string TabId, string Title, string Agent, string AgentStatus, string Cwd, bool Focused);
+public sealed record PaneInfo(string Id, string WorkspaceId, string TabId, string Title, string Agent, string AgentStatus, string Cwd, bool Focused)
+{
+    /// <summary>The pane's own name; else "agent · folder"; never a raw pane id when anything better exists.</summary>
+    public string DisplayName
+    {
+        get
+        {
+            var title = Title.TrimStart('✳', '✻', '✽', '✶', '·', '*', '⠂', '⠐', ' ');
+            var raw = title.Length == 0 || title == Id || System.Text.RegularExpressions.Regex.IsMatch(title, @"^w?\d+[:/]p?\d+$")
+                      || title.Equals(Agent, StringComparison.OrdinalIgnoreCase) || title.Equals(Cwd) || title is "zsh" or "bash" or "sh" or "fish";
+            if (!raw) return title;
+            var folder = Folder;
+            if (Agent.Length > 0) return folder.Length > 0 ? $"{Agent} · {folder}" : Agent;
+            return folder.Length > 0 ? folder : title.Length > 0 ? title : Id;
+        }
+    }
+
+    /// <summary>The last part of the working directory.</summary>
+    public string Folder => Cwd.TrimEnd('/') is { Length: > 0 } c ? c[(c.LastIndexOf('/') + 1)..] : "";
+}

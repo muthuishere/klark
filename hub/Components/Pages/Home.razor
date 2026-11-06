@@ -10,11 +10,10 @@
 @inject AuthenticationStateProvider Auth
 @inject IJSRuntime JS
 
-<PageTitle>klark hub</PageTitle>
+<PageTitle>klark</PageTitle>
 
-<h1>Machines</h1>
-
-<input class="search" type="search" placeholder="Search machines, sessions, agents, status…" value="@filter" @oninput="OnFilterAsync" />
+<div class="home-list">
+<input class="search" type="search" placeholder="Search" aria-label="Search sessions" value="@filter" @oninput="OnFilterAsync" />
 
 @if (Mine.Count == 0 && offlineMachines.Count == 0)
 {
@@ -26,22 +25,29 @@
 {
     var panes = Visible(machine.Name, machine.Tree, machine.Tree.Panes).ToList();
     <section class="machine">
-        <h2>@machine.Name <small>@machine.Host · klark @machine.Version · @machine.Tree.Panes.Count panes</small></h2>
-        @if (panes.Count == 0)
+        <h2>@machine.Name</h2>
+        @if (machine.Tree.Panes.Count == 0)
         {
-            <p class="empty">@(machine.Tree.Panes.Count == 0 ? "Loading this machine's panes…" : "No pane matches the filter.")</p>
+            <ul class="panes" aria-busy="true">
+                @for (var i = 0; i < 3; i++) { <li class="skel-row"><span class="skel dotsk"></span><span class="skel line"></span></li> }
+            </ul>
+        }
+        else if (panes.Count == 0)
+        {
+            <p class="empty">No match.</p>
         }
         else
         {
             <ul class="panes">
                 @foreach (var pane in panes.OrderByDescending(p => Rank(p.AgentStatus)))
                 {
+                    var href = $"/m/{Uri.EscapeDataString(machine.Id)}/p/{Uri.EscapeDataString(pane.Id)}";
                     <li>
-                        <a href="@($"/m/{Uri.EscapeDataString(machine.Id)}/p/{Uri.EscapeDataString(pane.Id)}")">
-                            <span class="status status-@Css(pane.AgentStatus)">@Label(pane.AgentStatus)</span>
-                            <span class="title">@pane.Title</span>
-                            @if (!string.IsNullOrEmpty(pane.Agent)) { <span class="agent">@pane.Agent</span> }
-                            <span class="cwd">@machine.Tree.WorkspaceLabel(pane.WorkspaceId) · @pane.Cwd</span>
+                        <a href="@href" class="@(href == lastHref ? "last" : null)" data-pane-link>
+                            <span class="dot dot-@Css(pane.AgentStatus)" title="@Label(pane.AgentStatus)"></span>
+                            <span class="title">@pane.DisplayName</span>
+                            @if (pane.AgentStatus == "blocked") { <span class="needs">needs you</span> }
+                            <span class="sub">@Sub(machine.Tree, pane)</span>
                         </a>
                     </li>
                 }
@@ -57,25 +63,26 @@
     {
         <section class="machine offline">
             <h2>
-                <button type="button" class="link" @onclick="() => ToggleOfflineAsync(known.Id)">@(openOffline.ContainsKey(known.Id) ? "▾" : "▸") @known.Id</button>
-                <small>@known.Host · last seen @known.LastSeen.ToLocalTime().ToString("g")</small>
+                <button type="button" class="link fold" aria-expanded="@openOffline.ContainsKey(known.Id)" @onclick="() => ToggleOfflineAsync(known.Id)">@(openOffline.ContainsKey(known.Id) ? "▾" : "▸") @known.Id</button>
+                <small>seen @known.LastSeen.ToLocalTime().ToString("g")</small>
             </h2>
             @if (openOffline.TryGetValue(known.Id, out var tree))
             {
                 @if (tree is null || tree.Panes.Count == 0)
                 {
-                    <p class="empty">No pane list was recorded for this machine.</p>
+                    <p class="empty">Nothing was recorded.</p>
                 }
                 else
                 {
                     <ul class="panes">
                         @foreach (var pane in Visible(known.Id, tree, tree.Panes))
                         {
+                            var href = $"/m/{Uri.EscapeDataString(known.Id)}/p/{Uri.EscapeDataString(pane.Id)}";
                             <li>
-                                <a href="@($"/m/{Uri.EscapeDataString(known.Id)}/p/{Uri.EscapeDataString(pane.Id)}")">
-                                    <span class="status status-none">last</span>
-                                    <span class="title">@pane.Title</span>
-                                    <span class="cwd">@pane.Cwd</span>
+                                <a href="@href" class="@(href == lastHref ? "last" : null)" data-pane-link>
+                                    <span class="dot dot-none"></span>
+                                    <span class="title">@pane.DisplayName</span>
+                                    <span class="sub">@Sub(tree, pane)</span>
                                 </a>
                             </li>
                         }
@@ -85,6 +92,7 @@
         </section>
     }
 }
+</div>
 
 @code {
     private ClaimsPrincipal user = new();
@@ -186,7 +194,7 @@
         return panes.Where(p =>
         {
             var session = tree.WorkspaceLabel(p.WorkspaceId);
-            var hay = $"{machineName} {session} {p.Title} {p.Agent} {Label(p.AgentStatus)} {p.Cwd} {machineName}/{session}/{p.Title}";
+            var hay = $"{machineName} {session} {p.DisplayName} {p.Title} {p.Agent} {Label(p.AgentStatus)} {p.Cwd} {machineName}/{session}/{p.Title}";
             return words.All(w => hay.Contains(w, StringComparison.OrdinalIgnoreCase));
         });
     }
@@ -202,14 +210,40 @@
     // Coming back to the list puts the search text and the scroll position back.
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (!firstRender) return;
-        var saved = await JS.InvokeAsync<string?>("klarkState.get", "home:filter", "s");
-        if (!string.IsNullOrEmpty(saved) && saved != filter)
+        if (firstRender)
         {
-            filter = saved;
-            StateHasChanged();
+            var saved = await JS.InvokeAsync<string?>("klarkState.get", "home:filter", "s");
+            var last = await JS.InvokeAsync<string?>("klarkState.get", "home:last", "s");
+            if ((!string.IsNullOrEmpty(saved) && saved != filter) || last != lastHref)
+            {
+                filter = saved ?? "";
+                lastHref = last;
+                // Scroll is restored on the next render, once the filtered list is drawn:
+                // restoring against the unfiltered list lands on the wrong row.
+                StateHasChanged();
+                return;
+            }
         }
-        scrollTrack = await JS.InvokeAsync<IJSObjectReference>("klarkState.trackScroll", "home");
+        if (scrollTrack is null && !trackStarting)
+        {
+            trackStarting = true;
+            scrollTrack = await JS.InvokeAsync<IJSObjectReference>("klarkState.trackScroll", "home", ".home-list", "a.last");
+        }
+    }
+
+    private bool trackStarting;
+
+    /// <summary>The pane you last opened from here: marked, and scrolled to if there is no saved position.</summary>
+    private string? lastHref;
+
+    private static string Sub(SessionTree tree, PaneInfo p)
+    {
+        var parts = new List<string>();
+        if (p.Agent.Length > 0 && !p.DisplayName.StartsWith(p.Agent + " ·")) parts.Add(p.Agent);
+        if (p.Folder.Length > 0 && !p.DisplayName.EndsWith(p.Folder)) parts.Add(p.Folder);
+        var session = tree.WorkspaceLabel(p.WorkspaceId);
+        if (session.Length > 0 && session != p.Folder) parts.Add(session);
+        return string.Join(" · ", parts);
     }
 
     // Blocked agents first: those are the ones waiting for a person.

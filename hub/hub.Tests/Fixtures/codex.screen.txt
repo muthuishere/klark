@@ -1,0 +1,14 @@
+>_ OpenAI Codex (v0.46.0)
+
+model:     gpt-5-codex   /model to change
+directory: ~/work/app
+
+To get started, describe a task or try one of these commands:
+
+› explain main.go
+
+• main.go wires the HTTP server and the config loader.
+
+▌
+ ⏎ send   ⌃J newline   ⌃T transcript   ⌃C quit   100% context left
+Token usage: total=1,204 input=1,000 output=204

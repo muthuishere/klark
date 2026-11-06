@@ -10,22 +10,38 @@ window.klarkState = (() => {
       try { if (value === null || value === undefined || value === "") store(kind)?.removeItem("klark:" + key); else store(kind)?.setItem("klark:" + key, value); } catch { }
     },
     isNarrow() { return window.matchMedia("(max-width: 760px)").matches; },
-    // The window's scroll for a page, restored once its content is tall enough.
-    trackScroll(key) {
-      const save = () => api.set("scroll:" + key, String(Math.round(window.scrollY)), "s");
-      let pending = 0;
-      const onScroll = () => { if (!pending) pending = setTimeout(() => { pending = 0; save(); }, 150); };
+    // The window's scroll for a page. Saved only while the page's own content is in
+    // the DOM (leaving shrinks the page and would otherwise save 0), restored once the
+    // content is tall enough; with nothing saved, the item last opened is brought into view.
+    trackScroll(key, sel, lastSel) {
+      try { history.scrollRestoration = "manual"; } catch { }
+      // Leaving (a tap on an item) freezes the saved value: navigation scrolls to the top before the list goes.
+      window.klarkLeaving = false;
+      const alive = () => !window.klarkLeaving && (!sel || !!document.querySelector(sel));
+      let frame = 0, restoring = true;
+      const save = () => { frame = 0; if (!restoring && alive()) api.set("scroll:" + key, String(Math.round(window.scrollY)), "s"); };
+      const onScroll = () => { if (!frame) frame = requestAnimationFrame(save); };
+      const stop = () => { restoring = false; };
       window.addEventListener("scroll", onScroll, { passive: true });
+      ["wheel", "touchstart", "keydown"].forEach((e) => window.addEventListener(e, stop, { passive: true, once: true }));
       const y = Number(api.get("scroll:" + key, "s") || 0);
-      if (y > 0) {
-        let tries = 0;
-        const step = () => {
-          if (document.documentElement.scrollHeight - window.innerHeight >= y || tries++ > 60) window.scrollTo(0, y);
+      const t0 = performance.now();
+      const step = () => {
+        if (!restoring) return;
+        if (y > 0) {
+          if (document.documentElement.scrollHeight - window.innerHeight >= y || performance.now() - t0 > 3000) { window.scrollTo(0, y); restoring = false; }
           else requestAnimationFrame(step);
-        };
-        step();
-      }
-      return { dispose() { window.removeEventListener("scroll", onScroll); } };
+          return;
+        }
+        restoring = false;
+        const last = lastSel && document.querySelector(lastSel);
+        if (last) {
+          const r = last.getBoundingClientRect();
+          if (r.top < 0 || r.bottom > window.innerHeight) last.scrollIntoView({ block: "center" });
+        }
+      };
+      step();
+      return { dispose() { save(); window.removeEventListener("scroll", onScroll); restoring = false; } };
     },
   };
   return api;
@@ -65,19 +81,29 @@ window.klarkChat = (() => {
     const v = { key, scroller, pill, stuck: true, open: new Set(), matches: [], at: -1 };
     try { JSON.parse(klarkState.get("open:" + key) || "[]").forEach((k) => v.open.add(k)); } catch { }
     const saved = klarkState.get("chatscroll:" + key, "s");
+    v.restoring = !!(saved && saved !== "latest");
 
     const nearBottom = () => scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80;
     const toBottom = () => { scroller.scrollTop = scroller.scrollHeight; };
     const showPill = () => pill.classList.toggle("show", !v.stuck);
-    let saveTimer = 0;
+    let frame = 0;
+    v.save = () => {
+      frame = 0;
+      // A detached or still-restoring scroller says nothing about where the reader was.
+      if (!scroller.isConnected || v.restoring || scroller.clientHeight === 0) return;
+      klarkState.set("chatscroll:" + key, v.stuck ? "latest" : String(Math.round(scroller.scrollTop)), "s");
+    };
     v.onScroll = () => {
+      if (v.restoring) return;
       v.stuck = nearBottom();
       showPill();
-      if (!saveTimer) saveTimer = setTimeout(() => {
-        saveTimer = 0;
-        klarkState.set("chatscroll:" + key, v.stuck ? "latest" : String(Math.round(scroller.scrollTop)), "s");
-      }, 200);
+      if (!frame) frame = requestAnimationFrame(v.save);
     };
+    v.onHide = () => { if (document.visibilityState === "hidden") v.save(); };
+    document.addEventListener("visibilitychange", v.onHide);
+    window.addEventListener("pagehide", v.save);
+    v.stopRestore = () => { v.restoring = false; };
+    ["wheel", "touchstart", "keydown"].forEach((e) => scroller.addEventListener(e, v.stopRestore, { passive: true }));
     scroller.addEventListener("scroll", v.onScroll, { passive: true });
     v.onPill = () => { v.stuck = true; toBottom(); showPill(); };
     pill.addEventListener("click", v.onPill);
@@ -105,17 +131,30 @@ window.klarkChat = (() => {
     v.mo = new MutationObserver(() => {
       highlight(scroller);
       restoreOpen(scroller);
+      if (v.restoring) return;
       if (v.stuck) toBottom();
       else showPill();
     });
     v.mo.observe(scroller, { childList: true, subtree: true, characterData: true });
     highlight(scroller);
     restoreOpen(scroller);
-    if (saved && saved !== "latest") {
+    if (v.restoring) {
+      // Wait until the rows that were there are drawn again (a reload paints them a moment later).
       v.stuck = false;
-      scroller.scrollTop = Number(saved);
+      const y = Number(saved), t0 = performance.now();
+      const step = () => {
+        if (!v.restoring || !scroller.isConnected) return;
+        if (scroller.scrollHeight - scroller.clientHeight >= y || performance.now() - t0 > 3000) {
+          scroller.scrollTop = y;
+          v.restoring = false;
+          v.stuck = nearBottom();
+          showPill();
+        } else requestAnimationFrame(step);
+      };
+      step();
     } else {
       toBottom();
+      requestAnimationFrame(toBottom);
     }
     showPill();
     views.set(key, v);
@@ -125,6 +164,9 @@ window.klarkChat = (() => {
     const v = views.get(key);
     if (!v) return;
     v.mo.disconnect();
+    v.restoring = false;
+    document.removeEventListener("visibilitychange", v.onHide);
+    window.removeEventListener("pagehide", v.save);
     v.scroller.removeEventListener("scroll", v.onScroll);
     v.scroller.removeEventListener("toggle", v.onToggle, true);
     v.scroller.removeEventListener("click", v.onClick);
@@ -134,7 +176,7 @@ window.klarkChat = (() => {
 
   // Search in what is loaded, with the CSS Highlight API (no DOM rewriting,
   // so Blazor's DOM stays untouched). Returns the number of matches.
-  function search(key, query) {
+  function search(key, query, keep) {
     const v = views.get(key);
     if (!v) return 0;
     v.matches = [];
@@ -153,7 +195,15 @@ window.klarkChat = (() => {
       }
     }
     if (window.CSS && CSS.highlights && window.Highlight) CSS.highlights.set("klark-hit", new Highlight(...v.matches));
-    if (v.matches.length) step(key, -1);
+    if (v.matches.length) {
+      const at = keep ? Number(klarkState.get("searchat:" + key, "s") || 0) : 0;
+      if (at > 0 && at <= v.matches.length) {
+        // Coming back: the same match is current, but the reader's own scroll position wins.
+        v.at = at - 1;
+        if (window.CSS && CSS.highlights && window.Highlight) CSS.highlights.set("klark-cur", new Highlight(v.matches[v.at]));
+      }
+      else step(key, -1);
+    }
     return v.matches.length;
   }
 
@@ -170,6 +220,7 @@ window.klarkChat = (() => {
     v.stuck = false;
     v.pill.classList.add("show");
     if (window.CSS && CSS.highlights && window.Highlight) CSS.highlights.set("klark-cur", new Highlight(r));
+    klarkState.set("searchat:" + key, String(v.at + 1), "s");
     return v.at + 1;
   }
 
@@ -213,5 +264,65 @@ window.klarkChat = (() => {
     });
   }
 
-  return { attach, detach, search, step, composer, uploads, focus: (el) => el?.focus() };
+  const current = (key) => { const v = views.get(key); return v ? v.at + 1 : 0; };
+  return { attach, detach, search, step, current, composer, uploads, focus: (el) => el?.focus() };
+})();
+
+// Navigation that never leaves the app (ADR 0011, E). The header arrow goes back
+// when this chat was opened from the list in this tab, so the list comes back as it
+// was; opened any other way (a link, a bookmark, after login) it replaces the entry
+// with the list, so a second back does not bounce into the chat again.
+window.klarkNav = (() => {
+  const go = (url, replace) => {
+    if (window.Blazor && Blazor.navigateTo) Blazor.navigateTo(url, { replaceHistoryEntry: replace });
+    else if (replace) location.replace(url);
+    else location.href = url;
+  };
+  function back(e) {
+    e?.preventDefault?.();
+    // The entry before this one is the list only if this chat was opened from it and
+    // nothing was pushed since (a reload keeps the entry; a typed URL or link pushes one).
+    const from = klarkState.get("from", "s"), len = Number(klarkState.get("fromlen", "s") || 0);
+    if (from && from === location.pathname && history.length === len) history.back();
+    else go("/", true);
+    return false;
+  }
+  // Opening a chat from the list: remember where the list was and which item it was.
+  document.addEventListener("click", (e) => {
+    const a = e.target.closest?.("a[data-pane-link]");
+    if (!a || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey) return;
+    const href = a.getAttribute("href");
+    klarkState.set("from", href, "s");
+    klarkState.set("fromlen", String(history.length + 1), "s");
+    klarkState.set("home:last", href, "s");
+    klarkState.set("scroll:home", String(Math.round(window.scrollY)), "s");
+    window.klarkLeaving = true;
+  }, true);
+  return { back, go };
+})();
+
+// Small page chrome: overflow menus close when an item is picked or on an outside tap;
+// the sign-in form replaces its own history entry, so back never returns to it.
+window.klarkUi = (() => {
+  const closeMenu = (el) => { if (el) el.open = false; };
+  document.addEventListener("click", (e) => {
+    document.querySelectorAll("details.menu[open]").forEach((d) => {
+      if (!d.contains(e.target) || e.target.closest(".menu-item, .menu-pop a")) d.open = false;
+    });
+  });
+  document.addEventListener("submit", async (e) => {
+    const form = e.target;
+    if (!(form instanceof HTMLFormElement) || !form.hasAttribute("data-klark-login")) return;
+    e.preventDefault();
+    const button = form.querySelector("button[type=submit]");
+    if (button) button.disabled = true;
+    try {
+      const r = await fetch(form.action, { method: "POST", body: new FormData(form), credentials: "same-origin" });
+      location.replace(r.url || "/");
+    } catch {
+      form.removeAttribute("data-klark-login");
+      form.submit();
+    }
+  });
+  return { closeMenu, isOpen: (el) => !!el?.open };
 })();

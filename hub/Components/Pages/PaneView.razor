@@ -16,24 +16,33 @@
 
 <div class="pane-app" @ref="root">
     <header class="pane-bar">
-        <a class="icon back" href="/" aria-label="Back to machines">‹</a>
-        <div class="who">
-            <div class="name">@Title</div>
-            <div class="sub">
-                <span class="dot dot-@StatusCss"></span>
-                @(offline ? "offline" : StatusLabel) · @MachineId@(pane is not null && machine is not null ? " · " + machine.Tree.WorkspaceLabel(pane.WorkspaceId) : "")
-            </div>
+        @* Plain onclick: works before the circuit is up, and never leaves the app (klarkNav.back). *@
+        <a class="icon back" href="/" onclick="return klarkNav.back(event)" aria-label="Back">‹</a>
+        <div class="who" title="@StatusLabel">
+            <span class="dot dot-@StatusCss"></span><span class="name">@Title</span>
+            @if (view == "terminal") { <span class="tabtag">Terminal</span> }
         </div>
-        @if (view == "chat" && allowed)
+        @if (allowed)
         {
-            <button type="button" class="icon" aria-label="Search" @onclick="() => searchOpen = !searchOpen">⌕</button>
-        }
-        @if (allowed && view is not null)
-        {
-            <nav class="seg" aria-label="View">
-                <a class="@(view == "chat" ? "on" : "")" href="@ViewUrl("chat")" @onclick='() => SetView("chat")' @onclick:preventDefault>Chat</a>
-                <a class="@(view == "terminal" ? "on" : "")" href="@ViewUrl("terminal")" @onclick='() => SetView("terminal")' @onclick:preventDefault>Terminal</a>
-            </nav>
+            <details class="menu" @ref="menu">
+                <summary class="icon" aria-label="More">⋯</summary>
+                <div class="menu-pop">
+                    @if (view == "terminal")
+                    {
+                        <button type="button" class="menu-item" @onclick='() => SetView("chat")'>Chat</button>
+                    }
+                    else
+                    {
+                        <button type="button" class="menu-item" @onclick='() => SetView("terminal")'>Terminal</button>
+                        <button type="button" class="menu-item" @onclick="ToggleSearchAsync">@(searchOpen ? "Close search" : "Search")</button>
+                    }
+                    <div class="menu-info">
+                        <div>@(offline ? "offline" : StatusLabel)</div>
+                        <div>@MachineId@(pane is not null && machine is not null ? " · " + machine.Tree.WorkspaceLabel(pane.WorkspaceId) : "")</div>
+                        @if (!string.IsNullOrEmpty(pane?.Cwd)) { <div class="mono">@pane.Cwd</div> }
+                    </div>
+                </div>
+            </details>
         }
     </header>
 
@@ -44,6 +53,10 @@
     else
     {
         <div class="pane-body">
+            @if (view is null)
+            {
+                <div class="chat"><div class="chat-scroll"><div class="chat-col"><ChatSkeleton /></div></div></div>
+            }
             @if (view == "chat")
             {
                 <div class="chat">
@@ -59,8 +72,8 @@
 
         @if (offers.Count > 0)
         {
-            <details class="offers" open="@offersOpen" @ontoggle="() => offersOpen = !offersOpen">
-                <summary>Files from the agent (@offers.Count) <span class="muted">· expire after @RetentionLabel</span></summary>
+            <details class="offers" open="@offersOpen" @ontoggle="ToggleOffersAsync" @ref="offersEl">
+                <summary title="Files expire after @RetentionLabel">Files · @offers.Count</summary>
                 <div class="offer-list">
                     @foreach (var a in offers)
                     {
@@ -114,7 +127,7 @@
     private bool allowed, readOnly, offline;
     private MachineConnection? machine;
     private PaneInfo? pane;
-    private ElementReference root, terminalHost, textarea, sendButton;
+    private ElementReference root, terminalHost, textarea, sendButton, menu, offersEl;
     private InputFile? fileInput;
     private IAsyncDisposable? watch;
     private string reply = "";
@@ -127,7 +140,7 @@
     private readonly string termId = Guid.NewGuid().ToString("N");
     private string PaneKey => MachineId + "/" + PaneId;
 
-    private string Title => pane?.Title is { Length: > 0 } t ? t : PaneId;
+    private string Title => pane?.DisplayName is { Length: > 0 } t ? t : PaneId;
     private string StatusCss => offline ? "none" : string.IsNullOrEmpty(pane?.AgentStatus) ? "none" : pane!.AgentStatus;
     private string StatusLabel => string.IsNullOrEmpty(pane?.AgentStatus) ? (pane?.Agent is { Length: > 0 } a ? a : "shell") : $"{pane!.Agent} {pane.AgentStatus}".Trim();
     private string RetentionLabel => AssetSvc.Options.RetentionHours is var h && h % 1 == 0 ? $"{h} h" : $"{h:0.#} h";
@@ -187,14 +200,36 @@
         _ = InvokeAsync(() => JS.InvokeVoidAsync("klarkTerm.resize", termId, cols, rows).AsTask());
     }
 
+    private async Task ToggleSearchAsync()
+    {
+        searchOpen = !searchOpen;
+        try
+        {
+            await JS.InvokeVoidAsync("klarkUi.closeMenu", menu);
+            await JS.InvokeVoidAsync("klarkState.set", "searchopen:" + PaneKey, searchOpen ? "1" : "", "s");
+        }
+        catch (JSException) { }
+    }
+
+    private async Task ToggleOffersAsync()
+    {
+        // Read the element: a toggle event also fires when the open attribute is first rendered.
+        try { offersOpen = await JS.InvokeAsync<bool>("klarkUi.isOpen", offersEl); } catch (JSException) { return; }
+        try { await JS.InvokeVoidAsync("klarkState.set", "offers:" + PaneKey, offersOpen ? "" : "closed", "s"); } catch (JSException) { }
+    }
+
     private string ViewUrl(string v) => Nav.GetUriWithQueryParameter("view", v);
 
     private async Task SetView(string v)
     {
         if (view == v) return;
         view = v;
-        searchOpen = false;
-        try { await JS.InvokeVoidAsync("klarkState.set", "view:" + PaneKey, v); } catch (JSException) { }
+        try
+        {
+            await JS.InvokeVoidAsync("klarkUi.closeMenu", menu);
+            await JS.InvokeVoidAsync("klarkState.set", "view:" + PaneKey, v);
+        }
+        catch (JSException) { }
         Nav.NavigateTo(ViewUrl(v), replace: true);
     }
 
@@ -203,6 +238,10 @@
         if (!allowed) return;
         if (firstRender)
         {
+            // Per tab: search left open, and files folded away, come back as they were.
+            searchOpen = await JS.InvokeAsync<string?>("klarkState.get", "searchopen:" + PaneKey, "s") == "1";
+            offersOpen = await JS.InvokeAsync<string?>("klarkState.get", "offers:" + PaneKey, "s") != "closed";
+            if (searchOpen) StateHasChanged();
             if (view is null)
             {
                 // Per pane, the last tab this browser used; else phones get Chat and desktops Terminal.
