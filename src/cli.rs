@@ -481,12 +481,38 @@ fn session_list(args: &[String]) -> std::io::Result<i32> {
     };
 
     let sessions = crate::session::list_sessions()?;
+    // One cheap `agent.list` per running session; None when it cannot answer.
+    let agent_counts: Vec<Option<usize>> = sessions
+        .iter()
+        .map(|session| {
+            session.running.then(|| {
+                crate::agent_index::call(
+                    std::path::Path::new(&session.socket_path),
+                    "agent.list",
+                    serde_json::json!({}),
+                )
+                .ok()
+                .and_then(|r| r["agents"].as_array().map(Vec::len))
+            })?
+        })
+        .collect();
     if json {
+        let sessions: Vec<serde_json::Value> = sessions
+            .iter()
+            .zip(&agent_counts)
+            .map(|(session, agents)| {
+                let mut value = serde_json::to_value(session).unwrap_or_default();
+                if let Some(agents) = agents {
+                    value["agents"] = (*agents).into();
+                }
+                value
+            })
+            .collect();
         _print_json(&serde_json::json!({
             "sessions": sessions,
         }));
     } else {
-        print_session_table(&sessions);
+        print_session_table(&sessions, &agent_counts);
     }
     Ok(0)
 }
@@ -941,11 +967,14 @@ fn parse_session_name_and_json(args: &[String], usage: &str) -> Result<(String, 
     Ok((name, json))
 }
 
-fn print_session_table(sessions: &[crate::session::SessionInfo]) {
-    println!("{:<20} {:<8} {:<48} socket", "name", "status", "directory");
-    for session in sessions {
+fn print_session_table(sessions: &[crate::session::SessionInfo], agent_counts: &[Option<usize>]) {
+    println!(
+        "{:<20} {:<11} {:<6} {:<48} socket",
+        "name", "status", "agents", "directory"
+    );
+    for (session, agents) in sessions.iter().zip(agent_counts) {
         println!(
-            "{:<20} {:<8} {:<48} {}",
+            "{:<20} {:<11} {:<6} {:<48} {}",
             session.name,
             if session.connection_error.is_some() {
                 "unavailable"
@@ -954,6 +983,7 @@ fn print_session_table(sessions: &[crate::session::SessionInfo]) {
             } else {
                 "stopped"
             },
+            agents.map_or_else(|| "-".to_string(), |n| n.to_string()),
             session.session_dir,
             session.socket_path
         );

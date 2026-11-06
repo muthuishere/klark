@@ -7,6 +7,22 @@ use crate::client::endpoint::{EndpointCatalog, SavedSshEndpoint};
 thread_local! {
     // CLI dispatch is synchronous. Scope routing to this command, never the runtime or TUI.
     static TARGET: RefCell<Option<MachineTarget>> = const { RefCell::new(None) };
+    // A local session other than the active one (`klark agent read work/rev`).
+    static SESSION_SOCKET: RefCell<Option<std::path::PathBuf>> = const { RefCell::new(None) };
+}
+
+/// Run `f` with this command's local requests sent to `socket` (another
+/// klark session on this machine). Ignored when a `--machine` target is set.
+pub(super) fn with_session_socket<T>(socket: std::path::PathBuf, f: impl FnOnce() -> T) -> T {
+    let previous = SESSION_SOCKET.with(|slot| slot.replace(Some(socket)));
+    struct Restore(Option<std::path::PathBuf>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            SESSION_SOCKET.with(|slot| *slot.borrow_mut() = self.0.take());
+        }
+    }
+    let _restore = Restore(previous);
+    f()
 }
 
 struct MachineTarget {
@@ -67,6 +83,9 @@ pub(super) fn api_client() -> io::Result<ApiClient> {
     TARGET.with(|target| {
         let mut target = target.borrow_mut();
         let Some(target) = target.as_mut() else {
+            if let Some(socket) = SESSION_SOCKET.with(|slot| slot.borrow().clone()) {
+                return Ok(ApiClient::for_target(ConnectionTarget::SocketPath(socket)));
+            }
             return Ok(ApiClient::local());
         };
         #[cfg(test)]

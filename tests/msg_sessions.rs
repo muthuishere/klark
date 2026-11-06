@@ -249,7 +249,7 @@ fn msg_send_crosses_sessions_and_lands_as_agent_prompt() {
     let sent = env.msg(
         None,
         None,
-        &["send", "work/rev", "please", "review", "PR-12"],
+        &["send", "work/rev", "please", "review", "PR-12", "--json"],
     );
     assert!(sent.status.success(), "{}", text(&sent));
     assert!(String::from_utf8_lossy(&sent.stdout).contains("delivered to testbox/work/rev"));
@@ -268,7 +268,7 @@ fn msg_send_crosses_sessions_and_lands_as_agent_prompt() {
                 .as_str()
                 .unwrap_or("")
                 .to_string();
-            t.contains("[klark msg from testbox/default/cli] please review PR-12")
+            t.contains("[klark msg from testbox/default/cli] please review PR-12 --json")
                 .then_some(())
         },
     );
@@ -281,7 +281,7 @@ fn msg_send_crosses_sessions_and_lands_as_agent_prompt() {
         .collect();
     assert!(lines
         .iter()
-        .any(|l| l["dir"] == "received" && l["ok"] == true));
+        .any(|l| l["dir"] == "received" && l["ok"] == true && l["to"] == "testbox/work/rev"));
     assert!(lines
         .iter()
         .any(|l| l["dir"] == "sent" && l["to"] == "testbox/work/rev"));
