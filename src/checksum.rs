@@ -59,7 +59,7 @@ mod tests {
         fs::write(&path, b"klark").unwrap();
         let result = super::verify_sha256(
             &path,
-            "78193ef266c1e3c2ce4ea2a86d7fc87e8c52799653faaac8536533a1c9300f82",
+            "696305fe160ab34540556ebb33da6996bf64e31058e9b13eb3ab39b3797c620c",
         );
         let _ = fs::remove_file(&path);
         assert!(result.is_ok());

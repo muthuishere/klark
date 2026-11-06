@@ -1714,7 +1714,7 @@ mod tests {
     }
 
     #[test]
-    fn startup_loads_unseen_product_announcement_for_clients() {
+    fn startup_ignores_stored_product_announcement() {
         let _guard = config_env_lock().lock().unwrap();
         let path = temp_config_path("startup-product-announcement-auto-open");
         let state_home = path.parent().unwrap().join("state");
@@ -1749,13 +1749,9 @@ mod tests {
         );
 
         assert_eq!(app.state.mode, Mode::Navigate);
-        assert_eq!(
-            app.state
-                .product_announcement
-                .as_ref()
-                .map(|announcement| announcement.id.as_str()),
-            Some("startup-announcement")
-        );
+        // klark has no hosted product announcements (ADR 0001 D1): a stored
+        // manifest announcement must not surface at startup.
+        assert!(app.state.product_announcement.is_none());
 
         std::env::remove_var(crate::config::CONFIG_PATH_ENV_VAR);
         restore_xdg_state_home(original_xdg_state_home);
