@@ -27,6 +27,7 @@ default-members = [".", "crates/ghostty-vt", "crates/klark-link"]
 ghostty-vt = { path = "crates/ghostty-vt" }
 klark-link = { path = "crates/klark-link" }
 base64 = "0.22.1"
+rusqlite = { version = "0.32", features = ["bundled"] }
 bincode = { version = "2", features = ["serde"] }
 bytes = "1"
 clap = { version = "4.5", default-features = false, features = ["std", "help", "usage", "error-context", "string"] }
