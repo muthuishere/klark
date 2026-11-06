@@ -419,6 +419,12 @@ pub(crate) fn local_stream_peer_description(stream: &crate::ipc::LocalStream) ->
 }
 
 pub(crate) fn begin_cli_output() {
+    // Unit tests share one process: restoring SIG_DFL there would let any later
+    // test that writes to a closed pipe kill the whole harness. The CLI's
+    // SIGPIPE exit is covered against the real binary in tests/broken_pipe.rs.
+    if cfg!(test) {
+        return;
+    }
     set_sigpipe_disposition(libc::SIG_DFL);
 }
 
