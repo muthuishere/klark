@@ -29,8 +29,17 @@ cp appsettings.Development.example.json appsettings.Development.json   # fill in
 dotnet run
 ```
 
-Or with Docker: `docker build -t klark-hub hub && docker run -p 8080:8080 -v $PWD/hub/appsettings.Production.json:/app/appsettings.Production.json klark-hub`.
+Or with Docker: put your users and machine hashes in `hub/appsettings.Production.json`, then run `cd hub && docker compose up -d --build`.
 Put it behind TLS (any reverse proxy) so machines can use `wss://`.
+
+## Storage
+
+SQLite, in `Hub:DataDir` (`/data` in Docker):
+
+- `hub.db` lists every machine that has connected, with its host, version and when it was first and last seen.
+- `machines/<name>.db` holds one machine's data: its latest pane tree, recent pane output and connect/disconnect events. Each file is capped at `Hub:MaxBytesPerMachine` (10 MB by default). The oldest output is dropped first.
+
+Writes are batched by one background writer, so disk never slows the machine sockets.
 
 ## Link a machine
 
@@ -44,7 +53,7 @@ link reconnects with backoff when the connection drops.
 
 ## Wire protocol
 
-JSON text frames, `{"type": ...}`. It is defined in `crates/klark-link/src/protocol.rs`.
+JSON messages `{"type": ...}`. Machines send them gzip-compressed in binary frames, with terminal output merged per pane every ~25 ms. The hub sends plain JSON text. The architecture and status are tracked in `docs/adr/0001-klark-hub-architecture.md`. It is defined in `crates/klark-link/src/protocol.rs`.
 
 | machine → hub | hub → machine |
 |---|---|

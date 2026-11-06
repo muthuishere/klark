@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.IO.Compression;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
@@ -15,8 +16,15 @@ public sealed class MachineRegistry
 {
     private readonly ConcurrentDictionary<string, MachineConnection> _machines = new();
     private readonly ILogger<MachineRegistry> _log;
+    private readonly HubStore _store;
 
-    public MachineRegistry(ILogger<MachineRegistry> log) => _log = log;
+    public MachineRegistry(ILogger<MachineRegistry> log, HubStore store)
+    {
+        _log = log;
+        _store = store;
+    }
+
+    internal HubStore Store => _store;
 
     /// <summary>Raised when a machine connects, disconnects, or sends a new tree.</summary>
     public event Action? Changed;
@@ -51,6 +59,7 @@ public sealed class MachineRegistry
         {
             _machines.TryRemove(new KeyValuePair<string, MachineConnection>(conn.Id, conn));
             conn.FailPending();
+            _store.MachineDisconnected(conn.Id);
             NotifyChanged();
         }
     }
@@ -236,13 +245,25 @@ public sealed class MachineConnection
 
             try
             {
-                await HandleAsync(JsonNode.Parse(message.ToArray()));
+                await HandleAsync(JsonNode.Parse(Decode(message, result.MessageType)));
             }
-            catch (Exception e) when (e is JsonException or InvalidOperationException or FormatException)
+            catch (Exception e) when (e is JsonException or InvalidOperationException or FormatException or InvalidDataException)
             {
                 _log.LogWarning(e, "bad message from {Machine}", Id);
             }
         }
+    }
+
+    /// <summary>Machines send gzip JSON in binary frames (ADR 0001, D5); text frames are plain JSON.</summary>
+    private static byte[] Decode(MemoryStream message, WebSocketMessageType type)
+    {
+        message.Position = 0;
+        if (type != WebSocketMessageType.Binary) return message.ToArray();
+        using var gz = new GZipStream(message, CompressionMode.Decompress, leaveOpen: true);
+        using var json = new MemoryStream();
+        gz.CopyTo(json);
+        if (json.Length > 64 * 1024 * 1024) throw new InvalidDataException("message too large");
+        return json.ToArray();
     }
 
     private async Task HandleAsync(JsonNode? msg)
@@ -252,14 +273,22 @@ public sealed class MachineConnection
             case "hello":
                 Host = msg["machine_name"]?.GetValue<string>() ?? "";
                 Version = msg["klark_version"]?.GetValue<string>() ?? "";
+                _registry.Store.MachineConnected(Id, Host, Version);
                 _registry.NotifyChanged();
                 break;
             case "tree":
                 Tree = SessionTree.Parse(msg["snapshot"]);
+                _registry.Store.SaveTree(Id, msg["snapshot"]?.ToJsonString() ?? "null");
                 _registry.NotifyChanged();
                 break;
             case "frame":
-                await DispatchAsync(msg["pane_id"]?.GetValue<string>(), v => v.OnFrame(msg["bytes"]?.GetValue<string>() ?? ""));
+                var framePane = msg["pane_id"]?.GetValue<string>();
+                var b64 = msg["bytes"]?.GetValue<string>() ?? "";
+                if (framePane is not null && b64.Length > 0)
+                {
+                    _registry.Store.AppendOutput(Id, framePane, Convert.FromBase64String(b64));
+                }
+                await DispatchAsync(framePane, v => v.OnFrame(b64));
                 break;
             case "closed":
                 var paneId = msg["pane_id"]?.GetValue<string>();

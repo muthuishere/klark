@@ -22,7 +22,10 @@ if (args.Length == 2 && args[0] == "hash-token")
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.Configure<HubOptions>(builder.Configuration.GetSection("Hub"));
+builder.Services.AddSingleton<HubStore>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<HubStore>());
 builder.Services.AddSingleton<MachineRegistry>();
+builder.Services.AddResponseCompression(o => o.EnableForHttps = true);
 builder.Services.AddRazorComponents().AddInteractiveServerComponents();
 builder.Services.AddCascadingAuthenticationState();
 builder.Services
@@ -45,6 +48,7 @@ if (!app.Environment.IsDevelopment())
     app.UseHsts();
 }
 
+app.UseResponseCompression();
 app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(20) });
 app.UseAuthentication();
 app.UseAuthorization();

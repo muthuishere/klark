@@ -86,8 +86,8 @@ fn link_serves_a_hub_lazily() {
 
     let mut next = || -> Value {
         loop {
-            if let Message::Text(t) = ws.read().unwrap() {
-                return serde_json::from_str(&t).unwrap();
+            if let Some(v) = decode(ws.read().unwrap()) {
+                return v;
             }
         }
     };
@@ -118,8 +118,7 @@ fn link_serves_a_hub_lazily() {
 
     let mut results = Vec::new();
     while results.len() < 3 {
-        if let Message::Text(t) = ws.read().unwrap() {
-            let v: Value = serde_json::from_str(&t).unwrap();
+        if let Some(v) = decode(ws.read().unwrap()) {
             if v["type"] != "tree" {
                 results.push(v);
             }
@@ -141,4 +140,20 @@ fn link_serves_a_hub_lazily() {
         .any(|(m, p)| m == "pane.send_text" && p["text"] == "yes"));
     assert!(!seen.iter().any(|(m, _)| m == "pane.close"));
     let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Machine messages arrive gzip-compressed in binary frames.
+fn decode(msg: Message) -> Option<Value> {
+    use std::io::Read as _;
+    match msg {
+        Message::Binary(b) => {
+            let mut json = Vec::new();
+            flate2::read::GzDecoder::new(&b[..])
+                .read_to_end(&mut json)
+                .unwrap();
+            Some(serde_json::from_slice(&json).unwrap())
+        }
+        Message::Text(t) => Some(serde_json::from_str(&t).unwrap()),
+        _ => None,
+    }
 }

@@ -6,6 +6,12 @@ namespace KlarkHub.Services;
 /// <summary>Bound from the "Hub" configuration section.</summary>
 public sealed class HubOptions
 {
+    /// <summary>Where hub.db and machines/*.db live. Mount a volume here in Docker.</summary>
+    public string DataDir { get; set; } = "data";
+
+    /// <summary>Cap on each machine's SQLite file (ADR 0001, D7).</summary>
+    public long MaxBytesPerMachine { get; set; } = 10 * 1024 * 1024;
+
     /// <summary>People who may sign in to the UI. Every signed-in user sees every connected machine.</summary>
     public List<HubUser> Users { get; set; } = new();
 

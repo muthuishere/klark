@@ -1,0 +1,11 @@
+services:
+  hub:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - hub-data:/data
+      - ./appsettings.Production.json:/app/appsettings.Production.json:ro
+    restart: unless-stopped
+volumes:
+  hub-data:

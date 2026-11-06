@@ -49,7 +49,19 @@
 
     protected override void OnInitialized() => Registry.Changed += OnChanged;
 
-    private void OnChanged() => InvokeAsync(StateHasChanged);
+    private int renderQueued;
+
+    // Many machines can change at once; repaint at most four times a second.
+    private void OnChanged()
+    {
+        if (Interlocked.Exchange(ref renderQueued, 1) == 1) return;
+        _ = InvokeAsync(async () =>
+        {
+            await Task.Delay(250);
+            Interlocked.Exchange(ref renderQueued, 0);
+            StateHasChanged();
+        });
+    }
 
     public void Dispose() => Registry.Changed -= OnChanged;
 

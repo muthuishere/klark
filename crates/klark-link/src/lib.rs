@@ -91,16 +91,16 @@ pub fn run_once(config: &LinkConfig) -> Result<(), String> {
     loop {
         // Inbound from the hub.
         match ws.read() {
-            Ok(Message::Text(text)) => match serde_json::from_str::<HubMessage>(&text) {
-                Ok(msg) => {
+            Ok(Message::Close(_)) => return Ok(()),
+            Ok(msg) => match decode_hub(msg) {
+                Some(Ok(msg)) => {
                     for reply in session.handle(msg) {
                         send(&mut ws, &reply)?;
                     }
                 }
-                Err(e) => eprintln!("klark link: ignoring unknown hub message: {e}"),
+                Some(Err(e)) => eprintln!("klark link: ignoring unknown hub message: {e}"),
+                None => {}
             },
-            Ok(Message::Close(_)) => return Ok(()),
-            Ok(_) => {}
             Err(tungstenite::Error::Io(e))
                 if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
             Err(tungstenite::Error::ConnectionClosed) => return Ok(()),
@@ -108,7 +108,7 @@ pub fn run_once(config: &LinkConfig) -> Result<(), String> {
         }
 
         // Outbound: terminal frames, closures, tree changes.
-        for msg in session.drain() {
+        for msg in coalesce(session.drain()) {
             send(&mut ws, &msg)?;
         }
         if let Some(tree) = session.poll_tree() {
@@ -118,9 +118,73 @@ pub fn run_once(config: &LinkConfig) -> Result<(), String> {
 }
 
 fn send(ws: &mut Socket, msg: &AgentMessage) -> Result<(), String> {
-    let text = serde_json::to_string(msg).map_err(|e| e.to_string())?;
-    ws.send(Message::text(text))
+    ws.send(Message::binary(encode(msg)?))
         .map_err(|e| format!("send: {e}"))
+}
+
+/// Wire encoding: gzip-compressed JSON in a binary frame (ADR 0001, D5).
+pub fn encode(msg: &AgentMessage) -> Result<Vec<u8>, String> {
+    use std::io::Write as _;
+    let json = serde_json::to_vec(msg).map_err(|e| e.to_string())?;
+    let mut gz = flate2::write::GzEncoder::new(
+        Vec::with_capacity(json.len() / 3 + 32),
+        flate2::Compression::fast(),
+    );
+    gz.write_all(&json).map_err(|e| e.to_string())?;
+    gz.finish().map_err(|e| e.to_string())
+}
+
+/// Decode a hub message: gzip JSON in a binary frame, or plain JSON text.
+pub fn decode_hub(msg: Message) -> Option<Result<HubMessage, String>> {
+    use std::io::Read as _;
+    match msg {
+        Message::Text(text) => Some(serde_json::from_str(&text).map_err(|e| e.to_string())),
+        Message::Binary(bytes) => {
+            let mut json = Vec::new();
+            if let Err(e) = flate2::read::GzDecoder::new(&bytes[..]).read_to_end(&mut json) {
+                return Some(Err(e.to_string()));
+            }
+            Some(serde_json::from_slice(&json).map_err(|e| e.to_string()))
+        }
+        _ => None,
+    }
+}
+
+/// Merge consecutive output for the same pane into one frame, so a chatty
+/// pane costs one message per tick instead of one per write (ADR 0001, D5).
+pub fn coalesce(messages: Vec<AgentMessage>) -> Vec<AgentMessage> {
+    use base64::Engine as _;
+    let b64 = base64::engine::general_purpose::STANDARD;
+    let mut out: Vec<AgentMessage> = Vec::with_capacity(messages.len());
+    let mut pending: Vec<(String, Vec<u8>)> = Vec::new();
+    let flush = |pending: &mut Vec<(String, Vec<u8>)>, out: &mut Vec<AgentMessage>| {
+        for (pane_id, bytes) in pending.drain(..) {
+            out.push(AgentMessage::Frame {
+                pane_id,
+                bytes: b64.encode(bytes),
+            });
+        }
+    };
+    for msg in messages {
+        match msg {
+            AgentMessage::Frame { pane_id, bytes } => {
+                let Ok(raw) = b64.decode(bytes.as_bytes()) else {
+                    continue;
+                };
+                match pending.iter_mut().find(|(p, _)| *p == pane_id) {
+                    Some((_, buf)) => buf.extend_from_slice(&raw),
+                    None => pending.push((pane_id, raw)),
+                }
+            }
+            other => {
+                // Order matters only within a pane: flush before a pane's close.
+                flush(&mut pending, &mut out);
+                out.push(other);
+            }
+        }
+    }
+    flush(&mut pending, &mut out);
+    out
 }
 
 fn set_read_timeout(ws: &Socket, timeout: Option<Duration>) {
@@ -223,7 +287,7 @@ impl Session {
                 }
                 Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => return out,
             }
-            if out.len() >= 256 {
+            if out.len() >= 4096 {
                 return out;
             }
         }
@@ -253,6 +317,46 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn frames_coalesce_per_pane_and_keep_close_order() {
+        let f = |p: &str, b: &str| AgentMessage::Frame {
+            pane_id: p.into(),
+            bytes: b.into(),
+        };
+        // "aGk=" = "hi", "IQ==" = "!", "eA==" = "x"
+        let out = coalesce(vec![
+            f("p1", "aGk="),
+            f("p2", "eA=="),
+            f("p1", "IQ=="),
+            AgentMessage::Closed {
+                pane_id: "p2".into(),
+                reason: "eof".into(),
+            },
+        ]);
+        assert_eq!(
+            out,
+            vec![
+                f("p1", "aGkh"),
+                f("p2", "eA=="),
+                AgentMessage::Closed {
+                    pane_id: "p2".into(),
+                    reason: "eof".into()
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn encode_round_trips_through_gzip() {
+        use std::io::Read as _;
+        let bytes = encode(&AgentMessage::Pong).unwrap();
+        let mut json = String::new();
+        flate2::read::GzDecoder::new(&bytes[..])
+            .read_to_string(&mut json)
+            .unwrap();
+        assert_eq!(json, r#"{"type":"pong"}"#);
+    }
 
     #[test]
     fn disallowed_call_is_answered_with_error() {
