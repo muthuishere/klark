@@ -1,0 +1,3 @@
+s2 browser1: {"term":{"bytes":16988792,"disconnected":0,"frames":12509,"hooked":10,"n":10,"resets":0}}
+s3 browser1: {"term":{"bytes":33713947,"disconnected":0,"frames":24850,"hooked":10,"n":10,"resets":0}}
+s3 browser2: {"term":{"bytes":16731562,"disconnected":0,"frames":12318,"hooked":10,"n":10,"resets":0}}

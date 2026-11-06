@@ -17,3 +17,12 @@
   and fanning out (E-06) is what is left to measure.
 - The output is synthetic and repetitive. Real agent output (markdown, diffs)
   will compress less; expect 0.3–0.5×.
+
+**Update (E-06, 2026-11-06, real hub):** with the new load-test output
+(diffs, build logs and markdown with changing numbers and hashes, 4x bursts)
+10 watched panes at ~26 KB/s raw each put **~9 KB/s per pane** on the wire
+(gzip ratio 0.35) and cost the real hub **~1.4 % of a core per streaming
+pane**. A real pane printing coloured log lines with timestamps compressed to
+~0.55. Extra viewers on the same pane add no machine traffic (one stream,
+fanned out) and ~0.1 % CPU each. By that measure, 100 panes × 26 KB/s ≈
+0.9 MB/s in and ~1.4 cores, which is not yet measured.

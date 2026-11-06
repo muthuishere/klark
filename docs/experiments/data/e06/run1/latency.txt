@@ -1,0 +1,13 @@
+chat latency 1: 267
+chat latency 2: 679
+chat latency 3: 695
+type latency (idle shell, hot pane streaming) 1: [55,2,23,54,54,53,17,54,54,2]
+type latency (idle shell, hot pane streaming) 2: [55,8,55,52,42,55,10,54,54,54]
+type latency (idle shell, hot pane streaming) 3: [54,53,54,49,54,2,54,3,55,54]
+type latency with a slow viewer 1: [55,52,53,54,27,2,3,53,54,55]
+type latency with a slow viewer 2: [54,54,56,54,54,54,45,53,55,53]
+viewer stats browser1: {"chat":{"bytes":0,"disconnected":0,"frames":0,"hooked":0,"n":3,"resets":0},"list":{"bytes":0,"disconnected":0,"frames":0,"hooked":0,"n":4,"resets":0},"term":{"bytes":15362121,"disconnected":0,"frames":3792,"hooked":3,"n":3,"resets":0}}
+viewer stats browser2 (slow): {"term":{"bytes":3730447,"disconnected":0,"frames":880,"hooked":1,"n":1,"resets":0}}
+claude agents: 10  observers: 2  epoch: 1793967476
+claude agents: 10  observers: 0  epoch: 1793967492
+claude agents: 10  observers: 0  epoch: 1793967568

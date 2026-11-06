@@ -1,0 +1,2 @@
+stream10 stats: {"error":"ReferenceError: KL is not defined\n    at eval (eval at <anonymous> (:1:151), <anonymous>:1:13)\n    at eval (eval at <anonymous> (:1:151), <anonymous>:1:33)\n    at <anonymous>:1:151\n    at <anonymous>:1:215\n    at <anonymous>:1:312\n    at <anonymous>:1:317"}
+fan stats: {"error":"ReferenceError: KL is not defined\n    at eval (eval at <anonymous> (:1:151), <anonymous>:1:13)\n    at eval (eval at <anonymous> (:1:151), <anonymous>:1:33)\n    at <anonymous>:1:151\n    at <anonymous>:1:215\n    at <anonymous>:1:312\n    at <anonymous>:1:317"}
