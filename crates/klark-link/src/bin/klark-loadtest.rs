@@ -55,14 +55,14 @@ macro_rules! counters {
 }
 
 counters!(
-    connected,      // gauge: machines linked right now
-    connects,       // total successful connects (reconnects included)
-    failed,         // total connect or link failures
-    subscribed,     // gauge: panes streaming right now
+    connected,  // gauge: machines linked right now
+    connects,   // total successful connects (reconnects included)
+    failed,     // total connect or link failures
+    subscribed, // gauge: panes streaming right now
     msgs_in,
-    bytes_in,       // every hub->machine byte (payload, after websocket framing)
+    bytes_in, // every hub->machine byte (payload, after websocket framing)
     msgs_out,
-    bytes_out,      // every machine->hub byte
+    bytes_out, // every machine->hub byte
     get_tree,
     tree_full,
     tree_full_bytes,
@@ -81,7 +81,7 @@ counters!(
     frames,
     frame_raw_bytes,
     frame_wire_bytes,
-    other_bytes,    // hello, pane_size, deliver/asset results
+    other_bytes, // hello, pane_size, deliver/asset results
 );
 
 struct Args {
@@ -250,7 +250,12 @@ struct MachineState {
 
 impl MachineState {
     fn new(n: usize, panes: usize, started: Instant) -> Self {
-        Self { n, panes, started, line: 0 }
+        Self {
+            n,
+            panes,
+            started,
+            line: 0,
+        }
     }
 
     /// Statuses move every ~20 s, offset per machine, like agents finishing turns.
@@ -316,7 +321,9 @@ impl MachineState {
     fn item(&self, p: usize, k: u64) -> Value {
         let id = format!("p{p}-{k}");
         match k % 4 {
-            0 => json!({"id": id, "role": "user", "kind": "text", "text": format!("Please fix the failing test in module {k} and explain the change.")}),
+            0 => {
+                json!({"id": id, "role": "user", "kind": "text", "text": format!("Please fix the failing test in module {k} and explain the change.")})
+            }
             1 => json!({"id": id, "role": "assistant", "kind": "tool_use", "tool": "Bash",
                         "input": {"command": format!("cargo test -p crate-{} -- --nocapture", k % 7)}}),
             2 => json!({"id": id, "role": "assistant", "kind": "tool_result", "ok": k % 3 != 0,
@@ -370,14 +377,30 @@ impl MachineState {
     }
 }
 
-fn simulate(machine_id: &str, st: &mut MachineState, args: &Args, stats: &Stats, deadline: Instant) -> Result<(), String> {
+fn simulate(
+    machine_id: &str,
+    st: &mut MachineState,
+    args: &Args,
+    stats: &Stats,
+    deadline: Instant,
+) -> Result<(), String> {
     let mut ws = klark_link::connect_hub(&args.hub, &args.token, machine_id)?;
     stats.connected.fetch_add(1, Ordering::Relaxed);
     stats.connects.fetch_add(1, Ordering::Relaxed);
     let mut subscribed: Vec<String> = Vec::new();
-    let result = link(&mut ws, machine_id, st, args, stats, deadline, &mut subscribed);
+    let result = link(
+        &mut ws,
+        machine_id,
+        st,
+        args,
+        stats,
+        deadline,
+        &mut subscribed,
+    );
     stats.connected.fetch_sub(1, Ordering::Relaxed);
-    stats.subscribed.fetch_sub(subscribed.len() as u64, Ordering::Relaxed);
+    stats
+        .subscribed
+        .fetch_sub(subscribed.len() as u64, Ordering::Relaxed);
     if result.is_ok() {
         let _ = ws.close(None);
     }
@@ -403,7 +426,10 @@ fn link(
     deadline: Instant,
     subscribed: &mut Vec<String>,
 ) -> Result<(), String> {
-    let send = |ws: &mut klark_link::Socket, msg: &AgentMessage, kind: Kind| -> Result<(), String> {
+    let send = |ws: &mut klark_link::Socket,
+                msg: &AgentMessage,
+                kind: Kind|
+     -> Result<(), String> {
         let bytes = klark_link::encode(msg)?;
         let len = bytes.len() as u64;
         stats.msgs_out.fetch_add(1, Ordering::Relaxed);
@@ -415,7 +441,8 @@ fn link(
             Kind::Frame => stats.frame_wire_bytes.fetch_add(len, Ordering::Relaxed),
             Kind::Unchanged | Kind::Other => stats.other_bytes.fetch_add(len, Ordering::Relaxed),
         };
-        ws.send(Message::binary(bytes)).map_err(|e| format!("send: {e}"))
+        ws.send(Message::binary(bytes))
+            .map_err(|e| format!("send: {e}"))
     };
     send(
         ws,
@@ -459,14 +486,22 @@ fn link(
                         }
                         HubMessage::Call { id, method, params } => {
                             stats.calls.fetch_add(1, Ordering::Relaxed);
-                            let pane = params["pane_id"].as_str().or(params["target"].as_str()).unwrap_or("p0").to_string();
+                            let pane = params["pane_id"]
+                                .as_str()
+                                .or(params["target"].as_str())
+                                .unwrap_or("p0")
+                                .to_string();
                             let text = if method == "pane.read" && params["source"] == "visible" {
                                 st.screen(&pane)
                             } else {
                                 format!("{machine_id} {pane}: recent output\n")
                             };
                             Some((
-                                AgentMessage::Result { id, result: Some(json!({"read": {"text": text}})), error: None },
+                                AgentMessage::Result {
+                                    id,
+                                    result: Some(json!({"read": {"text": text}})),
+                                    error: None,
+                                },
                                 Kind::Screen,
                             ))
                         }
@@ -476,7 +511,14 @@ fn link(
                                 subscribed.push(pane_id.clone());
                                 stats.subscribed.fetch_add(1, Ordering::Relaxed);
                             }
-                            Some((AgentMessage::PaneSize { pane_id, cols: 132, rows: 40 }, Kind::Other))
+                            Some((
+                                AgentMessage::PaneSize {
+                                    pane_id,
+                                    cols: 132,
+                                    rows: 40,
+                                },
+                                Kind::Other,
+                            ))
                         }
                         HubMessage::Unsubscribe { pane_id } => {
                             stats.unsubscribes.fetch_add(1, Ordering::Relaxed);
@@ -506,23 +548,48 @@ fn link(
                         }
                         HubMessage::ListAgents { id } => {
                             stats.list_agents.fetch_add(1, Ordering::Relaxed);
-                            Some((AgentMessage::Result { id, result: Some(st.agents()), error: None }, Kind::Other))
+                            Some((
+                                AgentMessage::Result {
+                                    id,
+                                    result: Some(st.agents()),
+                                    error: None,
+                                },
+                                Kind::Other,
+                            ))
                         }
                         HubMessage::Deliver { id, .. } => Some((
-                            AgentMessage::Result { id, result: Some(json!({"delivered": true})), error: None },
+                            AgentMessage::Result {
+                                id,
+                                result: Some(json!({"delivered": true})),
+                                error: None,
+                            },
                             Kind::Other,
                         )),
                         HubMessage::FetchAsset { id, .. } => Some((
-                            AgentMessage::Result { id, result: Some(json!({"path": "/tmp/loadtest.png"})), error: None },
+                            AgentMessage::Result {
+                                id,
+                                result: Some(json!({"path": "/tmp/loadtest.png"})),
+                                error: None,
+                            },
                             Kind::Other,
                         )),
-                        HubMessage::GetTranscript { id, pane_id, after, .. } => {
+                        HubMessage::GetTranscript {
+                            id, pane_id, after, ..
+                        } => {
                             stats.transcript_calls.fetch_add(1, Ordering::Relaxed);
                             let result = st.transcript(&pane_id, after.as_deref());
-                            stats
-                                .transcript_items
-                                .fetch_add(result["items"].as_array().map_or(0, |a| a.len()) as u64, Ordering::Relaxed);
-                            Some((AgentMessage::Result { id, result: Some(result), error: None }, Kind::Transcript))
+                            stats.transcript_items.fetch_add(
+                                result["items"].as_array().map_or(0, |a| a.len()) as u64,
+                                Ordering::Relaxed,
+                            );
+                            Some((
+                                AgentMessage::Result {
+                                    id,
+                                    result: Some(result),
+                                    error: None,
+                                },
+                                Kind::Transcript,
+                            ))
                         }
                     };
                     if let Some((reply, kind)) = reply {
@@ -531,27 +598,52 @@ fn link(
                 }
             }
             Err(tungstenite::Error::Io(e))
-                if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {}
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) => {}
             Err(e) => return Err(format!("read: {e}")),
         }
         // A keystroke echo goes out at once, like a real shell's.
         for (pane_id, text) in echo.drain() {
             stats.frames.fetch_add(1, Ordering::Relaxed);
-            stats.frame_raw_bytes.fetch_add(text.len() as u64, Ordering::Relaxed);
-            send(ws, &AgentMessage::Frame { pane_id, bytes: b64.encode(text) }, Kind::Frame)?;
+            stats
+                .frame_raw_bytes
+                .fetch_add(text.len() as u64, Ordering::Relaxed);
+            send(
+                ws,
+                &AgentMessage::Frame {
+                    pane_id,
+                    bytes: b64.encode(text),
+                },
+                Kind::Frame,
+            )?;
         }
         // Stream output only for subscribed panes, merged per tick.
         if !subscribed.is_empty() && last_emit.elapsed() >= tick && args.rate > 0 {
             let elapsed = last_emit.elapsed();
             last_emit = Instant::now();
             // A 1 s burst at 4x every 10 s.
-            let burst = if st.started.elapsed().as_secs() % 10 == 0 { 4 } else { 1 };
+            let burst = if st.started.elapsed().as_secs() % 10 == 0 {
+                4
+            } else {
+                1
+            };
             let budget = args.rate * burst * elapsed.as_millis() as usize / 1000;
             for pane_id in subscribed.clone() {
                 let out = st.output(machine_id, &pane_id, budget);
                 stats.frames.fetch_add(1, Ordering::Relaxed);
-                stats.frame_raw_bytes.fetch_add(out.len() as u64, Ordering::Relaxed);
-                send(ws, &AgentMessage::Frame { pane_id, bytes: b64.encode(out) }, Kind::Frame)?;
+                stats
+                    .frame_raw_bytes
+                    .fetch_add(out.len() as u64, Ordering::Relaxed);
+                send(
+                    ws,
+                    &AgentMessage::Frame {
+                        pane_id,
+                        bytes: b64.encode(out),
+                    },
+                    Kind::Frame,
+                )?;
             }
         } else if subscribed.is_empty() {
             last_emit = Instant::now();

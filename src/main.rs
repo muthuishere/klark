@@ -25,6 +25,7 @@ mod copy_mode;
 mod detect;
 mod events;
 mod expose_cmd;
+mod hub_cmd;
 mod msg_cmd;
 mod offer_cmd;
 mod transcript_cmd;
@@ -586,6 +587,10 @@ fn main() -> io::Result<()> {
         expose_cmd::run(&args[2..]);
     }
 
+    if args.get(1).map(|s| s.as_str()) == Some("hub") {
+        hub_cmd::run(&args[2..]);
+    }
+
     if args.get(1).map(|s| s.as_str()) == Some("msg") {
         msg_cmd::run(&args[2..]);
     }
@@ -636,6 +641,7 @@ fn main() -> io::Result<()> {
         println!("       klark session attach <name>");
         println!("       klark completion zsh");
         println!("       klark expose --hub <url> --token <token>");
+        println!("       klark hub <up|connect|status|down|logs>   (a local hub in Docker)");
         println!("       klark msg <whoami|ls|send|reply|log|name|login|status> ...");
         println!("       klark channel set <stable|preview>");
         println!("       klark machine <subcommand> ...");
@@ -789,6 +795,7 @@ fn main() -> io::Result<()> {
                 "remote-client-bridge",
                 "update",
                 "expose",
+                "hub",
                 "offer",
                 "status",
                 "config",

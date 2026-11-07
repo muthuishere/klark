@@ -296,6 +296,7 @@ pub(crate) fn hub_base() -> Option<Result<String, String>> {
     let url = std::env::var("KLARK_HUB_URL")
         .ok()
         .filter(|s| !s.trim().is_empty())
+        .or_else(|| crate::hub_cmd::default_hub().map(|h| h.url))
         .or_else(|| HubConfig::load().map(|h| h.hub).filter(|h| !h.is_empty()))?;
     Some(klark_link::http::hub_http_base(&url))
 }
@@ -313,9 +314,20 @@ pub fn pick_token(
 fn hub_token() -> Option<String> {
     pick_token(
         std::env::var("KLARK_HUB_JWT").ok(),
-        HubConfig::load().and_then(|h| h.jwt),
-        std::env::var("KLARK_HUB_TOKEN").ok(),
+        saved_jwt_for_target(),
+        std::env::var("KLARK_HUB_TOKEN")
+            .ok()
+            .or_else(|| crate::hub_cmd::default_hub().map(|h| h.token)),
     )
+}
+
+/// hub.json's login, only when it is for the hub we are talking to (the
+/// default `klark hub` hub may be another one).
+fn saved_jwt_for_target() -> Option<String> {
+    let saved = HubConfig::load()?;
+    let target = hub_base()?.ok()?;
+    let mine = klark_link::http::hub_http_base(&saved.hub).ok()?;
+    (mine == target).then_some(saved.jwt).flatten()
 }
 
 fn hub_target() -> Result<(String, String), String> {

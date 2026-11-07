@@ -10,8 +10,8 @@ use std::time::Duration;
 
 const USAGE: &str = "usage: klark offer <path> [--pane <pane-id>] [--force] [--json]
        [--hub <url>] [--token <machine-token>]
-  --pane defaults to KLARK_PANE_ID; the hub to KLARK_HUB_URL (or `klark msg login`);
-  the token to KLARK_HUB_TOKEN (the machine token `klark expose` uses).
+  --pane defaults to KLARK_PANE_ID; the hub to KLARK_HUB_URL (or the default `klark hub` hub, or `klark msg login`);
+  the token to KLARK_HUB_TOKEN (the machine token `klark expose` uses), else the default hub's.
   Credential-looking paths are refused unless --force. Files over 100 MB are refused.";
 
 pub const MAX_OFFER: u64 = 100 * 1024 * 1024;
@@ -161,8 +161,11 @@ fn offer(o: Opts) -> Result<serde_json::Value, String> {
         None => crate::msg_cmd::hub_base()
             .ok_or("no hub configured: pass --hub or set KLARK_HUB_URL")??,
     };
-    let token = o.token.ok_or(
-        "no machine token: set KLARK_HUB_TOKEN (the token `klark expose` uses) or pass --token",
+    let token = o
+        .token
+        .or_else(|| crate::hub_cmd::default_hub().map(|h| h.token))
+        .ok_or(
+        "no machine token: set KLARK_HUB_TOKEN (the token `klark expose` uses), pass --token, or run `klark hub connect`",
     )?;
     let name = abs
         .file_name()
