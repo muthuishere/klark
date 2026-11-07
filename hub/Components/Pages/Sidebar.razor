@@ -1,0 +1,305 @@
+@* The app's sidebar (ADR 0011, E): agents grouped by project folder, newest activity
+   first, with a one-line preview; search over names, folders, sessions, machines and
+   the text of every chat loaded in this hub. Collapsible on desktop, a drawer on phones. *@
+@implements IDisposable
+@using System.Security.Claims
+@using System.Text.Json.Nodes
+@inject MachineRegistry Registry
+@inject HubStore Store
+@inject HubAccess Access
+@inject TranscriptFeeds Feeds
+@inject AuthenticationStateProvider Auth
+@inject IJSRuntime JS
+
+<aside class="side" aria-label="Agents">
+    <div class="side-head">
+        <a class="brand" href="/">klark</a>
+        <button type="button" class="icon side-x" onclick="return klarkSide.toggle()" aria-label="Close sidebar" title="Close sidebar">@((MarkupString)Icons.Sidebar)</button>
+    </div>
+    <div class="side-search">
+        <input type="search" placeholder="Search agents and messages" aria-label="Search" value="@filter" @oninput="OnFilterAsync" />
+        <kbd>⌘K</kbd>
+    </div>
+    <div class="side-list" @ref="listEl">
+        @if (machines.Count == 0 && offline.Count == 0)
+        {
+            <p class="empty pad">No machines are linked yet. On a machine, run <code>klark hub connect</code>.</p>
+        }
+        @foreach (var g in groups)
+        {
+            var open = !folded.Contains(g.Key);
+            <section class="proj">
+                <button type="button" class="proj-head" title="@g.Path" aria-expanded="@open" @onclick="() => FoldAsync(g.Key)">
+                    <span class="chev">@(open ? "▾" : "▸")</span><span class="proj-name">@g.Name</span><span class="proj-n">@g.Rows.Count</span>
+                </button>
+                @if (open)
+                {
+                    @foreach (var r in g.Rows)
+                    {
+                        var href = Href(r.Machine.Id, r.Pane.Id);
+                        <a href="@href" class="ent @(r.Machine.Id == MachineId && r.Pane.Id == PaneId ? "cur" : null)" data-pane-link title="@r.Pane.Cwd">
+                            <span class="dot dot-@Css(r.Pane.AgentStatus)"></span>
+                            <span class="badge-a" data-agent="@AgentKey(r.Pane.Agent)">@AgentIcon(r.Pane.Agent)</span>
+                            <span class="ent-title">@r.Pane.DisplayName</span>
+                            <span class="ent-time">@Ago(r.Feed?.LastActivity)</span>
+                            <span class="ent-sub">
+                                @if (r.Pane.AgentStatus == "blocked") { <b class="needs">needs you · </b> }
+                                @(r.Preview.Length > 0 ? r.Preview : $"{r.Machine.Name} · {r.Machine.Tree.WorkspaceLabel(r.Pane.WorkspaceId)}")
+                            </span>
+                        </a>
+                    }
+                }
+            </section>
+        }
+        @if (hits.Count > 0)
+        {
+            <section class="proj hits">
+                <div class="proj-head static"><span class="proj-name">Messages</span><span class="proj-n">@hits.Count</span></div>
+                @foreach (var h in hits)
+                {
+                    var name = PaneName(h.MachineId, h.PaneId);
+                    <a class="ent hit" href="@(Href(h.MachineId, h.PaneId) + "?view=chat&hit=" + Uri.EscapeDataString(h.ItemId))" data-pane-link>
+                        <span class="ent-title">@name</span>
+                        <span class="ent-sub">@(h.Role == "user" ? "You: " : "")@h.Before<mark>@h.Match</mark>@h.After</span>
+                    </a>
+                }
+            </section>
+        }
+        @if (filter.Length > 0 && groups.Count == 0 && hits.Count == 0)
+        {
+            <p class="empty pad">No match.</p>
+        }
+        @if (offline.Count > 0 && filter.Length == 0)
+        {
+            <section class="proj">
+                <div class="proj-head static"><span class="proj-name">Offline machines</span></div>
+                @foreach (var k in offline)
+                {
+                    <button type="button" class="ent off" @onclick="() => ToggleOfflineAsync(k.Id)">
+                        <span class="dot dot-none"></span><span class="ent-title">@(openOffline.ContainsKey(k.Id) ? "▾" : "▸") @k.Id</span>
+                        <span class="ent-time">@Ago(k.LastSeen)</span>
+                    </button>
+                    @if (openOffline.TryGetValue(k.Id, out var tree) && tree is not null)
+                    {
+                        @foreach (var p in tree.Panes.Where(p => showAll || IsAgent(p)))
+                        {
+                            <a class="ent sub" href="@Href(k.Id, p.Id)" data-pane-link><span class="dot dot-none"></span><span class="ent-title">@p.DisplayName</span></a>
+                        }
+                    }
+                }
+            </section>
+        }
+    </div>
+    <div class="side-foot">
+        <label class="toggle"><input type="checkbox" checked="@showAll" @onchange="ShowAllAsync" /> Show all panes</label>
+        <button type="button" class="icon" onclick="klarkSide.theme()" title="Light / dark" aria-label="Toggle theme">◐</button>
+        <details class="menu up">
+            <summary class="icon" aria-label="Account">@((MarkupString)Icons.More)</summary>
+            <div class="menu-pop">
+                <div class="menu-info">@(user.FindFirst("display_name")?.Value ?? user.Identity?.Name)</div>
+                <a href="/messages">Messages</a>
+                <a href="/token">CLI token</a>
+                @if (user.FindFirst(AccountEndpoints.SourceClaim)?.Value is DirectoryUser.BuiltIn or DirectoryUser.Mock)
+                {
+                    <a href="/account/password">Change password</a>
+                }
+                @if (Access.IsAdmin(user))
+                {
+                    <a href="/admin/users">Users</a>
+                    <a href="/admin/directory">Sign-in directory</a>
+                    <a href="/admin/machines">Machines</a>
+                }
+                <form method="post" action="/account/logout" data-enhance="false">
+                    <AntiforgeryToken />
+                    <button type="submit" class="menu-item">Sign out</button>
+                </form>
+            </div>
+        </details>
+    </div>
+</aside>
+<div class="scrim" aria-hidden="true"></div>
+
+@code {
+    [Parameter] public string? MachineId { get; set; }
+    [Parameter] public string? PaneId { get; set; }
+
+    private ClaimsPrincipal user = new();
+    private string filter = "";
+    private bool showAll;
+    private ElementReference listEl;
+    private List<MachineConnection> machines = new();
+    private List<KnownMachine> offline = new();
+    private readonly Dictionary<string, SessionTree?> openOffline = new();
+    private HashSet<string> folded = new();
+    private List<Group> groups = new();
+    private List<TranscriptFeeds.Hit> hits = new();
+    private PeriodicTimer? timer;
+    private int queued;
+
+    private sealed record Row(MachineConnection Machine, PaneInfo Pane, TranscriptFeed? Feed, string Preview);
+    private sealed record Group(string Key, string Name, string Path, List<Row> Rows);
+
+    protected override async Task OnInitializedAsync()
+    {
+        user = (await Auth.GetAuthenticationStateAsync()).User;
+        Registry.Changed += OnChanged;
+        await LoadOfflineAsync();
+        Build();
+        timer = new PeriodicTimer(TimeSpan.FromSeconds(3));
+        _ = PullAsync(timer);
+    }
+
+    private async Task PullAsync(PeriodicTimer t)
+    {
+        try
+        {
+            do
+            {
+                // Lazy pull (ADR 0001, D11): only while a sidebar is on screen; shared 2 s.
+                await Registry.RefreshTreesAsync(TimeSpan.FromSeconds(2), m => Access.CanSee(user, m.Id));
+                OnChanged();
+            } while (await t.WaitForNextTickAsync());
+        }
+        catch (ObjectDisposedException) { }
+    }
+
+    private void OnChanged()
+    {
+        if (Interlocked.Exchange(ref queued, 1) == 1) return;
+        _ = InvokeAsync(async () =>
+        {
+            await Task.Delay(250);
+            Interlocked.Exchange(ref queued, 0);
+            await LoadOfflineAsync();
+            Build();
+            StateHasChanged();
+        });
+    }
+
+    private string connectedKey = "\0";
+
+    private async Task LoadOfflineAsync()
+    {
+        var connected = Registry.Machines.Select(m => m.Id).ToHashSet();
+        var key = string.Join('\n', connected.Order());
+        if (key == connectedKey) return;
+        connectedKey = key;
+        offline = (await Store.KnownMachinesAsync()).Where(k => !connected.Contains(k.Id) && Access.CanSee(user, k.Id))
+            .OrderByDescending(k => k.LastSeen).ToList();
+    }
+
+    private async Task ToggleOfflineAsync(string id)
+    {
+        if (openOffline.Remove(id)) return;
+        var json = await Store.LastTreeAsync(id);
+        openOffline[id] = json is null ? null : SessionTree.Parse(JsonNode.Parse(json));
+    }
+
+    /// <summary>An agent pane: the tree names an agent, or reports a real agent status.</summary>
+    public static bool IsAgent(PaneInfo p) => p.Agent.Length > 0 || p.AgentStatus is { Length: > 0 } s && s != "unknown";
+
+    /// <summary>What a person calls the folder: its last segment; the home directory is "~" (herdr-expose paneSearch).</summary>
+    public static string FolderName(string? cwd)
+    {
+        var s = (cwd ?? "").Trim().TrimEnd('/');
+        if (s is "" or "~") return "~";
+        if (System.Text.RegularExpressions.Regex.IsMatch(s, @"^/(Users|home)/[^/]+$")) return "~";
+        return s[(s.LastIndexOf('/') + 1)..];
+    }
+
+    /// <summary>Every word (AND) must appear in the pane's name, agent, status, folder, full path, session or machine.</summary>
+    public static bool Matches(string machine, string session, PaneInfo p, string[] words)
+    {
+        if (words.Length == 0) return true;
+        var hay = $"{machine} {session} {p.DisplayName} {p.Title} {p.Agent} {p.AgentStatus} {p.Cwd} {FolderName(p.Cwd)} {p.Id}";
+        return words.All(w => hay.Contains(w, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private void Build()
+    {
+        machines = Registry.Machines.Where(m => Access.CanSee(user, m.Id)).ToList();
+        var words = filter.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var feeds = Feeds.Loaded.ToDictionary(f => (f.MachineId, f.PaneId));
+        var rows = new List<Row>();
+        foreach (var m in machines)
+        foreach (var p in m.Tree.Panes)
+        {
+            if (!showAll && !IsAgent(p)) continue;
+            if (!Matches(m.Name, m.Tree.WorkspaceLabel(p.WorkspaceId), p, words)) continue;
+            feeds.TryGetValue((m.Id, p.Id), out var f);
+            rows.Add(new Row(m, p, f, TranscriptFeeds.Preview(f)));
+        }
+        groups = rows.GroupBy(r => FolderName(r.Pane.Cwd))
+            .Select(g => new Group(g.Key, g.Key, g.First().Pane.Cwd,
+                g.OrderByDescending(r => Rank(r.Pane.AgentStatus)).ThenByDescending(r => r.Feed?.LastActivity ?? DateTimeOffset.MinValue).ThenBy(r => r.Pane.DisplayName).ToList()))
+            .OrderByDescending(g => g.Rows.Max(r => Rank(r.Pane.AgentStatus)))
+            .ThenByDescending(g => g.Rows.Max(r => r.Feed?.LastActivity ?? DateTimeOffset.MinValue))
+            .ThenBy(g => g.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        hits = filter.Trim().Length >= 2 ? Feeds.Search(filter, id => Access.CanSee(user, id)) : new();
+    }
+
+    private string PaneName(string machine, string pane) =>
+        Registry.Get(machine)?.Tree.Panes.FirstOrDefault(p => p.Id == pane)?.DisplayName ?? pane;
+
+    private async Task OnFilterAsync(ChangeEventArgs e)
+    {
+        filter = e.Value?.ToString() ?? "";
+        Build();
+        try { await JS.InvokeVoidAsync("klarkState.set", "home:filter", filter, "s"); } catch (JSException) { }
+    }
+
+    private async Task FoldAsync(string key)
+    {
+        if (!folded.Remove(key)) folded.Add(key);
+        try { await JS.InvokeVoidAsync("klarkState.set", "folded", string.Join('\n', folded)); } catch (JSException) { }
+    }
+
+    private async Task ShowAllAsync(ChangeEventArgs e)
+    {
+        showAll = e.Value is true;
+        Build();
+        try { await JS.InvokeVoidAsync("klarkState.set", "showall", showAll ? "1" : ""); } catch (JSException) { }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        filter = await JS.InvokeAsync<string?>("klarkState.get", "home:filter", "s") ?? "";
+        showAll = await JS.InvokeAsync<string?>("klarkState.get", "showall") == "1";
+        folded = ((await JS.InvokeAsync<string?>("klarkState.get", "folded")) ?? "").Split('\n', StringSplitOptions.RemoveEmptyEntries).ToHashSet();
+        Build();
+        StateHasChanged();
+        await Task.Yield();
+        await JS.InvokeVoidAsync("klarkSide.track", listEl, "side");
+    }
+
+    private static string Href(string machine, string pane) => $"/m/{Uri.EscapeDataString(machine)}/p/{Uri.EscapeDataString(pane)}";
+    private static int Rank(string status) => status switch { "blocked" => 3, "working" => 2, "idle" => 1, _ => 0 };
+    private static string Css(string status) => string.IsNullOrEmpty(status) || status == "unknown" ? "none" : status;
+
+    public static string AgentKey(string agent)
+    {
+        var a = agent.ToLowerInvariant();
+        return a.Contains("claude") ? "claude" : a.Contains("devin") ? "devin" : a.Contains("codex") ? "codex" : a.Length == 0 ? "shell" : "other";
+    }
+
+    public static string AgentIcon(string agent) => AgentKey(agent) switch
+    {
+        "claude" => "✻", "devin" => "◆", "codex" => "◎", "shell" => "$",
+        _ => agent.Length > 0 ? agent[..1].ToUpperInvariant() : "•",
+    };
+
+    public static string Ago(DateTimeOffset? t)
+    {
+        if (t is null) return "";
+        var d = DateTimeOffset.UtcNow - t.Value;
+        return d.TotalSeconds < 60 ? "now" : d.TotalMinutes < 60 ? $"{(int)d.TotalMinutes}m" : d.TotalHours < 24 ? $"{(int)d.TotalHours}h" : $"{(int)d.TotalDays}d";
+    }
+
+    public void Dispose()
+    {
+        Registry.Changed -= OnChanged;
+        timer?.Dispose();
+    }
+}

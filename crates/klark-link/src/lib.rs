@@ -9,6 +9,7 @@
 pub mod assets;
 #[doc(hidden)]
 pub mod fakehub;
+pub mod files;
 pub mod filter;
 pub mod http;
 pub mod protocol;
@@ -324,6 +325,7 @@ impl Session {
             HubMessage::ListAgents { id }
             | HubMessage::Deliver { id, .. }
             | HubMessage::GetTranscript { id, .. }
+            | HubMessage::GetFile { id, .. }
             | HubMessage::FetchAsset { id, .. } => Some(id.clone()),
             _ => None,
         };
@@ -459,6 +461,64 @@ impl Session {
                     .run_msg(id, args, MsgReply::Json, self.frames_tx.clone());
                 vec![]
             }
+            // v5: a file a chat linked to. Checked here (files::check), whatever
+            // the hub decided: pane folder or home only, no credentials, size cap.
+            HubMessage::GetFile {
+                id,
+                pane_id,
+                path,
+                max_bytes,
+            } => {
+                let (session, local) = decode_id(&pane_id);
+                let (session, local) = (session.to_string(), local.to_string());
+                let up = match self.upstream_for(&session) {
+                    Ok(up) => up,
+                    Err(e) => {
+                        return vec![AgentMessage::Result {
+                            id,
+                            result: None,
+                            error: Some(e),
+                        }]
+                    }
+                };
+                let out = self.frames_tx.clone();
+                let spawned = std::thread::Builder::new()
+                    .name(format!("klark-link-file-{id}"))
+                    .spawn({
+                        let id = id.clone();
+                        move || {
+                            let outcome = up
+                                .call("pane.get", json!({"pane_id": local}))
+                                .and_then(|info| {
+                                    let pane = info.get("pane").cloned().unwrap_or(info);
+                                    let cwd = pane
+                                        .get("cwd")
+                                        .and_then(Value::as_str)
+                                        .filter(|c| !c.is_empty())
+                                        .map(std::path::PathBuf::from)
+                                        .ok_or("the pane has no working directory")?;
+                                    let home = files::home_dir();
+                                    files::read(&path, &cwd, home.as_deref(), files::max_bytes(max_bytes))
+                                });
+                            if let Err(e) = &outcome {
+                                eprintln!("klark expose: get_file {path}: {e}");
+                            }
+                            let (result, error) = match outcome {
+                                Ok(v) => (Some(v), None),
+                                Err(e) => (None, Some(e)),
+                            };
+                            let _ = out.send(AgentMessage::Result { id, result, error });
+                        }
+                    });
+                match spawned {
+                    Ok(_) => vec![],
+                    Err(e) => vec![AgentMessage::Result {
+                        id,
+                        result: None,
+                        error: Some(e.to_string()),
+                    }],
+                }
+            }
             HubMessage::FetchAsset {
                 id,
                 sha256,
@@ -555,6 +615,7 @@ impl Session {
                 })
             }
             HubMessage::GetTranscript { id, pane_id, .. }
+            | HubMessage::GetFile { id, pane_id, .. }
             | HubMessage::FetchAsset { id, pane_id, .. } => {
                 let (s, l) = decode_id(pane_id);
                 let writes = matches!(msg, HubMessage::FetchAsset { .. });
@@ -989,5 +1050,35 @@ mod tests {
         });
         assert!(matches!(&out[..], [AgentMessage::Closed { pane_id, .. }] if pane_id == "p1"));
         assert_eq!(s.subscribed().count(), 0);
+    }
+
+    /// A get_file is answered later, from a thread: the link must keep draining
+    /// until that answer is out, not sleep until the hub's next event (that cost
+    /// 20-30 s per file before this was tracked).
+    #[test]
+    fn get_file_keeps_the_link_busy_until_answered() {
+        let mut s = Session::new(Upstream::new(
+            "/nonexistent".into(),
+            "/nonexistent/klark".into(),
+        ));
+        let out = s.handle(HubMessage::GetFile {
+            id: "7".into(),
+            pane_id: "p1".into(),
+            path: "a.rs".into(),
+            max_bytes: None,
+        });
+        assert!(out.is_empty());
+        assert!(s.busy());
+        for _ in 0..200 {
+            let got = s.drain();
+            if let [AgentMessage::Result { id, error, .. }] = &got[..] {
+                assert_eq!(id, "7");
+                assert!(error.is_some());
+                assert!(!s.busy());
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        panic!("get_file never answered");
     }
 }

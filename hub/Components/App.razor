@@ -5,21 +5,16 @@
     <base href="/" />
     <title>klark hub</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="theme-color" content="#fafaf9" media="(prefers-color-scheme: light)" />
-    <meta name="theme-color" content="#141413" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#faf9f5" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#262624" media="(prefers-color-scheme: dark)" />
     <meta name="color-scheme" content="light dark" />
-    <link rel="stylesheet" href="@Assets["lib/xterm.css"]" />
-    <link rel="stylesheet" href="@Assets["lib/highlight-github-dark.min.css"]" />
     <link rel="stylesheet" href="@Assets["app.css"]" />
+    <script>try{var t=localStorage.getItem("klark:theme");if(t)document.documentElement.dataset.theme=t;if(localStorage.getItem("klark:side")==="closed")document.documentElement.classList.add("side-closed")}catch(e){}</script>
     <HeadOutlet />
 </head>
 <body>
     <Routes />
-    @* Bundled, pinned copies (ADR 0011, C): the hub works offline on a LAN. *@
-    <script src="@Assets["lib/xterm.js"]"></script>
-    <script src="@Assets["lib/addon-unicode11.js"]"></script>
-    <script src="@Assets["lib/addon-web-links.js"]"></script>
-    <script src="@Assets["lib/highlight.min.js"]"></script>
+    @* Bundled, pinned copies (ADR 0011, C). xterm and highlight.js load on demand (terminal.js, chat.js). *@
     <script src="@Assets["chat.js"]"></script>
     <script src="@Assets["terminal.js"]"></script>
     <script src="@Assets["idle.js"]"></script>

@@ -173,7 +173,7 @@ public sealed partial class HubStore : BackgroundService
         finally
         {
             foreach (var db in _machineDbs.Values) db.Dispose();
-            _hubDb.Dispose();
+            _hubDb?.Dispose();
         }
     }
 

@@ -1,28 +1,28 @@
-@* One row of the chat: a person's turn, an agent's text, or a run of tool calls.
-   Items never change once they arrive, so a row re-renders only when its run grows. *@
+@* One row of the chat: a person's turn, an agent's text, a run of tool calls, or a shell
+   command with its output. Items never change once they arrive, so a row re-renders only
+   when its run grows. *@
 
 @switch (Row.Kind)
 {
     case "user":
-        <div class="msg user" title="@Time(Row.Items[0].Ts)"><div class="bubble">@Row.Items[0].Text</div></div>
+        <div class="msg user" data-id="@Row.Key" title="@Time(Row.Items[0].Ts)"><div class="bubble">@Row.Items[0].Text</div></div>
         break;
     case "text":
-        <div class="msg asst" title="@Time(Row.Items[0].Ts)">
-            @foreach (var seg in Row.Items[0].Md ?? Array.Empty<MdSegment>())
-            {
-                if (seg is MdHtml h)
-                {
-                    <div class="md">@((MarkupString)h.Html)</div>
-                }
-                else if (seg is MdCode c)
-                {
-                    <div class="code">
-                        <div class="code-head"><span>@(c.Lang.Length > 0 ? c.Lang : "text")</span><button type="button" class="copy">Copy</button></div>
-                        <pre><code data-lang="@c.Lang">@c.Code</code></pre>
-                    </div>
-                }
-            }
+        <div class="msg asst" data-id="@Row.Key" title="@Time(Row.Items[0].Ts)">
+            @Segments(Row.Items[0].Md)
         </div>
+        break;
+    case "block":
+        var cmd = Row.Items.FirstOrDefault(i => i.Kind == "command");
+        var output = Row.Items.FirstOrDefault(i => i.Kind == "output");
+        var lines = output?.Md?.OfType<MdAnsi>().FirstOrDefault()?.Lines ?? 0;
+        <details class="block" data-id="@Row.Key" data-key="@("b:" + Row.Key)" open="@(lines <= 40)">
+            <summary>
+                <span class="prompt">$</span><span class="cmd">@(cmd?.Text ?? "output")</span>
+                @if (lines > 0) { <span class="state">@lines @(lines == 1 ? "line" : "lines")</span> }
+            </summary>
+            @if (output is not null) { @Segments(output.Md) }
+        </details>
         break;
     case "tools":
         var calls = Calls(Row.Items);
@@ -33,7 +33,7 @@
         else
         {
             <details class="tools" data-key="@("g:" + Row.Key)">
-                <summary><span class="ico">⋯</span><span class="t">@ToolCount(calls)</span></summary>
+                <summary><span class="ico">⋯</span><span class="t">@ToolCount(calls)</span>@StateMark(calls)</summary>
                 <div class="tool-list">
                     @foreach (var call in calls)
                     {
@@ -47,6 +47,8 @@
 
 @code {
     [Parameter, EditorRequired] public ChatRowModel Row { get; set; } = default!;
+    [Parameter] public string MachineId { get; set; } = "";
+    [Parameter] public string PaneId { get; set; } = "";
 
     private string? renderedStamp;
 
@@ -56,6 +58,27 @@
         renderedStamp = Row.Stamp;
         return true;
     }
+
+    private static RenderFragment Segments(IReadOnlyList<MdSegment>? md) => @<text>
+        @foreach (var seg in md ?? Array.Empty<MdSegment>())
+        {
+            if (seg is MdHtml h)
+            {
+                <div class="md">@((MarkupString)h.Html)</div>
+            }
+            else if (seg is MdCode c)
+            {
+                <div class="codeblk">
+                    <div class="code-head"><span>@(c.Lang.Length > 0 ? c.Lang : "text")</span><button type="button" class="copy">Copy</button></div>
+                    <pre><code data-lang="@c.Lang">@c.Code</code></pre>
+                </div>
+            }
+            else if (seg is MdAnsi a)
+            {
+                <pre class="out">@((MarkupString)a.Html)</pre>
+            }
+        }
+    </text>;
 
     private sealed record ToolCall(string Key, string Kind, ChatItem? Use, ChatItem? Result);
 
@@ -87,30 +110,75 @@
         return list;
     }
 
-    private static string ToolCount(List<ToolCall> calls)
+    /// <summary>The verb a tool's work reads as: "Read", "Ran", "Edited", "Searched".</summary>
+    public static (string Verb, string Noun) Verb(string tool) => tool switch
     {
-        var tools = calls.Count(c => c.Kind == "tool");
-        var thinking = calls.Count - tools;
-        var parts = new List<string>();
-        if (tools > 0) parts.Add(tools == 1 ? "1 tool call" : $"{tools} tool calls");
-        if (thinking > 0) parts.Add("thinking");
+        "Read" or "NotebookRead" => ("Read", "file"),
+        "Edit" or "MultiEdit" or "str_replace" or "NotebookEdit" => ("Edited", "file"),
+        "Write" => ("Wrote", "file"),
+        "Bash" or "BashOutput" or "shell" or "exec" => ("Ran", "command"),
+        "Grep" or "Glob" or "search" => ("Searched", "pattern"),
+        "WebSearch" => ("Searched the web", "query"),
+        "WebFetch" => ("Fetched", "page"),
+        "Task" or "Agent" => ("Ran", "agent"),
+        "TodoWrite" => ("Updated", "todo list"),
+        _ => (tool, "call"),
+    };
+
+    /// <summary>"Read 3 files · Ran 2 commands · thinking", like Claude's collapsed tool rows.</summary>
+    public static string Phrase(IEnumerable<string> tools, int thinking)
+    {
+        var parts = tools.GroupBy(t => Verb(t)).Select(g =>
+        {
+            var (verb, noun) = g.Key;
+            var n = g.Count();
+            if (verb == noun || noun == "call") return n == 1 ? verb : $"{verb} ×{n}";
+            var plural = noun.EndsWith('y') ? noun[..^1] + "ies" : noun.EndsWith("list") ? noun + "s" : noun + "s";
+            return $"{verb} {n} {(n == 1 ? noun : plural)}";
+        }).ToList();
+        if (thinking > 0) parts.Add("thought");
         return string.Join(" · ", parts);
     }
+
+    private static string ToolCount(List<ToolCall> calls) =>
+        Phrase(calls.Where(c => c.Kind == "tool").Select(c => c.Use?.Tool ?? c.Result?.Tool ?? "Tool"), calls.Count(c => c.Kind == "thinking"));
+
+    private static RenderFragment StateMark(List<ToolCall> calls)
+    {
+        var tools = calls.Where(c => c.Kind == "tool").ToList();
+        if (tools.Count == 0) return @<text></text>;
+        if (tools.Any(c => c.Result?.Ok == false)) return @<span class="state bad">✗</span>;
+        if (tools.Any(c => c.Result is null)) return @<span class="state">…</span>;
+        return tools.All(c => c.Result?.Ok == true) ? @<span class="state ok">✓</span> : @<text></text>;
+    }
+
+    /// <summary>A file a tool worked on, as a viewer link.</summary>
+    private string? FileHref(string tool, string arg) =>
+        Verb(tool).Noun == "file" && arg.Length > 0 && FileLinks.Refusal(arg, null) is null || arg.StartsWith('/')
+            ? FileLinks.Href(MachineId, PaneId, arg, null) : null;
 
     private RenderFragment Call(ToolCall c) => @<details class="tool @(c.Result?.Ok == false ? "failed" : "")" data-key="@("t:" + c.Key)">
         @if (c.Kind == "thinking")
         {
-            <summary><span class="ico">✦</span><span class="t">Thinking</span></summary>
+            <summary><span class="ico">✦</span><span class="t">Thought</span></summary>
             <pre class="tool-body">@c.Use?.Text</pre>
         }
         else
         {
             var name = c.Use?.Tool ?? c.Result?.Tool ?? "Tool";
             var arg = c.Use?.Summary ?? "";
+            var (verb, _) = Verb(name);
+            var href = Verb(name).Noun == "file" ? FileHref(name, arg) : null;
             <summary title="@Time(c.Use?.Ts ?? c.Result?.Ts)">
-                <span class="ico">@Icon(name)</span><span class="t">@name</span>@if (arg.Length > 0) {<span class="arg">@arg</span>}
+                <span class="ico">@Icon(name)</span><span class="t">@verb</span>
+                @if (arg.Length > 0)
+                {
+                    if (href is not null) { <a class="arg fpath" href="@href">@arg</a> }
+                    else { <span class="arg">@arg</span> }
+                }
                 @if (c.Result is null) { <span class="state">…</span> }
-                else if (c.Result.Ok == false) { <span class="state bad">failed</span> }
+                else if (c.Result.Ok == false) { <span class="state bad">✗</span> }
+                else if (c.Result.Ok == true) { <span class="state ok">✓</span> }
             </summary>
             @if (!string.IsNullOrEmpty(c.Use?.Input)) { <pre class="tool-body">@c.Use.Input</pre> }
             @if (!string.IsNullOrEmpty(c.Result?.Text)) { <pre class="tool-body result">@c.Result.Text</pre> }

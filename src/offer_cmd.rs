@@ -16,41 +16,8 @@ const USAGE: &str = "usage: klark offer <path> [--pane <pane-id>] [--force] [--j
 
 pub const MAX_OFFER: u64 = 100 * 1024 * 1024;
 
-/// Whether a path looks like a credential (ported from herdr-expose
-/// `secretShaped`, plus names containing credentials/secret/token).
-pub fn credential_like(path: &Path) -> bool {
-    let lp = path
-        .to_string_lossy()
-        .replace('\\', "/")
-        .to_ascii_lowercase();
-    let lp = format!("/{}", lp.trim_start_matches('/'));
-    for dir in [
-        "/.ssh/",
-        "/.aws/",
-        "/.gnupg/",
-        "/.kube/",
-        "/.docker/",
-        "/.config/gcloud/",
-        "/vault/",
-        "/.password-store/",
-    ] {
-        if lp.contains(dir) {
-            return true;
-        }
-    }
-    let base = lp.rsplit('/').next().unwrap_or("");
-    base == ".env"
-        || base.ends_with(".env")
-        || base.starts_with(".env.")
-        || base.starts_with("id_")
-        || [".pem", ".key", ".p12", ".pfx"]
-            .iter()
-            .any(|s| base.ends_with(s))
-        || [".netrc", ".npmrc", ".pypirc"].contains(&base)
-        || ["credential", "secret", "token"]
-            .iter()
-            .any(|w| base.contains(w))
-}
+/// Whether a path looks like a credential (shared with `get_file`).
+pub use klark_link::files::credential_like;
 
 /// Why this file may not be offered, if anything.
 pub fn refusal(path: &Path, size: u64, force: bool) -> Option<String> {

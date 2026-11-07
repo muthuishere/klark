@@ -403,6 +403,7 @@ static IResult ServeAsset(HttpContext ctx, Asset asset, AssetService assets)
 }
 
 app.MapAccountEndpoints();
+app.MapFileEndpoints();
 
 app.MapGet("/healthz", () => Results.Ok("ok"));
 

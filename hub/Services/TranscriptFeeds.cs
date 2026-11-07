@@ -30,6 +30,12 @@ public sealed class TranscriptFeed
     internal string? ScreenText { get; set; }
     public string? Error { get; internal set; }
     public TranscriptClean.BlockedPrompt? Blocked { get; internal set; }
+    /// <summary>The pane's agent as the machine's tree names it ("" for a plain shell).</summary>
+    public string PaneAgent { get; internal set; } = "";
+    /// <summary>"jsonl"/"db" when structured, else the screen transformer that read it: "claude", "devin", "generic".</summary>
+    public string Reader { get; internal set; } = "";
+    /// <summary>When the items last changed, for the sidebar's "2m ago".</summary>
+    public DateTimeOffset? LastActivity { get; internal set; }
     public DateTimeOffset LastUsed { get; internal set; } = DateTimeOffset.UtcNow;
 
     internal readonly List<Action> Viewers = new();
@@ -55,6 +61,60 @@ public sealed class TranscriptFeeds
     {
         _registry = registry;
         _log = log;
+    }
+
+    /// <summary>Feeds held in memory (every chat opened since the hub started, for a day).</summary>
+    public IEnumerable<TranscriptFeed> Loaded => _feeds.Values;
+
+    public sealed record Hit(string MachineId, string PaneId, string ItemId, string Role, string Before, string Match, string After);
+
+    /// <summary>
+    /// Message text search over loaded chats, for the sidebar: every word must appear in one
+    /// item; returns a snippet around the first word. Newest items first, at most
+    /// <paramref name="limit"/> hits and 3 per chat.
+    /// </summary>
+    public List<Hit> Search(string query, Func<string, bool> canSee, int limit = 30)
+    {
+        var words = query.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var hits = new List<Hit>();
+        if (words.Length == 0 || query.Trim().Length < 2) return hits;
+        foreach (var f in _feeds.Values.OrderByDescending(f => f.LastActivity))
+        {
+            if (!canSee(f.MachineId)) continue;
+            var per = 0;
+            var items = f.Items;
+            for (var i = items.Count - 1; i >= 0 && per < 3 && hits.Count < limit; i--)
+            {
+                var it = items[i];
+                if (it.Kind is not ("text" or "command" or "output") || string.IsNullOrEmpty(it.Text)) continue;
+                if (!words.All(w => it.Text.Contains(w, StringComparison.OrdinalIgnoreCase))) continue;
+                var at = it.Text.IndexOf(words[0], StringComparison.OrdinalIgnoreCase);
+                var start = Math.Max(0, at - 40);
+                var end = Math.Min(it.Text.Length, at + words[0].Length + 60);
+                string Flat(string s) => s.ReplaceLineEndings(" ");
+                hits.Add(new Hit(f.MachineId, f.PaneId, it.Id, it.Role, (start > 0 ? "…" : "") + Flat(it.Text[start..at]),
+                    Flat(it.Text.Substring(at, words[0].Length)), Flat(it.Text[(at + words[0].Length)..end]) + (end < it.Text.Length ? "…" : "")));
+                per++;
+            }
+            if (hits.Count >= limit) break;
+        }
+        return hits;
+    }
+
+    /// <summary>The last thing said in a chat, one line, for the sidebar preview.</summary>
+    public static string Preview(TranscriptFeed? f)
+    {
+        if (f is null) return "";
+        for (var i = f.Items.Count - 1; i >= 0; i--)
+        {
+            var it = f.Items[i];
+            if (it.Kind is "text" or "command" && !string.IsNullOrWhiteSpace(it.Text))
+            {
+                var line = it.Text.Split('\n').Select(l => l.Trim().TrimStart('#', '>', '-', '*', ' ')).FirstOrDefault(l => l.Length > 0 && !l.StartsWith("|") && !l.StartsWith("```") && l.Any(char.IsLetter)) ?? "";
+                return (it.Role == "user" ? "You: " : "") + (line.Length > 120 ? line[..117] + "…" : line);
+            }
+        }
+        return "";
     }
 
     public TranscriptFeed Get(string machineId, string paneId) =>
@@ -153,6 +213,7 @@ public sealed class TranscriptFeeds
         }
         try { await machine.EnsureTreeAsync(TimeSpan.FromSeconds(2)); } catch (Exception e) when (e is TimeoutException or InvalidOperationException) { }
         var pane = machine.Tree.Panes.FirstOrDefault(p => p.Id == feed.PaneId);
+        if (pane is not null) feed.PaneAgent = pane.Agent;
         if (pane is not null && pane.AgentStatus != feed.Status)
         {
             feed.Status = pane.AgentStatus;
@@ -243,13 +304,17 @@ public sealed class TranscriptFeeds
 
     internal static void SetScreen(TranscriptFeed feed, string raw)
     {
-        var cleaned = TranscriptClean.Clean(raw);
         Set(feed, error: null);
-        if (feed.Source == "screen" && feed.ScreenText == cleaned) return;
+        if (feed.Source == "screen" && feed.ScreenText == raw) return;
+        var agent = feed.Agent.Length > 0 ? feed.Agent : feed.PaneAgent;
+        var kind = ScreenTransformers.Pick(agent, raw);
         feed.Source = "screen";
-        feed.ScreenText = cleaned;
+        feed.Reader = kind.ToString().ToLowerInvariant();
+        feed.ScreenText = raw;
         feed.Cursor = null;
-        feed.Items = ScreenItems(cleaned);
+        var items = ScreenItems(ScreenTransformers.Transform(agent, raw), feed.MachineId, feed.PaneId);
+        if (!items.Select(i => i.Id).SequenceEqual(feed.Items.Select(i => i.Id)) || items.Count == 0) feed.LastActivity = DateTimeOffset.UtcNow;
+        feed.Items = items;
         feed.Version++;
     }
 
@@ -258,21 +323,41 @@ public sealed class TranscriptFeeds
     /// their results. Ids come from each turn's first line and its occurrence, so a row
     /// keeps its identity (and its opened state) while the screen grows under it.
     /// </summary>
-    internal static List<ChatItem> ScreenItems(string cleaned)
+    internal static List<ChatItem> ScreenItems(string cleaned) => ScreenItems(TranscriptClean.Turns(cleaned));
+
+    internal static List<ChatItem> ScreenItems(List<TranscriptClean.ScreenTurn> turns, string? machine = null, string? pane = null)
     {
         var items = new List<ChatItem>();
         var seen = new Dictionary<string, int>();
-        foreach (var t in TranscriptClean.Turns(cleaned))
+        foreach (var t in turns)
         {
-            var head = t.Kind == "tool_use" ? $"{t.Tool}({t.Summary})" : t.Text.Split('\n')[0];
+            var plain = t.Kind == "output" ? TranscriptClean.StripAnsi(t.Text) : t.Text;
+            var head = t.Kind == "tool_use" ? $"{t.Tool}({t.Summary})" : plain.Split('\n')[0];
             var baseId = $"s:{t.Kind}:{(uint)StableHash(head):x8}";
             seen[baseId] = seen.TryGetValue(baseId, out var n) ? n + 1 : 0;
             var id = $"{baseId}:{seen[baseId]}";
-            var md = t.Kind == "text" && t.Role == "assistant" ? ChatMarkdown.Render(t.Text, fromScreen: true) : null;
-            items.Add(new ChatItem(id, t.Role, t.Kind, t.Kind == "tool_use" ? null : t.Text, t.Tool, null, t.Summary, null, null, md));
+            IReadOnlyList<MdSegment>? md = t.Kind switch
+            {
+                "text" when t.Role == "assistant" => Link(ChatMarkdown.Render(t.Text, fromScreen: true), machine, pane),
+                "output" => [new MdAnsi(Linkify(AnsiHtml.Render(t.Text), machine, pane), plain.Split('\n').Length)],
+                _ => null,
+            };
+            // A screen shows no exit status; an error-shaped result is the best evidence there is.
+            bool? ok = t.Kind == "tool_result" ? !ErrorShaped(plain) : null;
+            items.Add(new ChatItem(id, t.Role, t.Kind, t.Kind == "tool_use" ? null : plain, t.Tool, null, t.Summary, ok, null, md));
         }
         return items;
     }
+
+    private static bool ErrorShaped(string s) =>
+        s.StartsWith("Error", StringComparison.OrdinalIgnoreCase) || s.Contains("FAILED") || s.Contains("error[") || s.Contains("panicked at");
+
+    private static string Linkify(string html, string? machine, string? pane) =>
+        machine is null || pane is null ? html : FileLinks.Linkify(html, machine, pane);
+
+    /// <summary>File paths in rendered markdown become viewer links (ADR 0011, G).</summary>
+    internal static IReadOnlyList<MdSegment> Link(IReadOnlyList<MdSegment> md, string? machine, string? pane) =>
+        machine is null || pane is null ? md : md.Select(s => s is MdHtml h ? new MdHtml(FileLinks.Linkify(h.Html, machine, pane)) : s).ToList();
 
     private static int StableHash(string s)
     {
@@ -313,14 +398,17 @@ public sealed class TranscriptFeeds
         foreach (var o in items)
         {
             var item = ToItem(o, n++);
+            if (item?.Md is { } md) item = item with { Md = Link(md, feed.MachineId, feed.PaneId) };
             if (item is null || !seen.Add(item.Id)) continue;
             list.Add(item);
         }
         if (list.Count > MaxItems) list = list.GetRange(list.Count - MaxItems, MaxItems);
         feed.Source = "jsonl";
+        feed.Reader = source;
         feed.Cursor = cursor;
         if (replace || list.Count != feed.Items.Count)
         {
+            feed.LastActivity = list.LastOrDefault()?.Ts ?? DateTimeOffset.UtcNow;
             feed.Items = list;
             feed.Version++;
         }

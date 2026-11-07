@@ -520,6 +520,14 @@ public sealed class MachineConnection
             : (object)new { type = "get_transcript", id, pane_id = paneId, after }, timeout);
     }
 
+    /// <summary>A file a chat linked to (protocol 5, ADR 0011 G): `{name, path, size, data}` (base64).</summary>
+    public async Task<JsonNode?> GetFileAsync(string paneId, string path, long maxBytes, TimeSpan timeout)
+    {
+        if (Protocol < 5)
+            throw new NotSupportedException($"machine {Id} links with protocol {Protocol}; update klark there to open files");
+        return await RequestAsync("get_file", id => new { type = "get_file", id, pane_id = paneId, path, max_bytes = maxBytes }, timeout);
+    }
+
     /// <summary>Send a request with a fresh id and wait for the machine's `result {id, ...}`.</summary>
     private async Task<JsonNode?> RequestAsync(string what, Func<string, object> build, TimeSpan timeout)
     {
@@ -590,8 +598,8 @@ public sealed class MachineConnection
     }
 
     /// <summary>klark-link PROTOCOL_VERSIONs this hub understands. v2 adds list_agents and deliver (ADR 0009).</summary>
-    /// <remarks>v3 adds pane_size, fetch_asset and get_transcript (ADR 0011); v4 is v3 over plain HTTP (ADR 0013).</remarks>
-    public const int MinProtocol = 4, MaxProtocol = 4;
+    /// <remarks>v3 adds pane_size, fetch_asset and get_transcript (ADR 0011); v4 is v3 over plain HTTP (ADR 0013); v5 adds get_file (ADR 0011 G).</remarks>
+    public const int MinProtocol = 4, MaxProtocol = 5;
 
     private async Task HandleAsync(JsonNode? msg)
     {

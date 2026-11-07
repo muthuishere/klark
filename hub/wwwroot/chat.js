@@ -63,17 +63,25 @@ window.klarkChat = (() => {
     return Promise.resolve();
   }
 
+  // highlight.js core (20 KB) and each language load only when a code block in that
+  // language is on the page (ADR 0011, G); hljs escapes the source text.
+  const pending = new Set();
   function highlight(root) {
-    if (!window.hljs) return;
     root.querySelectorAll("pre code[data-lang]:not([data-hl])").forEach((el) => {
-      el.setAttribute("data-hl", "1");
       const lang = (el.getAttribute("data-lang") || "").toLowerCase().split(/\s+/)[0];
-      if (!lang || !hljs.getLanguage(lang)) return; // no auto-detect: it is slow and often wrong
-      try {
-        const out = hljs.highlight(el.textContent, { language: lang, ignoreIllegals: true });
-        el.innerHTML = out.value; // hljs escapes the source text
-        el.classList.add("hljs");
-      } catch { }
+      if (!lang) { el.setAttribute("data-hl", "0"); return; }
+      if (pending.has(el)) return;
+      pending.add(el);
+      klarkHl.load(lang).then((hl) => {
+        pending.delete(el);
+        if (!el.isConnected || el.hasAttribute("data-hl")) return;
+        el.setAttribute("data-hl", "1");
+        if (!hl || !hl.getLanguage(lang)) return; // no auto-detect in chat: slow and often wrong
+        try {
+          el.innerHTML = hl.highlight(el.textContent, { language: lang, ignoreIllegals: true }).value;
+          el.classList.add("hljs");
+        } catch { }
+      });
     });
   }
 
@@ -119,6 +127,15 @@ window.klarkChat = (() => {
     };
     scroller.addEventListener("toggle", v.onToggle, true);
     v.onClick = (e) => {
+      const f = e.target.closest("a.fpath");
+      if (f && e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey) {
+        // A file opens in the viewer in this tab; back comes to this exact spot.
+        e.preventDefault();
+        e.stopPropagation();
+        v.save();
+        location.href = f.href;
+        return;
+      }
       const b = e.target.closest("button.copy");
       if (!b) return;
       const code = b.closest(".code")?.querySelector("pre code");
@@ -224,6 +241,30 @@ window.klarkChat = (() => {
     return v.at + 1;
   }
 
+  // Bring a search hit into view (sidebar message search: ?hit=<item id>).
+  function reveal(key, id) {
+    const v = views.get(key);
+    if (!v) return false;
+    const el = v.scroller.querySelector(`[data-id="${CSS.escape(id)}"]`);
+    if (!el) return false;
+    v.restoring = false;
+    v.stuck = false;
+    el.scrollIntoView({ block: "center" });
+    el.classList.add("hit");
+    setTimeout(() => el.classList.remove("hit"), 2400);
+    v.pill.classList.add("show");
+    return true;
+  }
+
+  // The composer is client-side: typing never round-trips; Send takes the text.
+  function take(textarea) {
+    const t = textarea.value;
+    textarea.value = "";
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    return t;
+  }
+  const peek = (textarea) => textarea?.value ?? "";
+
   // Composer: Enter sends, Shift+Enter is a newline, and the draft is kept per pane.
   function composer(key, textarea, send) {
     const draftKey = "draft:" + key;
@@ -240,7 +281,7 @@ window.klarkChat = (() => {
         if (textarea.value.trim()) { klarkState.set(draftKey, ""); send.click(); setTimeout(grow, 50); }
       }
     });
-    send.addEventListener("click", () => { klarkState.set(draftKey, ""); setTimeout(grow, 50); });
+    send.addEventListener("click", () => { setTimeout(() => { if (!textarea.value) klarkState.set(draftKey, ""); grow(); }, 50); });
     grow();
   }
 
@@ -265,7 +306,7 @@ window.klarkChat = (() => {
   }
 
   const current = (key) => { const v = views.get(key); return v ? v.at + 1 : 0; };
-  return { attach, detach, search, step, current, composer, uploads, focus: (el) => el?.focus() };
+  return { attach, detach, search, step, current, composer, uploads, reveal, take, peek, highlight, focus: (el) => el?.focus() };
 })();
 
 // Navigation that never leaves the app (ADR 0011, E). The header arrow goes back
@@ -325,4 +366,71 @@ window.klarkUi = (() => {
     }
   });
   return { closeMenu, isOpen: (el) => !!el?.open };
+})();
+
+// Lazy highlight.js (shared with the file viewer's own copy of this loader).
+window.klarkHl = (() => {
+  const base = "/lib/hljs-11.11.1/";
+  const alias = { js: "javascript", jsx: "javascript", ts: "typescript", tsx: "typescript", py: "python", rb: "ruby", rs: "rust",
+    sh: "bash", shell: "bash", zsh: "bash", console: "bash", yml: "yaml", md: "markdown", cs: "csharp", "c#": "csharp", kt: "kotlin",
+    html: "xml", svg: "xml", vue: "xml", toml: "ini", golang: "go", "c++": "cpp", hpp: "cpp", h: "c", ps1: "powershell", tf: "hcl",
+    dockerfile: "dockerfile", docker: "dockerfile", make: "makefile", jsonc: "json", text: "plaintext", txt: "plaintext", diff: "diff", patch: "diff" };
+  let core = null;
+  const langs = new Map();
+  const getCore = () => (core ??= import(base + "core.min.js").then((m) => m.default));
+  function load(lang) {
+    const name = alias[lang] || lang;
+    if (!/^[a-z0-9-]+$/.test(name) || name === "plaintext") return Promise.resolve(null);
+    if (!langs.has(name)) {
+      langs.set(name, getCore().then((hl) => hl.getLanguage(name) ? hl
+        : import(base + "languages/" + name + ".min.js").then((m) => { hl.registerLanguage(name, m.default); return hl; }).catch(() => hl)));
+    }
+    return langs.get(name);
+  }
+  return { load, alias };
+})();
+
+// The sidebar (ADR 0011, E): collapsible on desktop, a drawer on phones, Cmd/Ctrl+K searches.
+window.klarkSide = (() => {
+  const narrow = () => window.matchMedia("(max-width: 860px)").matches;
+  function toggle() {
+    const html = document.documentElement;
+    if (narrow()) { html.classList.toggle("drawer-open"); return false; }
+    const closed = html.classList.toggle("side-closed");
+    klarkState.set("side", closed ? "closed" : "");
+    return false;
+  }
+  function close() { document.documentElement.classList.remove("drawer-open"); }
+  document.addEventListener("keydown", (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+      const box = document.querySelector(".side-search input");
+      if (!box) return;
+      e.preventDefault();
+      if (narrow()) document.documentElement.classList.add("drawer-open");
+      else document.documentElement.classList.remove("side-closed");
+      box.focus();
+      box.select();
+    } else if (e.key === "Escape") close();
+  });
+  document.addEventListener("click", (e) => {
+    if (e.target.closest(".side a[href]") || e.target.closest(".scrim")) close();
+  });
+  // The list's own scroll, per tab.
+  function track(el, key) {
+    if (!el) return;
+    const y = Number(klarkState.get("sidescroll:" + key, "s") || 0);
+    if (y > 0) el.scrollTop = y;
+    else el.querySelector(".cur")?.scrollIntoView({ block: "center" });
+    let f = 0;
+    el.addEventListener("scroll", () => {
+      if (!f) f = requestAnimationFrame(() => { f = 0; klarkState.set("sidescroll:" + key, String(Math.round(el.scrollTop)), "s"); });
+    }, { passive: true });
+  }
+  function theme() {
+    const html = document.documentElement;
+    const dark = html.dataset.theme ? html.dataset.theme === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches;
+    html.dataset.theme = dark ? "light" : "dark";
+    klarkState.set("theme", html.dataset.theme);
+  }
+  return { toggle, close, track, theme, narrow };
 })();

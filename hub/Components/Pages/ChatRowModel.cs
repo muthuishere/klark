@@ -17,14 +17,27 @@ public sealed record ChatRowModel(string Key, string Kind, IReadOnlyList<ChatIte
             if (run is { Count: > 0 }) rows.Add(new ChatRowModel(run[0].Id, "tools", run));
             run = null;
         }
-        foreach (var i in items)
+        for (var n = 0; n < items.Count; n++)
         {
+            var i = items[n];
             if (i.Kind is "tool_use" or "tool_result" or "thinking")
             {
                 (run ??= new List<ChatItem>()).Add(i);
                 continue;
             }
             Flush();
+            // A shell command and its output are one block (Warp-style); output alone too.
+            if (i.Kind == "command")
+            {
+                var block = n + 1 < items.Count && items[n + 1].Kind == "output" ? new[] { i, items[++n] } : new[] { i };
+                rows.Add(new ChatRowModel(i.Id, "block", block));
+                continue;
+            }
+            if (i.Kind == "output")
+            {
+                rows.Add(new ChatRowModel(i.Id, "block", new[] { i }));
+                continue;
+            }
             if (string.IsNullOrEmpty(i.Text) && i.Md is not { Count: > 0 }) continue;
             rows.Add(new ChatRowModel(i.Id, i.Role == "user" ? "user" : "text", new[] { i }));
         }

@@ -35,6 +35,15 @@ public sealed class HubOptions
 
     /// <summary>Images and files passed between people and agents (ADR 0011).</summary>
     public AssetOptions Assets { get; set; } = new();
+
+    /// <summary>Files a person opens from a chat link (ADR 0011, G).</summary>
+    public FilesOptions Files { get; set; } = new();
+}
+
+public sealed class FilesOptions
+{
+    /// <summary>Largest file the viewer fetches from a machine (Hub:Files:MaxBytes). The machine caps at 10 MB too.</summary>
+    public long MaxBytes { get; set; } = 10 * 1024 * 1024;
 }
 
 public sealed class AssetOptions

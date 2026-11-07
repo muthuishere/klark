@@ -230,6 +230,7 @@ on one port.
 | `Hub:Assets:RetentionHours` | `KLARK_HUB__ASSETS__RETENTIONHOURS` | 24 |
 | `Hub:Assets:MaxImageBytes` | `KLARK_HUB__ASSETS__MAXIMAGEBYTES` | 20971520 |
 | `Hub:Assets:MaxFileBytes` | `KLARK_HUB__ASSETS__MAXFILEBYTES` | 104857600 |
+| `Hub:Files:MaxBytes` (file viewer, ADR 0011 G) | `KLARK_HUB__FILES__MAXBYTES` | 10485760 |
 
 ## Storage
 

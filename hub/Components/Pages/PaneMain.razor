@@ -1,0 +1,344 @@
+@* One pane's main area (ADR 0011, E): a top bar (title, session pill, status, Terminal
+   toggle, menu), the chat (default everywhere) or the terminal, and the composer. *@
+@implements IAsyncDisposable
+@using System.Security.Claims
+@using System.Text.Json.Nodes
+@inject MachineRegistry Registry
+@inject HubStore Store
+@inject HubAccess Access
+@inject AssetService AssetSvc
+@inject TranscriptFeeds Feeds
+@inject AuthenticationStateProvider Auth
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<PageTitle>@Title · klark</PageTitle>
+
+<main class="pane-app reader-@Reader" @ref="root">
+    <header class="pane-bar">
+        <button type="button" class="icon side-open" onclick="return klarkSide.toggle()" aria-label="Sidebar" title="Sidebar (⌘K to search)">@((MarkupString)Icons.Sidebar)</button>
+        @* Plain onclick: works before the circuit is up, and never leaves the app (klarkNav.back). *@
+        <a class="icon back" href="/" onclick="return klarkNav.back(event)" aria-label="Back">@((MarkupString)Icons.Back)</a>
+        <div class="who" title="@(pane?.Cwd)">
+            <span class="badge-a" data-agent="@Sidebar.AgentKey(pane?.Agent ?? "")" title="@AgentLabel">@Sidebar.AgentIcon(pane?.Agent ?? "")</span>
+            <span class="name">@Title</span>
+            @if (Session.Length > 0) { <span class="pill" title="Session on @MachineId">@Session</span> }
+            <span class="state state-@StatusCss">@StatusText</span>
+        </div>
+        @if (allowed)
+        {
+            <button type="button" class="icon tgl @(view == "terminal" ? "on" : null)" aria-pressed="@(view == "terminal")"
+                    title="@(view == "terminal" ? "Back to chat" : "Terminal")" aria-label="Terminal" @onclick='() => SetView(view == "terminal" ? "chat" : "terminal")'>
+                @((MarkupString)(view == "terminal" ? Icons.Chat : Icons.Terminal))
+            </button>
+            <details class="menu" @ref="menu">
+                <summary class="icon" aria-label="More">@((MarkupString)Icons.More)</summary>
+                <div class="menu-pop">
+                    @if (view == "chat")
+                    {
+                        <button type="button" class="menu-item" @onclick="ToggleSearchAsync">@(searchOpen ? "Close search" : "Search in chat")</button>
+                    }
+                    <button type="button" class="menu-item" onclick="klarkSide.theme()">Light / dark theme</button>
+                    <div class="menu-info">
+                        <div>@AgentLabel · @(offline ? "offline" : StatusLabel)</div>
+                        <div>@MachineId@(Session.Length > 0 ? " · " + Session : "")</div>
+                        @if (!string.IsNullOrEmpty(pane?.Cwd)) { <div class="mono">@pane.Cwd</div> }
+                        @if (closedReason is not null) { <div>Terminal stream ended: @closedReason</div> }
+                    </div>
+                </div>
+            </details>
+        }
+    </header>
+
+    @if (!allowed)
+    {
+        <p class="empty pad">Machine <b>@MachineId</b> is not available to you.</p>
+    }
+    else
+    {
+        <div class="pane-body">
+            @if (view == "chat")
+            {
+                <div class="chat">
+                    <ChatView MachineId="@MachineId" PaneId="@PaneId" Live="@(!offline)" ReadOnly="@readOnly" SearchOpen="@searchOpen"
+                              QuickReply="QuickReplyAsync" Files="@offers" Hit="@Hit" />
+                </div>
+            }
+            <div class="terminal-view" style="@(view == "terminal" ? "" : "display:none")">
+                <div class="term-wrap" @ref="terminalHost"></div>
+            </div>
+        </div>
+
+        @if (uploadStatus is not null)
+        {
+            <div class="toast @(uploadOk ? "" : "bad")" @onclick="() => uploadStatus = null">@uploadStatus</div>
+        }
+
+        @if (!offline && !readOnly)
+        {
+            <div class="composer-wrap">
+                <div class="composer">
+                    <InputFile id="@("up-" + termId)" class="hidden-file" accept="image/*" OnChange="UploadAsync" @ref="fileInput" />
+                    <InputFile id="@("cam-" + termId)" class="hidden-file" accept="image/*" capture="environment" OnChange="UploadAsync" />
+                    @* Client-side: typing never round-trips to the server; Send takes the text. *@
+                    <textarea rows="1" placeholder="@(uploading ? "Sending image…" : view == "terminal" ? "Type into the terminal" : "Type a message")" @ref="textarea" aria-label="Message"></textarea>
+                    <div class="composer-row">
+                        <label for="@("up-" + termId)" class="icon attach" title="Attach an image (paste and drop work too; files expire after @RetentionLabel)">@((MarkupString)Icons.Plus)</label>
+                        <label for="@("cam-" + termId)" class="icon attach cam" title="Take a photo">@((MarkupString)Icons.Camera)</label>
+                        @if (view == "terminal")
+                        {
+                            <button type="button" class="key" title="Esc" @onclick='() => KeysAsync("esc")'>esc</button>
+                            <button type="button" class="key" title="Ctrl-C" @onclick='() => KeysAsync("ctrl+c")'>^C</button>
+                        }
+                        <span class="grow"></span>
+                        <button type="button" class="send" @onclick="SendAsync" @ref="sendButton" aria-label="Send">@((MarkupString)Icons.Up)</button>
+                    </div>
+                </div>
+            </div>
+        }
+        else if (readOnly && !offline)
+        {
+            <div class="composer-wrap"><div class="composer ro muted">Read-only</div></div>
+        }
+    }
+</main>
+
+@code {
+    [Parameter] public string MachineId { get; set; } = "";
+    [Parameter] public string PaneId { get; set; } = "";
+    [Parameter] public string? ViewQuery { get; set; }
+    [Parameter] public string? Hit { get; set; }
+
+    private ClaimsPrincipal user = new();
+    private bool allowed, readOnly, offline;
+    private MachineConnection? machine;
+    private PaneInfo? pane;
+    private ElementReference root, terminalHost, textarea, sendButton, menu;
+    private InputFile? fileInput;
+    private IAsyncDisposable? watch;
+    private string? closedReason;
+    private string view = "chat";
+    private bool searchOpen, termOpened;
+    private List<Asset> offers = new();
+    private string? uploadStatus;
+    private bool uploadOk, uploading;
+    private readonly string termId = Guid.NewGuid().ToString("N");
+    private string PaneKey => MachineId + "/" + PaneId;
+
+    private string Title => pane?.DisplayName is { Length: > 0 } t ? t : PaneId;
+    private string Session => pane is not null && machine is not null ? machine.Tree.WorkspaceLabel(pane.WorkspaceId) : "";
+    private string StatusCss => offline ? "none" : string.IsNullOrEmpty(pane?.AgentStatus) || pane.AgentStatus == "unknown" ? "none" : pane.AgentStatus;
+    private string StatusLabel => string.IsNullOrEmpty(pane?.AgentStatus) ? (pane?.Agent is { Length: > 0 } a ? a : "shell") : $"{pane!.Agent} {pane.AgentStatus}".Trim();
+    private string AgentLabel => pane?.Agent is { Length: > 0 } a ? a : "shell";
+    /// <summary>A small status in the bar, never a banner: working, needs you, offline, disconnected.</summary>
+    private string StatusText => offline ? "offline" : machine is null ? "disconnected" : StatusCss switch
+    {
+        "working" => "working…", "blocked" => "needs you", "idle" => "idle", _ => "",
+    } + (closedReason is not null && view == "terminal" ? " · stream ended" : "");
+    /// <summary>The chat's styling follows the pane type: claude, devin, other agents, or a plain shell.</summary>
+    private string Reader => pane is null ? "generic" : !Sidebar.IsAgent(pane) ? "shell" : Sidebar.AgentKey(pane.Agent) switch
+    {
+        "claude" => "claude", "devin" or "codex" => "devin", _ => "generic",
+    };
+    private string RetentionLabel => AssetSvc.Options.RetentionHours is var h && h % 1 == 0 ? $"{h} h" : $"{h:0.#} h";
+
+    protected override async Task OnInitializedAsync()
+    {
+        user = (await Auth.GetAuthenticationStateAsync()).User;
+        allowed = Access.CanSee(user, MachineId);
+        readOnly = !Access.CanType(user, MachineId);
+        if (!allowed) return;
+
+        Registry.Changed += OnChanged;
+        AssetSvc.Offered += OnOffered;
+        offers = AssetSvc.Offers(MachineId, PaneId);
+        Refresh();
+        if (machine is not null)
+        {
+            machine.PaneSizeChanged += OnPaneSize;
+            _ = machine.EnsureTreeAsync(TimeSpan.FromSeconds(5)).ContinueWith(_ => OnChanged());
+        }
+        else if (await Store.LastTreeAsync(MachineId) is { } json)
+        {
+            // Offline: the last tree recorded in this machine's SQLite file (STATUS S-07).
+            offline = true;
+            pane = SessionTree.Parse(JsonNode.Parse(json)).Panes.FirstOrDefault(p => p.Id == PaneId);
+        }
+        else
+        {
+            offline = true;
+        }
+        // Chat is the default on every screen; the terminal only when asked for.
+        view = ViewQuery == "terminal" ? "terminal" : "chat";
+    }
+
+    protected override void OnParametersSet()
+    {
+        // Browser back/forward between ?view=chat and ?view=terminal.
+        var want = ViewQuery == "terminal" ? "terminal" : "chat";
+        if (ViewQuery is not null && want != view) view = want;
+    }
+
+    private void Refresh()
+    {
+        machine = Registry.Get(MachineId);
+        if (machine is not null) pane = machine.Tree.Panes.FirstOrDefault(p => p.Id == PaneId) ?? pane;
+    }
+
+    private void OnChanged() => InvokeAsync(() => { Refresh(); StateHasChanged(); });
+
+    private void OnOffered(string m, string p)
+    {
+        if (m != MachineId || p != PaneId) return;
+        _ = InvokeAsync(() => { offers = AssetSvc.Offers(MachineId, PaneId); StateHasChanged(); });
+    }
+
+    private void OnPaneSize(string paneId, int cols, int rows)
+    {
+        if (paneId != PaneId || !termOpened) return;
+        _ = InvokeAsync(() => JS.InvokeVoidAsync("klarkTerm.resize", termId, cols, rows).AsTask());
+    }
+
+    private async Task ToggleSearchAsync()
+    {
+        searchOpen = !searchOpen;
+        try
+        {
+            await JS.InvokeVoidAsync("klarkUi.closeMenu", menu);
+            await JS.InvokeVoidAsync("klarkState.set", "searchopen:" + PaneKey, searchOpen ? "1" : "", "s");
+        }
+        catch (JSException) { }
+    }
+
+    private async Task SetView(string v)
+    {
+        if (view == v) return;
+        view = v;
+        Nav.NavigateTo(Nav.GetUriWithQueryParameters(new Dictionary<string, object?> { ["view"] = v, ["hit"] = null }), replace: true);
+        await Task.CompletedTask;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!allowed) return;
+        if (firstRender)
+        {
+            searchOpen = await JS.InvokeAsync<string?>("klarkState.get", "searchopen:" + PaneKey, "s") == "1";
+            if (searchOpen) StateHasChanged();
+            if (!offline && !readOnly)
+            {
+                await JS.InvokeVoidAsync("klarkChat.composer", PaneKey, textarea, sendButton);
+                await JS.InvokeVoidAsync("klarkChat.uploads", root, fileInput?.Element);
+            }
+        }
+        if (view == "terminal" && !termOpened)
+        {
+            termOpened = true;
+            await OpenTerminalAsync();
+        }
+        else if (view == "terminal")
+        {
+            await JS.InvokeVoidAsync("klarkTerm.rescale", termId);
+        }
+    }
+
+    /// <summary>The terminal starts only when its tab is first shown (ADR 0002: nothing streams unwatched).</summary>
+    private async Task OpenTerminalAsync()
+    {
+        // Pane's own size (ADR 0011, C); before a v3 machine reports one, klark's observe default.
+        var size = machine?.PaneSize(PaneId) ?? (120, 40);
+        await JS.InvokeVoidAsync("klarkTerm.open", termId, terminalHost, size.Cols, size.Rows);
+
+        if (machine is null)
+        {
+            var recorded = await Store.RecentOutputAsync(MachineId, PaneId);
+            if (recorded.Length > 0) await JS.InvokeVoidAsync("klarkTerm.writeBase64", termId, Convert.ToBase64String(recorded));
+            else await JS.InvokeVoidAsync("klarkTerm.write", termId, "(nothing was recorded for this pane while it was watched)");
+            return;
+        }
+
+        // Paint the current screen first, then follow the live stream.
+        watch = machine.Watch(PaneId,
+            bytes => InvokeAsync(() => JS.InvokeVoidAsync("klarkTerm.writeBase64", termId, bytes).AsTask()),
+            reason => InvokeAsync(() => { closedReason = reason; StateHasChanged(); }),
+            screen => InvokeAsync(() => JS.InvokeVoidAsync("klarkTerm.reset", termId, screen).AsTask()));
+        try
+        {
+            var screen = await machine.ReadScreenAsync(PaneId);
+            // Written raw (ADR 0011, C): no \n to \r\n rewriting.
+            await JS.InvokeVoidAsync("klarkTerm.write", termId, screen);
+            if (machine.PaneSize(PaneId) is { } s) await JS.InvokeVoidAsync("klarkTerm.resize", termId, s.Cols, s.Rows);
+        }
+        catch (Exception e) when (e is TimeoutException or InvalidOperationException)
+        {
+            closedReason = e.Message;
+            StateHasChanged();
+        }
+    }
+
+    private async Task SendAsync()
+    {
+        // Checked here, on the server, not just by hiding the form (STATUS S-06).
+        if (machine is null || !Access.CanType(user, MachineId)) return;
+        var text = (await JS.InvokeAsync<string>("klarkChat.take", textarea)).TrimEnd();
+        if (text.Length == 0) return;
+        await machine.SendInputAsync(PaneId, text);
+        await machine.SendKeysAsync(PaneId, "enter");
+    }
+
+    private async Task QuickReplyAsync((string Send, bool Enter) r)
+    {
+        if (machine is null || !Access.CanType(user, MachineId)) return;
+        if (r.Send == "\u001b") { await machine.SendKeysAsync(PaneId, "esc"); return; }
+        await machine.SendInputAsync(PaneId, r.Send);
+        if (r.Enter) await machine.SendKeysAsync(PaneId, "enter");
+    }
+
+    private Task KeysAsync(string key) =>
+        machine is not null && Access.CanType(user, MachineId) ? machine.SendKeysAsync(PaneId, key) : Task.CompletedTask;
+
+    /// <summary>Picked, pasted, dropped or photographed: store, then fetch_asset to the machine (ADR 0011, B).</summary>
+    private async Task UploadAsync(InputFileChangeEventArgs e)
+    {
+        if (uploading) return;
+        uploading = true;
+        uploadStatus = $"Sending {e.File.Name}…";
+        uploadOk = true;
+        StateHasChanged();
+        try
+        {
+            using var buffer = new MemoryStream();
+            try
+            {
+                await using var s = e.File.OpenReadStream(AssetSvc.Options.MaxImageBytes);
+                await s.CopyToAsync(buffer);
+            }
+            catch (IOException)
+            {
+                uploadStatus = $"{e.File.Name} is larger than {FileLinks.Size(AssetSvc.Options.MaxImageBytes)}";
+                uploadOk = false;
+                return;
+            }
+            buffer.Position = 0;
+            var caption = (await JS.InvokeAsync<string>("klarkChat.peek", textarea)).Trim();
+            var r = await AssetSvc.SendToAgentAsync(user, MachineId, PaneId, buffer, e.File.Name, caption, CancellationToken.None);
+            uploadOk = r.Status == 200;
+            if (uploadOk && caption.Length > 0) await JS.InvokeAsync<string>("klarkChat.take", textarea);
+            uploadStatus = uploadOk ? $"Sent {r.Asset!.Name} → {r.Path}" : $"Not sent: {r.Error}";
+        }
+        finally
+        {
+            uploading = false;
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        Registry.Changed -= OnChanged;
+        AssetSvc.Offered -= OnOffered;
+        if (machine is not null) machine.PaneSizeChanged -= OnPaneSize;
+        if (watch is not null) await watch.DisposeAsync();
+        try { if (termOpened) await JS.InvokeVoidAsync("klarkTerm.close", termId); }
+        catch (JSDisconnectedException) { }
+    }
+}
