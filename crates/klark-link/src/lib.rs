@@ -325,6 +325,7 @@ impl Session {
             HubMessage::ListAgents { id }
             | HubMessage::Deliver { id, .. }
             | HubMessage::GetTranscript { id, .. }
+            | HubMessage::GetFile { id, .. }
             | HubMessage::FetchAsset { id, .. } => Some(id.clone()),
             _ => None,
         };
@@ -1049,5 +1050,35 @@ mod tests {
         });
         assert!(matches!(&out[..], [AgentMessage::Closed { pane_id, .. }] if pane_id == "p1"));
         assert_eq!(s.subscribed().count(), 0);
+    }
+
+    /// A get_file is answered later, from a thread: the link must keep draining
+    /// until that answer is out, not sleep until the hub's next event (that cost
+    /// 20-30 s per file before this was tracked).
+    #[test]
+    fn get_file_keeps_the_link_busy_until_answered() {
+        let mut s = Session::new(Upstream::new(
+            "/nonexistent".into(),
+            "/nonexistent/klark".into(),
+        ));
+        let out = s.handle(HubMessage::GetFile {
+            id: "7".into(),
+            pane_id: "p1".into(),
+            path: "a.rs".into(),
+            max_bytes: None,
+        });
+        assert!(out.is_empty());
+        assert!(s.busy());
+        for _ in 0..200 {
+            let got = s.drain();
+            if let [AgentMessage::Result { id, error, .. }] = &got[..] {
+                assert_eq!(id, "7");
+                assert!(error.is_some());
+                assert!(!s.busy());
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        panic!("get_file never answered");
     }
 }

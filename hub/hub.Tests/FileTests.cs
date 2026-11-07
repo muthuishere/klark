@@ -36,6 +36,7 @@ public class FileLinkTests
     [InlineData("visit https://example.com/a/b.md")]
     [InlineData("version 1.2.3 is out")]
     [InlineData("the /tmp dir")]
+    [InlineData("one long GET /agent/events stream")]
     public void IgnoresProse(string text) => Assert.Empty(FileLinks.Find(text));
 
     [Fact]

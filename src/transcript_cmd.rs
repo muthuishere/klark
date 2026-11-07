@@ -484,7 +484,9 @@ fn transcript(o: Opts) -> Result<Value, String> {
     }
     let read = up.call(
         "pane.read",
-        json!({"pane_id": o.pane, "source": "recent_unwrapped", "format": "text"}),
+        // ANSI kept: the hub's generic transformer shows command output in its colours;
+        // the Claude and Devin transformers strip it (ADR 0011, F).
+        json!({"pane_id": o.pane, "source": "recent_unwrapped", "format": "ansi"}),
     )?;
     let text = read
         .get("read")

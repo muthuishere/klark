@@ -110,7 +110,7 @@ public sealed class TranscriptFeeds
             var it = f.Items[i];
             if (it.Kind is "text" or "command" && !string.IsNullOrWhiteSpace(it.Text))
             {
-                var line = it.Text.Split('\n').Select(l => l.Trim().TrimStart('#', '>', '-', '*', ' ')).FirstOrDefault(l => l.Length > 0 && !l.StartsWith("|")) ?? "";
+                var line = it.Text.Split('\n').Select(l => l.Trim().TrimStart('#', '>', '-', '*', ' ')).FirstOrDefault(l => l.Length > 0 && !l.StartsWith("|") && !l.StartsWith("```") && l.Any(char.IsLetter)) ?? "";
                 return (it.Role == "user" ? "You: " : "") + (line.Length > 120 ? line[..117] + "…" : line);
             }
         }

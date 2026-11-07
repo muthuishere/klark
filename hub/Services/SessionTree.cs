@@ -46,7 +46,9 @@ public sealed record PaneInfo(string Id, string WorkspaceId, string TabId, strin
         {
             var title = Title.TrimStart('✳', '✻', '✽', '✶', '·', '*', '⠂', '⠐', ' ');
             var raw = title.Length == 0 || title == Id || System.Text.RegularExpressions.Regex.IsMatch(title, @"^w?\d+[:/]p?\d+$")
-                      || title.Equals(Agent, StringComparison.OrdinalIgnoreCase) || title.Equals(Cwd) || title is "zsh" or "bash" or "sh" or "fish";
+                      || title.Equals(Agent, StringComparison.OrdinalIgnoreCase) || title.Equals(Cwd) || title is "zsh" or "bash" or "sh" or "fish"
+                      // A shell's own title is its path ("~/x", "/a/b", "me@host:/a/b"): the folder says it better (herdr-expose isPathLike).
+                      || System.Text.RegularExpressions.Regex.IsMatch(title, @"^(?:[\w.-]+@[\w.-]+:)?(?:~|\.{0,2})?/");
             if (!raw) return title;
             var folder = Folder;
             if (Agent.Length > 0) return folder.Length > 0 ? $"{Agent} · {folder}" : Agent;

@@ -69,7 +69,7 @@ fn link_serves_a_hub_lazily() {
     });
     assert_eq!(hello["type"], "hello");
     assert_eq!(hello["machine_id"], "m1");
-    assert_eq!(hello["protocol"], 4);
+    assert_eq!(hello["protocol"], klark_link::protocol::PROTOCOL_VERSION);
     assert_eq!(hub.auth(), vec!["Bearer t0ken".to_string()]);
     // Nothing else arrives unasked: the hub pulls the tree.
     assert_eq!(hub.recv(Duration::from_millis(600)), None);

@@ -110,9 +110,9 @@ be able to see the asset's machine. The hub streams the object from its file sto
   ANSI. The result is rendered as markdown with safe links only.
 - The image upload and the offered files appear on both tabs.
 
-### E. Chat view (amended)
+### E. Chat view (amended; the layout is now E2)
 - The Transcript tab is a chat, modelled on the Claude Code mobile view: one
-  full-height column (centred, max ~760px, on desktop), a compact header
+  full-height column (centred, max ~760px, on desktop; see E2), a compact header
   (back arrow, agent name, live status dot, machine and session), person
   and agent turns as distinct blocks, markdown with code blocks (language
   label, copy button, highlighting from a bundled highlight.js 11.11.1),
@@ -168,6 +168,121 @@ be able to see the asset's machine. The hub streams the object from its file sto
   (`DisconnectedCircuitRetentionPeriod`).
 - Chat search covers the items that are loaded; `get_transcript` only goes
   forward (`after`), so older history than the hub holds cannot be fetched.
+
+### E2. The app shell (amended 2026-11-07, supersedes E's layout)
+Owner feedback: the pane page was a terminal in a 760 px column with a "Stream
+ended" banner. It is now laid out like the Claude desktop app.
+- **Shell.** A left sidebar and a main area, on every signed-in page except
+  admin and account pages. The sidebar is collapsible on desktop (remembered
+  per browser) and a drawer on screens up to 860 px; on a phone the list page
+  *is* the sidebar. Main area: a top bar (agent badge, title, session pill, a
+  small status word: working…, needs you, idle, offline, disconnected, stream
+  ended; the Terminal toggle icon; a menu), the content, and the composer. The
+  reading column is centred inside the main area, max 900 px (1100 px for a
+  shell), not inside the whole page.
+- **Chat is the default** on every screen size, always. The terminal opens only
+  from its toggle (or `?view=terminal`), never because of a saved preference.
+- **Sidebar.** Only agent panes (an agent name, or a real agent status) are
+  listed; plain shells and empty panes are hidden unless "Show all panes" is on
+  (per browser). Grouped by project folder (cwd basename, `~` for home, full
+  path on hover), collapsible groups (remembered), blocked agents first, then
+  newest activity. Each entry: status dot, agent badge (Claude, Devin, Codex,
+  other, shell), title, last activity ("5m"), and a one-line preview of the
+  latest message (or machine · session). Search (Cmd/Ctrl+K) is AND over
+  words in name, agent, status, folder, full path, session, machine and pane
+  id (herdr-expose `paneSearch`), plus a "Messages" section that searches the
+  text of every chat this hub holds in memory, shows a snippet with the hit
+  marked, and opens the chat scrolled to that item (`?hit=<item id>`).
+- **Per pane type.** Claude panes: Claude-style chat (serif prose, real tables,
+  "Read 3 files · Ran 2 commands ✓" tool rows). Devin and Codex: the same chat
+  with their own accent. Other agents: the generic transformer as chat. A plain
+  shell: Warp-style blocks, each command a header row and its output under it
+  (collapsible, coloured), because a shell has no "turns" to speak of but does
+  have command/output pairs (compared with Claude desktop, Devin's web app,
+  Warp and herdr-expose: Warp's block is the only model that fits a shell).
+- **Composer** is one large rounded box ("Type a message", attach +, send).
+  It is client-side: typing never calls the server (the browser circuit is
+  long polling, ADR 0013); Send takes the text in one call.
+- **Files the agent offered** (`klark offer`) are attachment cards at the end
+  of the chat (thumbnail or icon, name, size, download).
+
+### F. Screen transformers (2026-11-07)
+When there is no structured log (Claude jsonl, Devin sqlite), the machine sends
+the pane's `recent_unwrapped` text **with ANSI** and the hub turns it into chat
+items. They live in the hub (`hub/Services/ScreenTransformers.cs`, `AnsiHtml.cs`,
+`TranscriptClean.cs`), not in `klark transcript`, because: the hub also serves
+machines below v3 that never run the Rust command; the hub already owns the
+markdown renderer they feed; and a transformer fix ships by redeploying one hub
+rather than every machine. The pick: the pane's agent name, else the screen's
+own markers.
+- **Claude**: chrome cleaning (D), then `>`/`❯` prompts, `⏺`/`●` turns, `⎿`
+  results.
+- **Devin** (and Codex): `›` prompts, `•` turns, `└` results.
+- **Generic** (any other agent or a shell): chrome cleaning; shell prompts
+  (`user@host:dir$`, zsh `%`, bare `$`, oh-my-zsh `➜`, starship `❯`,
+  PowerShell) split command turns, and the output until the next prompt stays
+  as one block with its SGR colours rendered as escaped spans; an idle prompt
+  is not a turn; `> ` / `› ` lines are the person's prompts to an agent; other
+  text is shaped (herdr-expose `shapeTranscript`: blank runs collapse, the
+  pane's hard and soft wraps are undone, long rules become rules, code-shaped
+  runs become fenced blocks, bullets become lists) into markdown.
+- All three turn box-drawn tables (┌┬┐ │ ├┼┤ └┴┘, wrapped cells included) into
+  markdown tables, so they render as real tables.
+- Tool results read from a screen have no exit status; one that starts with
+  "Error" or says FAILED/`error[`/`panicked at` marks the call failed.
+- Provenance: behaviour ported from herdr-expose (MIT, same author)
+  `internal/core/clean.go`, `web/src/components/transcriptText.ts` and
+  `web/src/ansi/ansiToHtml.ts`; re-implemented in C#, no code copied. Changes
+  from the original: prose bullets ("- retries: 3") are not diff lines, and
+  `@@ … @@` hunk headers are code.
+
+### G. File links and the file viewer (2026-11-07, protocol v5)
+- **Links.** Paths in assistant text, tool rows and command output (absolute,
+  `~/`, relative to the pane's cwd, with `:line[:col]`) become links to
+  `/m/{machine}/f?pane=&path=#L<line>`. A relative path needs a known extension
+  or two separators ("and/or" is not a path). Text inside code blocks and
+  existing links is left alone. Plain click opens the viewer in the same tab
+  (the chat's scroll is saved, so Back returns to the same spot);
+  Cmd/Ctrl/middle click opens a tab. The link works for anyone who can see the
+  machine.
+- **Fetch.** `GET /api/files/{machine}?pane=&path=` (metadata),
+  `/raw` (bytes; `&download=true` as an attachment) and `/markdown` (the
+  preview, rendered by the chat's Markdig pipeline: raw HTML off, safe links
+  only, no images). The hub needs a signed-in person with CanSee, refuses
+  credential-shaped paths (the `klark offer` list) and paths outside the
+  pane's cwd and its home, then sends hub → machine
+  `get_file {id, pane_id, path, max_bytes}` (link protocol **5**; older
+  machines get "update klark"). The machine checks again on its own
+  (`crates/klark-link/src/files.rs`): resolves `~/` and relative paths,
+  canonicalises (so a symlink is judged by its target), only under the pane's
+  cwd or `$HOME`, never credential-shaped, regular files only, and refuses
+  above the limit **before reading**, saying "file is X MB; limit 10 MB".
+  The limit is `Hub:Files:MaxBytes` (default 10485760) on the hub, and 10 MB
+  on the machine (`KLARK_FILES_MAX_BYTES` may lower it). Every fetch and every
+  refusal is logged with the person's name. The hub keeps fetched bytes for
+  2 minutes (64 MB cap) so metadata, raw and preview cost one machine trip.
+- **Responses** are `nosniff`, with `Content-Security-Policy: default-src
+  'none'; sandbox` (a PDF gets `object-src 'self'` without sandbox so the
+  browser's viewer can load), so a file can never run in the hub's origin.
+- **Viewer** (`wwwroot/viewer.html`, `viewer.js`, `viewer.css`,
+  `viewer-hl.js`): a static page, no Blazor circuit. GitHub-style header
+  (path breadcrumb, size, line count, language, Raw, Copy, Download), code
+  with line numbers, click a number for a `#L42` link, `path:line` scrolls to
+  and marks that line, word-wrap toggle, find in file. Lines are virtualized
+  (fixed 20 px rows, only the visible window plus 40 rows each side in the
+  DOM); highlighting runs in a module worker that loads the highlight.js core
+  and only that file's language (all 192 grammars are bundled, one file
+  each, in `wwwroot/lib/hljs-11.11.1/`); files over 2 MB stay plain. Language
+  from extension, file name (Dockerfile, Makefile, Justfile, .gitignore…) or
+  shebang, else highlightAuto over a common set. Markdown: Preview/Code.
+  CSV/TSV: a table (first 5000 rows). JSON: a collapsible tree built lazily.
+  Images (SVG only as `<img>`, never inline): inline with click-to-zoom. PDF:
+  the browser's viewer. Diff/patch: red/green rows. Binary: "Binary file,
+  X KB" and Download.
+- **Lazy loading.** No viewer, highlight.js or xterm code loads with the chat
+  or the list: xterm loads on the first terminal open, highlight.js core plus
+  one grammar per language on the first code block in that language. See
+  E-12 for the numbers.
 
 ## Consequences
 - The image stays one process with no third-party server and no AGPL

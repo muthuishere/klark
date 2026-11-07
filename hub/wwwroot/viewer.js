@@ -42,13 +42,13 @@ async function main() {
   $("head").hidden = false;
   $("raw").href = meta.raw;
   $("dl").href = meta.download;
-  const parts = [meta.sizeLabel];
+  const parts = [meta.size_label];
   if (meta.lines) parts.push(`${meta.lines.toLocaleString()} lines`);
   if (meta.lang) parts.push(meta.lang);
   $("meta").innerHTML = parts.map((p) => `<span>${esc(String(p))}</span>`).join("");
   if (meta.view === "binary") {
     hideText();
-    body.innerHTML = `<div class="msg">Binary file, ${esc(meta.sizeLabel)}. <a class="btn primary" href="${esc(meta.download)}">Download</a></div>`;
+    body.innerHTML = `<div class="msg">Binary file, ${esc(meta.size_label)}. <a class="btn primary" href="${esc(meta.download)}">Download</a></div>`;
     return;
   }
   if (meta.view === "image") {
@@ -272,4 +272,4 @@ function step(d) {
   goHash();
 }
 
-main();
+main().catch((e) => fail("Viewer error: " + (e && e.message || e)));

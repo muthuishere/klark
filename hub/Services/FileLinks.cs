@@ -21,6 +21,9 @@ public static partial class FileLinks
     [GeneratedRegex(@"\.(" + Ext + @")$", RegexOptions.IgnoreCase)]
     private static partial Regex KnownExt();
 
+    [GeneratedRegex(@"^/(Users|home|tmp|private|var|etc|opt|usr|srv|mnt|Volumes|workspace|workspaces|root|data|app|code|src)/")]
+    private static partial Regex FsRoot();
+
     public sealed record Found(int Index, int Length, string Path, int? Line);
 
     /// <summary>The file references in a run of plain text.</summary>
@@ -36,6 +39,9 @@ public static partial class FileLinks
             // "and/or", "w/o": a relative path needs a known extension or two separators.
             if (!abs && !KnownExt().IsMatch(p) && slashes < 2) continue;
             if (abs && slashes < 2 && !KnownExt().IsMatch(p)) continue; // "/tmp" alone, "/s"
+            // "/agent/events" is a URL route, not a file: an absolute path without a known
+            // extension must start at a real filesystem root.
+            if (p.StartsWith('/') && !KnownExt().IsMatch(p) && !FsRoot().IsMatch(p)) continue;
             if (p.StartsWith("http") || p.Contains("..."))continue;
             int? line = m.Groups[2].Success ? int.Parse(m.Groups[2].Value) : null;
             list.Add(new Found(m.Index, m.Length, p, line));

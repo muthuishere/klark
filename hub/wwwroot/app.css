@@ -85,7 +85,7 @@ button[type=submit] { background: var(--accent); color: #fff; border-color: var(
 
 /* ---- the app shell: sidebar + main (ADR 0011, E) ---- */
 body:has(.app) .topbar { display: none; }
-body:has(.app) .banner { position: fixed; z-index: 45; right: 12px; bottom: 96px; border: 1px solid var(--blocked); border-radius: 10px; }
+body:has(.app) .banner { position: fixed; z-index: 45; left: 12px; bottom: 64px; max-width: 268px; font-size: .85rem; border: 1px solid var(--blocked); border-radius: 10px; }
 body:has(.app) .page { max-width: none; padding: 0; }
 .app { display: flex; height: 100dvh; overflow: hidden; }
 .side { width: 292px; flex: none; display: flex; flex-direction: column; background: var(--side); border-right: 1px solid var(--line);
@@ -329,3 +329,6 @@ button[type=submit].danger { background: var(--card); color: var(--blocked); bor
 .code { font: 600 1.8rem var(--mono); letter-spacing: .12em; margin: 0; }
 .panes { list-style: none; margin: 0; padding: 0; background: var(--card); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
 .panes li + li { border-top: 1px solid var(--line); }
+/* tables keep whole words and scroll sideways instead */
+.md th, .md td { overflow-wrap: normal; word-break: normal; min-width: 4em; }
+@media (max-width: 860px) { body:has(.pane-app:not(.home-main)) .banner { display: none; } }
