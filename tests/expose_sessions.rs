@@ -291,19 +291,20 @@ fn fake_agent(env: &Env, socket: &Path) -> String {
     let fake = env.base.join("bin").join("claude");
     if !fake.exists() {
         fs::create_dir_all(fake.parent().unwrap()).unwrap();
-        // macOS kills a copied platform binary, so link there; Linux names a
-        // process after the file it executed, so copy there (a symlink shows as `cat`).
+        // The process must be named `claude`. macOS kills a copied platform binary,
+        // so link `cat` there. On Linux the name comes from the file executed and
+        // coreutils may be one multi-call binary, so copy `perl` and run it as `-pe ''`.
         if cfg!(target_os = "macos") {
             std::os::unix::fs::symlink("/bin/cat", &fake).unwrap();
         } else {
-            std::fs::copy("/bin/cat", &fake).unwrap();
+            std::fs::copy("/usr/bin/perl", &fake).unwrap();
         }
     }
     let pane = new_pane(socket, &env.base);
     call(
         socket,
         "pane.send_text",
-        json!({"pane_id": pane, "text": fake.display().to_string()}),
+        json!({"pane_id": pane, "text": fake_command(&fake)}),
     );
     call(
         socket,
@@ -479,4 +480,13 @@ fn expose_agents_filter_shows_and_accepts_only_listed_agents() {
         json!({"pane_id": reviewer, "source": "recent", "lines": 40}),
     );
     assert!(!read.to_string().contains("RENAMED_LEAK"), "{read}");
+}
+
+/// The shell line that starts the stand-in agent: `cat` on macOS, `perl -pe ''` on Linux.
+fn fake_command(fake: &Path) -> String {
+    if cfg!(target_os = "macos") {
+        fake.display().to_string()
+    } else {
+        format!("{} -pe ''", fake.display())
+    }
 }

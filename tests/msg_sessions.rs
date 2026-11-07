@@ -187,14 +187,13 @@ fn msg_send_crosses_sessions_and_lands_as_agent_prompt() {
     let bin_dir = env.base.join("bin");
     fs::create_dir_all(&bin_dir).unwrap();
     let fake = bin_dir.join("claude");
-    // A symlink, not a copy: macOS kills a copied platform binary (SIGKILL,
-    // code signature), and the process name comes from the exec path.
-    // macOS kills a copied platform binary, so link there; Linux names a
-    // process after the file it executed, so copy there (a symlink shows as `cat`).
+    // The process must be named `claude`. macOS kills a copied platform binary,
+    // so link `cat` there. On Linux the name comes from the file executed and
+    // coreutils may be one multi-call binary, so copy `perl` and run it as `-pe ''`.
     if cfg!(target_os = "macos") {
         std::os::unix::fs::symlink("/bin/cat", &fake).unwrap();
     } else {
-        std::fs::copy("/bin/cat", &fake).unwrap();
+        std::fs::copy("/usr/bin/perl", &fake).unwrap();
     }
     let created = call(
         &work,
@@ -208,7 +207,7 @@ fn msg_send_crosses_sessions_and_lands_as_agent_prompt() {
     call(
         &work,
         "pane.send_text",
-        json!({"pane_id": pane, "text": fake.display().to_string()}),
+        json!({"pane_id": pane, "text": fake_command(&fake)}),
     );
     call(
         &work,
@@ -311,4 +310,13 @@ fn msg_send_crosses_sessions_and_lands_as_agent_prompt() {
         "{}",
         text(&remote)
     );
+}
+
+/// The shell line that starts the stand-in agent: `cat` on macOS, `perl -pe ''` on Linux.
+fn fake_command(fake: &Path) -> String {
+    if cfg!(target_os = "macos") {
+        fake.display().to_string()
+    } else {
+        format!("{} -pe ''", fake.display())
+    }
 }
