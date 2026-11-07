@@ -43,9 +43,18 @@ public static class FileEndpoints
             return Results.Json(new
             {
                 name = file.Name, path = file.Path, size = file.Bytes.LongLength, sizeLabel = FileLinks.Size(file.Bytes.LongLength),
-                view = kind.View, lang = kind.Lang, mime = kind.Mime, lines, raw, download = raw + "&download=1",
+                view = kind.View, lang = kind.Lang, mime = kind.Mime, lines, raw, download = raw + "&download=true",
                 machine, pane,
             });
+        });
+
+        app.MapGet("/api/files/{machine}/markdown", async (HttpContext ctx, string machine, string? pane, string? path,
+            MachineRegistry registry, HubAccess access, IOptionsMonitor<HubOptions> options, ILoggerFactory logs) =>
+        {
+            var (status, file, error) = await FetchAsync(ctx, machine, pane, path, registry, access, options.CurrentValue.Files.MaxBytes, logs);
+            if (file is null) return Results.Json(new { error }, statusCode: status);
+            ctx.Response.Headers["X-Content-Type-Options"] = "nosniff";
+            return Results.Content(RenderMarkdown(Encoding.UTF8.GetString(file.Bytes)), "text/html; charset=utf-8");
         });
 
         app.MapGet("/api/files/{machine}/raw", async (HttpContext ctx, string machine, string? pane, string? path, bool? download,
@@ -57,7 +66,10 @@ public static class FileEndpoints
             var h = ctx.Response.Headers;
             h["X-Content-Type-Options"] = "nosniff";
             // Whatever the file holds, it can never run in the hub's origin.
-            h["Content-Security-Policy"] = "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; sandbox";
+            // (A PDF needs the browser's own viewer, which a sandboxed document cannot load.)
+            h["Content-Security-Policy"] = kind.View == "pdf" && download != true
+                ? "default-src 'none'; object-src 'self'"
+                : "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; sandbox";
             h.CacheControl = "private, max-age=60";
             var type = kind.View switch
             {
@@ -70,6 +82,20 @@ public static class FileEndpoints
                 ? Results.File(file.Bytes, "application/octet-stream", name)
                 : Results.File(file.Bytes, type);
         });
+    }
+
+    /// <summary>Markdown for the viewer's Preview, rendered by the chat's safe pipeline (raw HTML off, safe links only).</summary>
+    public static string RenderMarkdown(string text)
+    {
+        var sb = new StringBuilder();
+        foreach (var seg in ChatMarkdown.Render(text))
+        {
+            if (seg is MdHtml h) sb.Append(h.Html);
+            else if (seg is MdCode c)
+                sb.Append("<pre><code").Append(c.Lang.Length > 0 ? " class=\"language-" + System.Net.WebUtility.HtmlEncode(c.Lang.Split(' ')[0]) + "\"" : "")
+                  .Append('>').Append(System.Net.WebUtility.HtmlEncode(c.Code)).Append("</code></pre>");
+        }
+        return sb.ToString();
     }
 
     private static int CountLines(byte[] b)

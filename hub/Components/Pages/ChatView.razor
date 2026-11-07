@@ -29,7 +29,28 @@
         }
         @foreach (var row in rows.Skip(hidden))
         {
-            <ChatRow @key="row.Key" Row="row" />
+            <ChatRow @key="row.Key" Row="row" MachineId="@MachineId" PaneId="@PaneId" />
+        }
+        @if (Files is { Count: > 0 })
+        {
+            @* Files the agent offered (`klark offer`), as attachments. *@
+            <div class="files">
+                @foreach (var a in Files.OrderBy(a => a.Ts))
+                {
+                    <div class="fcard">
+                        @if (a.IsImage)
+                        {
+                            <a class="fthumb" href="@a.Url" target="_blank" rel="noopener"><img src="@a.Url" alt="@a.Name" loading="lazy" /></a>
+                        }
+                        else
+                        {
+                            <span class="ficon">@((MarkupString)Icons.File)</span>
+                        }
+                        <span class="fmeta"><span class="fname">@a.Name</span><span class="muted">@FileLinks.Size(a.Size) · @a.Mime</span></span>
+                        <a class="icon" href="@a.Url" download="@a.Name" title="Download" aria-label="Download @a.Name">@((MarkupString)Icons.Download)</a>
+                    </div>
+                }
+            </div>
         }
         @if (feed.Blocked is { } b)
         {
@@ -57,6 +78,11 @@
     [Parameter] public bool ReadOnly { get; set; }
     [Parameter] public bool SearchOpen { get; set; }
     [Parameter] public EventCallback<(string Send, bool Enter)> QuickReply { get; set; }
+    /// <summary>Files the agent offered for this pane, drawn as attachment cards.</summary>
+    [Parameter] public IReadOnlyList<Asset>? Files { get; set; }
+    /// <summary>A sidebar search hit: the item to scroll to once it is drawn.</summary>
+    [Parameter] public string? Hit { get; set; }
+    private bool hitShown;
 
     /// <summary>Rows drawn at once; older ones load on request.</summary>
     private const int Page = 150;
@@ -122,6 +148,14 @@
             chosen = await JS.InvokeAsync<string?>("klarkState.get", "qr:" + Key, "s");
             if (SearchOpen) await RestoreSearchAsync();
             else if (chosen is not null) StateHasChanged();
+        }
+        if (Hit is { Length: > 0 } && !hitShown)
+        {
+            // The hit may sit in the folded older rows: show enough of them first.
+            var at = -1;
+            for (var i = 0; i < rows.Count; i++) if (rows[i].Items.Any(x => x.Id == Hit)) at = i;
+            if (at >= 0 && at < hidden) { shown = rows.Count - at; hidden = at; StateHasChanged(); return; }
+            if (at >= 0) hitShown = await JS.InvokeAsync<bool>("klarkChat.reveal", Key, Hit);
         }
     }
 

@@ -120,7 +120,7 @@ public static partial class ScreenTransformers
 
     // user@host:~/dir$ cmd   ·   (venv) user@host dir % cmd   ·   $ cmd   ·   ➜  dir git:(main) ✗ cmd   ·   ❯ cmd   ·   PS C:\> cmd
     [GeneratedRegex(@"^(?:\([\w.-]+\)\s+)?[\w.-]+@[\w.-]+(?::[^\s$#%]*|\s+\S+)?\s*[$#%]\s?(.*)$")] private static partial Regex UserHostPrompt();
-    [GeneratedRegex(@"^[$%]\s?(.*)$")] private static partial Regex BarePrompt();
+    [GeneratedRegex(@"^[$%](?:\s(.*))?$")] private static partial Regex BarePrompt();
     [GeneratedRegex(@"^➜\s+\S+(?:\s+git:\([^)]*\))?(?:\s+✗)?\s?(.*)$")] private static partial Regex OhMyZshPrompt();
     [GeneratedRegex(@"^❯\s?(.*)$")] private static partial Regex StarshipPrompt();
     [GeneratedRegex(@"^PS [A-Za-z]:[^>]*>\s?(.*)$")] private static partial Regex PowerShellPrompt();
@@ -213,6 +213,9 @@ public static partial class ScreenTransformers
     [GeneratedRegex(@"[{}\[\]()<>;=|$`~^*/\\]")] private static partial Regex CodePunct();
     [GeneratedRegex(@"^(?:[-*+•▪◦]\s|\d+[.)]\s|[>›❯»→#|])")] private static partial Regex BlockStart();
     [GeneratedRegex(@"^(\s*)[-*\u2022\u25aa\u25e6\u2013\u2014]\s+(\S.*)$")] private static partial Regex Bullet();
+    /// <summary>"- retries: 3": a marker, a space, then words. A diff line has code after its marker.</summary>
+    [GeneratedRegex(@"^\s*[-*\u2022]\s\p{L}[\p{L}\p{N}\s:,.'\u2019()%-]*$")] private static partial Regex ProseBullet();
+    [GeneratedRegex(@"^@@ .* @@")] private static partial Regex Hunk();
 
     internal static bool IsRule(string line)
     {
@@ -226,7 +229,7 @@ public static partial class ScreenTransformers
     internal static bool IsCodeLike(string line)
     {
         if (line.Trim().Length == 0 || IsRule(line) || IsTableLine(line)) return false;
-        if (BoxDrawing().IsMatch(line) || Gutter().IsMatch(line) || DiffMarker().IsMatch(line) || BareGutter().IsMatch(line)
+        if (BoxDrawing().IsMatch(line) || Gutter().IsMatch(line) || DiffMarker().IsMatch(line) && !ProseBullet().IsMatch(line) || BareGutter().IsMatch(line) || Hunk().IsMatch(line)
             || ShellLike().IsMatch(line) || Pathish().IsMatch(line) || Columns().IsMatch(line)) return true;
         var t = line.Trim();
         return t.Length >= 8 && (double)CodePunct().Matches(t).Count / t.Length > 0.08;

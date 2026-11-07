@@ -1,0 +1,19 @@
+Aider v0.86.1
+Main model: sonnet with diff edit format
+> add a retry to the upload
+
+I will wrap the upload call in a retry loop with exponential backoff so that
+a transient network error does not fail the whole offer, and log each
+attempt so the operator can see what happened when the hub was briefly
+unreachable from the machine.
+
+- retries: 3
+- backoff: 250ms doubling
+
+src/offer_cmd.rs
+@@ -150,3 +150,7 @@
+-    let resp = put_file(&url, token, &abs)?;
++    let resp = retry(3, || put_file(&url, token, &abs))?;
+
+Applied edit to src/offer_cmd.rs
+────────────────────────────────────────────────────────────

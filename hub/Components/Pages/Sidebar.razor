@@ -93,6 +93,28 @@
     <div class="side-foot">
         <label class="toggle"><input type="checkbox" checked="@showAll" @onchange="ShowAllAsync" /> Show all panes</label>
         <button type="button" class="icon" onclick="klarkSide.theme()" title="Light / dark" aria-label="Toggle theme">◐</button>
+        <details class="menu up">
+            <summary class="icon" aria-label="Account">@((MarkupString)Icons.More)</summary>
+            <div class="menu-pop">
+                <div class="menu-info">@(user.FindFirst("display_name")?.Value ?? user.Identity?.Name)</div>
+                <a href="/messages">Messages</a>
+                <a href="/token">CLI token</a>
+                @if (user.FindFirst(AccountEndpoints.SourceClaim)?.Value is DirectoryUser.BuiltIn or DirectoryUser.Mock)
+                {
+                    <a href="/account/password">Change password</a>
+                }
+                @if (Access.IsAdmin(user))
+                {
+                    <a href="/admin/users">Users</a>
+                    <a href="/admin/directory">Sign-in directory</a>
+                    <a href="/admin/machines">Machines</a>
+                }
+                <form method="post" action="/account/logout" data-enhance="false">
+                    <AntiforgeryToken />
+                    <button type="submit" class="menu-item">Sign out</button>
+                </form>
+            </div>
+        </details>
     </div>
 </aside>
 <div class="scrim" aria-hidden="true"></div>

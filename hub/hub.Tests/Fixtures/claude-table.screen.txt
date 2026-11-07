@@ -1,0 +1,24 @@
+> compare the transports
+
+⏺ Here is how they compare:
+
+  ┌───────────┬──────────────────────┬─────────┐
+  │ Transport │ Direction            │ Status  │
+  ├───────────┼──────────────────────┼─────────┤
+  │ NDJSON    │ hub → machine events │ shipped │
+  ├───────────┼──────────────────────┼─────────┤
+  │ POST      │ machine → hub        │ shipped │
+  │ segments  │ segments, gzip       │         │
+  ├───────────┼──────────────────────┼─────────┤
+  │ WebSocket │ both                 │ removed │
+  └───────────┴──────────────────────┴─────────┘
+
+  See crates/klark-link/src/transport.rs:42 for the client.
+
+⏺ Bash(cargo test)
+  ⎿  Error: 1 test failed
+
+╭──────────────────────────────────────────╮
+│ >                                        │
+╰──────────────────────────────────────────╯
+  ? for shortcuts
