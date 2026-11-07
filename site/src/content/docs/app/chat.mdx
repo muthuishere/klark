@@ -1,0 +1,99 @@
+---
+title: Chat, shells and the terminal
+description: Every pane opens as a chat. Claude, Devin, Codex, other agents, and shells as command blocks.
+---
+
+import { Image } from 'astro:assets';
+import claude from '../../../assets/screens/chat-claude-1440.png';
+import claude390 from '../../../assets/screens/chat-claude-390.png';
+import devin from '../../../assets/screens/chat-devin-1920.png';
+import devin390 from '../../../assets/screens/chat-devin-390.png';
+import shell from '../../../assets/screens/shell-blocks-1920.png';
+import shell390 from '../../../assets/screens/shell-blocks-390.png';
+
+Opening a pane shows a **chat**, on every screen size. The live terminal opens
+only from its toggle.
+
+## Claude Code
+
+<div class="shots">
+	<Image src={claude} alt="A Claude Code session as a chat: prose, a table, folded tool rows." />
+	<Image src={claude390} alt="The same chat on a phone." />
+</div>
+
+- Your prompts and the agent's turns are separate blocks.
+- Markdown renders properly: tables, lists, code blocks with a language label,
+  a copy button and syntax highlighting.
+- Tool calls and thinking fold into one-line rows, such as
+  "Read 3 files · Ran 2 commands ✓". Click to open.
+- A live line says working, idle or needs you.
+- When the agent is **blocked** on a question, the question is shown with
+  buttons for its numbered or yes/no options.
+
+## Devin, Codex and other agents
+
+Devin and Codex get the same chat with their own accent. Any other agent gets a
+generic chat built from its cleaned screen.
+
+<div class="shots">
+	<Image src={devin} alt="A Devin session as a chat." />
+	<Image src={devin390} alt="The Devin chat on a phone." />
+</div>
+
+### Where the chat comes from
+
+- **Claude Code** and **Devin**: their own structured logs (Claude's JSONL,
+  Devin's SQLite), read by the machine.
+- **Everyone else**: the pane's text, with the agent's screen chrome removed
+  (borders, spinners, context meters, key hints, version banners) and split
+  into turns. Boxed tables become real tables.
+
+The hub polls a chat about once a second, only while someone has it open, and
+shares one poll between all viewers of that pane. Only the newest 150 rows are
+drawn; **Show earlier** adds more.
+
+## Shells: command blocks
+
+A plain shell has no turns, but it has commands and their output. The hub shows
+each command as a header row with its output below, collapsible and in colour,
+like Warp's blocks.
+
+<div class="shots">
+	<Image src={shell} alt="A shell pane as command blocks with coloured cargo test output." />
+	<Image src={shell390} alt="Command blocks on a phone." />
+</div>
+
+## The composer
+
+One box at the bottom: type, attach (**+**), send.
+
+- **Enter** sends, **Shift+Enter** is a new line.
+- Typing never calls the server. Send delivers the text in one call.
+- Read-only users (`Hub:Auth:ReadOnlyGroups`) see the chat but cannot type.
+
+## The terminal toggle
+
+The terminal icon in the top bar (or `?view=terminal` in the URL) opens the live
+terminal.
+
+- It is drawn at the **pane's real size**, scaled to fit the width, and
+  scrolls sideways on narrow screens. TUIs render as they do on the machine.
+- Esc and Ctrl-C work from the terminal tab.
+- A viewer that falls more than ~2.5 s behind gets a fresh screen instead of a
+  backlog.
+- The terminal code (xterm) loads only the first time you open it.
+
+## Images to the agent
+
+On a pane, **paste, drop, pick (+) or photograph** an image (png, jpeg, gif,
+webp, heic, avif; 20 MB at most). The machine downloads it to a private uploads
+folder and the agent receives a prompt:
+
+```text
+[image from alice] <klark data dir>/uploads/<sha256>.png
+```
+
+The machine checks the SHA-256, stores the file with mode 0600, and sweeps
+uploads after 24 hours.
+
+You must be allowed to type in that pane. Uploads expire after 24 hours.

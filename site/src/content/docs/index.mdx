@@ -1,0 +1,75 @@
+---
+title: klark
+description: A terminal workspace for coding agents, and a self-hosted web hub to watch and answer them from any browser.
+template: splash
+hero:
+  tagline: A terminal workspace for coding agents, with a self-hosted web hub where your team watches and answers every agent on every machine.
+  image:
+    file: ../../assets/screens/chat-claude-1440.png
+    alt: The klark hub showing a Claude Code session as a chat, with the agent list in the sidebar.
+  actions:
+    - text: Get started
+      link: start/install/
+      icon: right-arrow
+    - text: Run the hub
+      link: hub/run/
+      variant: minimal
+---
+
+import { Card, CardGrid, Steps } from '@astrojs/starlight/components';
+
+## What it does
+
+<CardGrid>
+	<Card title="Agents across sessions and machines" icon="laptop">
+		Panes keep running when you detach. Every agent is marked working,
+		blocked or idle. Agents message each other with `klark msg`, in the same
+		session, another session, or on another machine.
+	</Card>
+	<Card title="A chat view for every agent" icon="comment">
+		The hub turns each pane into a Claude-style chat: Claude Code, Devin,
+		Codex, any other agent, and plain shells as command blocks. The live
+		terminal is one click away.
+	</Card>
+	<Card title="Self-hosted hub with LDAP" icon="setting">
+		One container, one port, SQLite on a volume. Sign in with your LDAP or
+		Active Directory. Machines dial out over plain HTTP, so no inbound port
+		and no tunnel.
+	</Card>
+</CardGrid>
+
+## 60-second quickstart
+
+You need Rust, Zig 0.16 and Docker.
+
+<Steps>
+
+1. Build klark and start a session named after the current folder.
+
+   ```sh
+   cargo build --release
+   ./target/release/klark -s
+   ```
+
+   Detach with `ctrl+b q`. Run `klark -s` again in the same folder to come back.
+
+2. Start a hub.
+
+   ```sh
+   docker build -t klarkhub hub
+   docker run -d --name klarkhub -p 8080:8080 -v klarkhub-data:/data klarkhub
+   ```
+
+   Open `http://localhost:8080` and sign in as `admin` / `adminadmin`. Change the password when the banner asks.
+
+3. Link this machine.
+
+   ```sh
+   klark hub connect --url http://localhost:8080
+   ```
+
+   Open the link it prints, check the code, and press Approve. Your agents now show up in the hub.
+
+</Steps>
+
+Next: [install options](/start/install/), [sessions](/start/sessions/), or [the web app tour](/app/tour/).

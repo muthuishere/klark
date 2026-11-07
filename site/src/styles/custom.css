@@ -1,0 +1,42 @@
+/* Calm, readable defaults on top of Starlight's own light/dark themes. */
+:root {
+	--sl-content-width: 48rem;
+	--sl-font: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+	--sl-font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+}
+
+/* Accent: a quiet indigo in both themes. */
+:root {
+	--sl-color-accent-low: #1e1b4b;
+	--sl-color-accent: #6366f1;
+	--sl-color-accent-high: #c7d2fe;
+}
+:root[data-theme='light'] {
+	--sl-color-accent-low: #e0e7ff;
+	--sl-color-accent: #4f46e5;
+	--sl-color-accent-high: #312e81;
+}
+
+.sl-markdown-content img {
+	border-radius: 0.5rem;
+	border: 1px solid var(--sl-color-gray-5);
+}
+
+.hero img {
+	border-radius: 0.75rem;
+	border: 1px solid var(--sl-color-gray-5);
+	box-shadow: 0 20px 50px -20px rgb(0 0 0 / 0.45);
+}
+
+/* Screenshot pairs: desktop + phone side by side, stacked on narrow screens. */
+.shots {
+	display: grid;
+	grid-template-columns: 3fr 1fr;
+	gap: 1rem;
+	align-items: start;
+}
+@media (max-width: 50rem) {
+	.shots {
+		grid-template-columns: 1fr;
+	}
+}
