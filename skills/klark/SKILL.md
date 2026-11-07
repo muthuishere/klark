@@ -32,7 +32,7 @@ When the check passes, the `klark` binary in `PATH` talks to the current session
 | answer a message I got | `klark msg reply "<text>"` |
 | see recent messages | `klark msg log` (`-n 50`, `--json`) |
 | share this pane ("share this", "give me a link") | `klark expose url` |
-| put this machine on a hub | `klark expose --hub <ws://host:8080/agent> --token <machine-token>` (owner only) |
+| put this machine on a hub | `klark hub connect --url http://host:8080` (owner approves in the browser; owner only) |
 | expose only some agents | `klark expose … --agents reviewer,builder` (or `KLARK_EXPOSE_AGENTS`) |
 | send a file to the person / their phone | `klark offer <path>` |
 | reach agents on other machines | `klark msg login --hub http://hub.lan:8080 --user <name>` (a person types the password) |
@@ -248,6 +248,19 @@ klark agent read work/coder --lines 30
 ```
 
 Etiquette: one ask per message, say what you need back and in what form, include paths/branch/PR the other agent cannot see. Check `klark msg ls` first: don't message a `blocked` agent (it waits on a person) and don't resend while it is `working`. No "thanks"/"ok" messages; every message interrupts a turn.
+
+## Linking to a hub (`klark hub`)
+
+The hub (klarkhub, the `hub/` image) is deployed separately. To link this machine (owner only; it puts the machine on the hub):
+
+```bash
+klark hub connect --url http://hub.lan:8080   # prints "Open <url> … (code ABCD-EFGH)"; the owner approves in the browser
+klark hub connect                             # later: the default hub, saved token
+klark hub connect lab --agents reviewer       # a saved hub by name, only some agents
+klark hub ls | use <name> | rm <name> | status [<name>]
+```
+
+Saved hubs live in `<config dir>/hubs.json` (0600; name defaults to the URL's host, `--as <name>` overrides; the first is the default). Scripts skip the browser with `--token <t>`, `--token-stdin` or `KLARK_HUB_TOKEN`. Never print or paste the token. `https://` hubs work; a private-CA ingress needs `KLARK_HUB_CA_FILE=<ca.pem>`. `klark msg` and `klark offer` use the default hub when `KLARK_HUB_URL` is not set.
 
 ## Exposing and sharing ("share this")
 

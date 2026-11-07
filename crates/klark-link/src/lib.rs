@@ -10,6 +10,7 @@ pub mod filter;
 pub mod http;
 pub mod protocol;
 pub mod sessions;
+pub mod tls;
 pub mod upstream;
 
 use std::collections::HashMap;
@@ -138,9 +139,39 @@ pub fn connect_hub(hub_url: &str, token: &str, machine_id: &str) -> Result<Socke
     if let Ok(id) = HeaderValue::from_str(machine_id) {
         request.headers_mut().insert(MACHINE_HEADER, id);
     }
-    let (ws, _) = tungstenite::connect(request).map_err(|e| format!("connect {hub_url}: {e}"))?;
+    let (ws, _) = ws_connect(request).map_err(|e| format!("connect {hub_url}: {e}"))?;
     set_read_timeout(&ws, Some(READ_TICK));
     Ok(ws)
+}
+
+/// The WebSocket handshake; `wss://` uses `tls::client_config` (webpki
+/// roots + KLARK_HUB_CA_FILE).
+fn ws_connect(
+    request: tungstenite::handshake::client::Request,
+) -> Result<(Socket, tungstenite::handshake::client::Response), String> {
+    let uri = request.uri().clone();
+    let tls = match uri.scheme_str() {
+        Some("ws") => false,
+        Some("wss") => true,
+        other => return Err(format!("unsupported scheme {other:?}")),
+    };
+    let host = uri.host().ok_or("no host")?.to_string();
+    let port = uri.port_u16().unwrap_or(if tls { 443 } else { 80 });
+    let host_only = host
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .to_string();
+    let tcp = TcpStream::connect((host_only.as_str(), port)).map_err(|e| e.to_string())?;
+    let _ = tcp.set_nodelay(true);
+    let connector = if tls {
+        tungstenite::Connector::Rustls(tls::client_config()?)
+    } else {
+        tungstenite::Connector::Plain
+    };
+    tungstenite::client_tls_with_config(request, tcp, None, Some(connector)).map_err(|e| match e {
+        tungstenite::HandshakeError::Failure(e) => e.to_string(),
+        tungstenite::HandshakeError::Interrupted(_) => "handshake interrupted".to_string(),
+    })
 }
 
 pub fn run_once(config: &LinkConfig) -> Result<(), String> {

@@ -1,11 +1,12 @@
 //! A minimal blocking HTTP/1.1 client for the hub's small JSON API
 //! (`/api/token`, `/api/agents`, `/api/messages`, ADR 0009).
 //!
-//! Plain `http://` only: plain HTTP is the decided deployment (ADR 0005), and
-//! nothing else in the tree is an HTTP client. `https://` returns a clear error.
+//! `http://` and `https://` (rustls, see `tls`; ADR 0005).
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
+
+use crate::tls::Conn;
 use std::time::Duration;
 
 /// The hub's HTTP base (`http://host:port`) from any hub URL a user or the link
@@ -66,36 +67,10 @@ pub fn request(
     json_body: Option<&serde_json::Value>,
     timeout: Duration,
 ) -> Result<HttpResponse, String> {
-    let parsed = url::Url::parse(url).map_err(|e| format!("url {url}: {e}"))?;
-    match parsed.scheme() {
-        "http" => {}
-        "https" => {
-            return Err(format!(
-                "{url}: https is not supported by klark msg yet; the hub is plain http (ADR 0005)"
-            ))
-        }
-        other => return Err(format!("{url}: unsupported scheme {other}")),
-    }
-    let host = parsed.host_str().ok_or_else(|| format!("{url}: no host"))?;
-    let port = parsed.port_or_known_default().unwrap_or(80);
-    let addr = (host, port)
-        .to_socket_addrs()
-        .map_err(|e| format!("resolve {host}:{port}: {e}"))?
-        .next()
-        .ok_or_else(|| format!("resolve {host}:{port}: no address"))?;
-    let mut stream = TcpStream::connect_timeout(&addr, timeout)
-        .map_err(|e| format!("connect {host}:{port}: {e}"))?;
-    stream.set_read_timeout(Some(timeout)).ok();
-    stream.set_write_timeout(Some(timeout)).ok();
-
-    let mut path = parsed.path().to_string();
-    if let Some(q) = parsed.query() {
-        path.push('?');
-        path.push_str(q);
-    }
+    let (mut stream, hostport, path) = open(url, timeout)?;
     let body = json_body.map(|v| v.to_string()).unwrap_or_default();
     let mut req = format!(
-        "{method} {path} HTTP/1.1\r\nHost: {host}:{port}\r\nAccept: application/json\r\nConnection: close\r\nUser-Agent: klark-msg\r\n"
+        "{method} {path} HTTP/1.1\r\nHost: {hostport}\r\nAccept: application/json\r\nConnection: close\r\nUser-Agent: klark-msg\r\n"
     );
     if let Some(token) = bearer {
         if token.contains(['\r', '\n']) {
@@ -110,36 +85,42 @@ pub fn request(
     req.push_str(&body);
     stream
         .write_all(req.as_bytes())
-        .map_err(|e| format!("send to {host}:{port}: {e}"))?;
+        .map_err(|e| format!("send to {hostport}: {e}"))?;
 
     let mut raw = Vec::new();
     BufReader::new(stream)
         .read_to_end(&mut raw)
-        .map_err(|e| format!("read from {host}:{port}: {e}"))?;
+        .map_err(|e| format!("read from {hostport}: {e}"))?;
     parse_response(&raw)
 }
 
-/// Open a plain-http connection for `url`; returns (stream, host:port, path?query).
-fn open(url: &str, timeout: Duration) -> Result<(TcpStream, String, String), String> {
+/// Open an http or https connection for `url`; returns (stream, host:port, path?query).
+fn open(url: &str, timeout: Duration) -> Result<(Conn, String, String), String> {
     let parsed = url::Url::parse(url).map_err(|e| format!("url {url}: {e}"))?;
-    match parsed.scheme() {
-        "http" => {}
-        "https" => {
-            return Err(format!(
-                "{url}: https is not supported yet; the hub is plain http (ADR 0005)"
-            ))
-        }
+    let tls = match parsed.scheme() {
+        "http" => false,
+        "https" => true,
         other => return Err(format!("{url}: unsupported scheme {other}")),
-    }
+    };
     let host = parsed.host_str().ok_or_else(|| format!("{url}: no host"))?;
     let port = parsed.port_or_known_default().unwrap_or(80);
-    let addr = (host, port)
+    // Every resolved address in turn (localhost is often ::1 first).
+    let addrs: Vec<_> = (host, port)
         .to_socket_addrs()
         .map_err(|e| format!("resolve {host}:{port}: {e}"))?
-        .next()
-        .ok_or_else(|| format!("resolve {host}:{port}: no address"))?;
-    let stream = TcpStream::connect_timeout(&addr, timeout)
-        .map_err(|e| format!("connect {host}:{port}: {e}"))?;
+        .collect();
+    let mut last = format!("resolve {host}:{port}: no address");
+    let mut stream = None;
+    for addr in addrs {
+        match TcpStream::connect_timeout(&addr, timeout) {
+            Ok(s) => {
+                stream = Some(s);
+                break;
+            }
+            Err(e) => last = format!("connect {host}:{port}: {e}"),
+        }
+    }
+    let stream = stream.ok_or(last)?;
     stream.set_read_timeout(Some(timeout)).ok();
     stream.set_write_timeout(Some(timeout)).ok();
     let mut path = parsed.path().to_string();
@@ -147,7 +128,9 @@ fn open(url: &str, timeout: Duration) -> Result<(TcpStream, String, String), Str
         path.push('?');
         path.push_str(q);
     }
-    Ok((stream, format!("{host}:{port}"), path))
+    let host_only = host.trim_start_matches('[').trim_end_matches(']');
+    let conn = Conn::new(stream, host_only, tls)?;
+    Ok((conn, format!("{host}:{port}"), path))
 }
 
 fn auth_header(bearer: Option<&str>) -> Result<String, String> {
@@ -401,19 +384,6 @@ mod tests {
         .unwrap();
         assert_eq!(r.status, 404);
         assert_eq!(r.error_text(), "no");
-    }
-
-    #[test]
-    fn https_is_refused_clearly() {
-        let e = request(
-            "GET",
-            "https://h/api/agents",
-            None,
-            None,
-            Duration::from_secs(1),
-        )
-        .unwrap_err();
-        assert!(e.contains("https is not supported"), "{e}");
     }
 
     #[test]

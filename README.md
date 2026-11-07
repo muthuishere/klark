@@ -21,6 +21,21 @@ cargo build --release          # needs Zig 0.16 for the vendored libghostty-vt
 ./target/release/klark
 ```
 
+## Hub in two steps
+
+1. Deploy the hub (klarkhub: `hub/`, Docker image; Kubernetes or `docker compose up -d`).
+2. On each machine:
+
+```bash
+klark hub connect --url http://hub-host:8080   # approve this machine in the browser (device code)
+klark hub connect                              # afterwards: reconnect to the default hub
+klark hub ls / use <name> / rm <name> / status
+```
+
+Hubs are saved in `<config dir>/hubs.json` (0600). Scripts can pass `--token`/`--token-stdin`
+or `KLARK_HUB_TOKEN` instead of the browser step. `https://` hubs work (rustls); for a
+private CA or self-signed ingress set `KLARK_HUB_CA_FILE=/path/ca.pem`. See ADR 0012.
+
 ## Link a machine to a hub
 
 ```bash
