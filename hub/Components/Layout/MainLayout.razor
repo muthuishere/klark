@@ -1,4 +1,6 @@
 @inherits LayoutComponentBase
+@inject HubAccounts Accounts
+@inject HubAccess Access
 
 <header class="topbar">
     <a class="brand" href="/">klark</a>
@@ -10,6 +12,16 @@
                     <div class="menu-info">@(context.User.FindFirst("display_name")?.Value ?? context.User.Identity?.Name)</div>
                     <a href="/messages">Messages</a>
                     <a href="/token">CLI token</a>
+                    @if (context.User.FindFirst(AccountEndpoints.SourceClaim)?.Value is DirectoryUser.BuiltIn or DirectoryUser.Mock)
+                    {
+                        <a href="/account/password">Change password</a>
+                    }
+                    @if (Access.IsAdmin(context.User))
+                    {
+                        <a href="/admin/users">Users</a>
+                        <a href="/admin/directory">Sign-in directory</a>
+                        <a href="/admin/machines">Machines</a>
+                    }
                     <form method="post" action="/account/logout">
                         <AntiforgeryToken />
                         <button type="submit" class="menu-item">Sign out</button>
@@ -19,6 +31,14 @@
         </Authorized>
     </AuthorizeView>
 </header>
+<AuthorizeView>
+    <Authorized>
+        @if (context.User.FindFirst(AccountEndpoints.SourceClaim)?.Value == DirectoryUser.BuiltIn && Accounts.AdminPasswordIsDefault())
+        {
+            <a class="banner" href="/account/password">Change the default admin password</a>
+        }
+    </Authorized>
+</AuthorizeView>
 <main class="page">
     @Body
 </main>

@@ -12,6 +12,15 @@ public sealed class HubOptions
     /// <summary>Cap on each machine's SQLite file (ADR 0001, D7).</summary>
     public long MaxBytesPerMachine { get; set; } = 10 * 1024 * 1024;
 
+    /// <summary>
+    /// This hub's public base URL (e.g. https://klark.example.com), used in links
+    /// shown to machines. Empty: derived from the request (X-Forwarded-* honoured).
+    /// </summary>
+    public string PublicUrl { get; set; } = "";
+
+    /// <summary>The built-in admin account (ADR 0009).</summary>
+    public AdminOptions Admin { get; set; } = new();
+
     /// <summary>How people sign in: Local (Users below), MockLdap, or Ldap.</summary>
     public AuthOptions Auth { get; set; } = new();
 
@@ -99,13 +108,20 @@ public static class TokenHash
     }
 }
 
+public sealed class AdminOptions
+{
+    /// <summary>Password given to the built-in admin when hub.db has none yet. Empty: "adminadmin".</summary>
+    public string Password { get; set; } = "";
+}
+
 public sealed class AuthOptions
 {
     /// <summary>
-    /// "Ldap" (default: your LDAP / Active Directory checks every password),
-    /// "MockLdap" (built-in pretend directory, development only) or "Local" (hashes in Hub:Users).
+    /// "Ldap" (your LDAP / Active Directory checks every password), "MockLdap"
+    /// (users kept in hub.db) or "Local" (hashes in Hub:Users). Empty: Ldap when
+    /// Hub:Auth:Ldap:Host is configured, else MockLdap. /admin/directory overrides it.
     /// </summary>
-    public string Mode { get; set; } = "Ldap";
+    public string Mode { get; set; } = "";
 
     /// <summary>If not empty, only members of one of these groups may sign in.</summary>
     public List<string> AllowedGroups { get; set; } = new();
@@ -118,7 +134,7 @@ public sealed class AuthOptions
 
     public LdapOptions Ldap { get; set; } = new();
 
-    /// <summary>Entries of the mock directory. Empty means the seeded demo users.</summary>
+    /// <summary>Seed for the mock directory on first start. Empty: user1/user1pass, user2/user2pass.</summary>
     public List<MockLdapEntry> MockUsers { get; set; } = new();
 }
 
@@ -171,7 +187,7 @@ public sealed class MockLdapEntry
 {
     public string Uid { get; set; } = "";
 
-    /// <summary>Plain text on purpose: this is a mock directory for development.</summary>
+    /// <summary>Seed only: hashed into hub.db on first start.</summary>
     public string Password { get; set; } = "";
     public string DisplayName { get; set; } = "";
     public List<string> Groups { get; set; } = new();

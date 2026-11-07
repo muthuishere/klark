@@ -7,7 +7,11 @@ using Microsoft.Extensions.Options;
 namespace KlarkHub.Services;
 
 /// <summary>Who signed in, as the directory describes them.</summary>
-public sealed record DirectoryUser(string Name, string DisplayName, IReadOnlyList<string> Groups);
+public sealed record DirectoryUser(string Name, string DisplayName, IReadOnlyList<string> Groups, string Source = "")
+{
+    /// <summary>Values of the "klark_source" claim: where the account lives.</summary>
+    public const string BuiltIn = "builtin", Mock = "mock";
+}
 
 /// <summary>Checks a name and password. Picked by Hub:Auth:Mode.</summary>
 public interface IUserDirectory
@@ -20,20 +24,28 @@ public sealed class SignInService
 {
     private readonly IServiceProvider _services;
     private readonly IOptionsMonitor<HubOptions> _options;
+    private readonly HubAccounts _accounts;
     private readonly ILogger<SignInService> _log;
 
-    public SignInService(IServiceProvider services, IOptionsMonitor<HubOptions> options, ILogger<SignInService> log)
+    public SignInService(IServiceProvider services, IOptionsMonitor<HubOptions> options, HubAccounts accounts, ILogger<SignInService> log)
     {
         _services = services;
         _options = options;
+        _accounts = accounts;
         _log = log;
     }
 
     public async Task<DirectoryUser?> SignInAsync(string username, string password, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(username) || string.IsNullOrEmpty(password)) return null;
+        // The built-in admin works in every mode and is checked before any directory;
+        // the name "admin" never falls through to the directory.
+        if (_accounts.IsAdminName(username))
+        {
+            return _accounts.VerifyAdmin(password) ? _accounts.AdminUser() : null;
+        }
         var auth = _options.CurrentValue.Auth;
-        IUserDirectory directory = auth.Mode.ToLowerInvariant() switch
+        IUserDirectory directory = _accounts.EffectiveMode().ToLowerInvariant() switch
         {
             "local" => _services.GetRequiredService<LocalDirectory>(),
             "mockldap" => _services.GetRequiredService<MockLdapDirectory>(),
@@ -61,43 +73,18 @@ public sealed class SignInService
 }
 
 /// <summary>
-/// A pretend LDAP directory held in memory, for development and demos. It
-/// behaves like a bind against ou=users with group membership, without a
-/// server. With no Hub:Auth:MockUsers configured it seeds:
-///   admin/admin (klark-admins, klark-users), alice/alice and bob/bob (klark-users),
-///   viewer/viewer (klark-users, klark-readonly: can watch, cannot type).
+/// A pretend LDAP directory for local hubs and demos: its users live in hub.db
+/// with hashed passwords (seeded user1/user1pass and user2/user2pass) and are
+/// managed by the admin at /admin/users.
 /// </summary>
 public sealed class MockLdapDirectory : IUserDirectory
 {
-    private static readonly MockLdapEntry[] Seed =
-    {
-        new() { Uid = "admin", Password = "admin", DisplayName = "Administrator", Groups = new() { "klark-admins", "klark-users" } },
-        new() { Uid = "alice", Password = "alice", DisplayName = "Alice", Groups = new() { "klark-users" } },
-        new() { Uid = "bob", Password = "bob", DisplayName = "Bob", Groups = new() { "klark-users" } },
-        new() { Uid = "viewer", Password = "viewer", DisplayName = "Viewer (read-only)", Groups = new() { "klark-users", "klark-readonly" } },
-    };
+    private readonly HubAccounts _accounts;
 
-    private readonly IOptionsMonitor<HubOptions> _options;
+    public MockLdapDirectory(HubAccounts accounts) => _accounts = accounts;
 
-    public MockLdapDirectory(IOptionsMonitor<HubOptions> options, ILogger<MockLdapDirectory> log)
-    {
-        _options = options;
-        if (options.CurrentValue.Auth.MockUsers.Count == 0)
-        {
-            log.LogWarning("Mock LDAP is using its seeded demo users (admin/admin, alice/alice, bob/bob, viewer/viewer). Do not expose this hub.");
-        }
-    }
-
-    public Task<DirectoryUser?> AuthenticateAsync(string username, string password, CancellationToken ct = default)
-    {
-        var entries = _options.CurrentValue.Auth.MockUsers is { Count: > 0 } configured ? configured : Seed.ToList();
-        var entry = entries.FirstOrDefault(e => string.Equals(e.Uid, username, StringComparison.OrdinalIgnoreCase));
-        var ok = entry is not null && System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(
-            Encoding.UTF8.GetBytes(entry.Password), Encoding.UTF8.GetBytes(password));
-        return Task.FromResult(ok
-            ? new DirectoryUser(entry!.Uid, string.IsNullOrEmpty(entry.DisplayName) ? entry.Uid : entry.DisplayName, entry.Groups)
-            : null);
-    }
+    public Task<DirectoryUser?> AuthenticateAsync(string username, string password, CancellationToken ct = default) =>
+        Task.FromResult(_accounts.VerifyMockUser(username, password));
 }
 
 /// <summary>
@@ -108,17 +95,35 @@ public sealed class MockLdapDirectory : IUserDirectory
 /// </summary>
 public sealed class LdapDirectory : IUserDirectory
 {
-    private readonly IOptionsMonitor<HubOptions> _options;
+    private readonly HubAccounts _accounts;
     private readonly ILogger<LdapDirectory> _log;
 
-    public LdapDirectory(IOptionsMonitor<HubOptions> options, ILogger<LdapDirectory> log)
+    public LdapDirectory(HubAccounts accounts, ILogger<LdapDirectory> log)
     {
-        _options = options;
+        _accounts = accounts;
         _log = log;
     }
 
+    /// <summary>Settings in force: /admin/directory's, else configuration.</summary>
     public Task<DirectoryUser?> AuthenticateAsync(string username, string password, CancellationToken ct = default) =>
-        Task.Run(() => Authenticate(username, password), ct);
+        Task.Run(() => Authenticate(_accounts.EffectiveLdap(), username, password), ct);
+
+    /// <summary>"Test connection": a bind with the given settings and user. Returns a line to show.</summary>
+    public async Task<(bool Ok, string Message)> TestAsync(LdapOptions o, string username, string password)
+    {
+        if (string.IsNullOrWhiteSpace(username) || string.IsNullOrEmpty(password)) return (false, "Type a test user and password.");
+        try
+        {
+            var user = await Task.Run(() => Authenticate(o, username.Trim(), password));
+            return user is null
+                ? (false, "Connected, but that user and password did not bind.")
+                : (true, $"Signed in as {user.DisplayName}; groups: {(user.Groups.Count == 0 ? "none" : string.Join(", ", user.Groups))}.");
+        }
+        catch (Exception e) when (e is LdapException or DirectoryOperationException or ArgumentException or FormatException)
+        {
+            return (false, "LDAP error: " + e.Message);
+        }
+    }
 
     private LdapConnection Connect(LdapOptions o)
     {
@@ -145,9 +150,8 @@ public sealed class LdapDirectory : IUserDirectory
         return conn;
     }
 
-    private DirectoryUser? Authenticate(string username, string password)
+    private DirectoryUser? Authenticate(LdapOptions o, string username, string password)
     {
-        var o = _options.CurrentValue.Auth.Ldap;
         string dn;
         SearchResultEntry? entry = null;
 

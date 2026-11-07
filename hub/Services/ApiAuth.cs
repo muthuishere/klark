@@ -127,14 +127,14 @@ public static class ApiAuth
 /// <summary>`Authorization: Bearer &lt;machine token&gt;` on /api: the caller acts as that machine (ADR 0009).</summary>
 public sealed class MachineTokenHandler(
     IOptionsMonitor<AuthenticationSchemeOptions> options, ILoggerFactory logger, UrlEncoder encoder,
-    IOptionsMonitor<HubOptions> hub) : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
+    HubAccounts accounts) : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
 {
     protected override Task<AuthenticateResult> HandleAuthenticateAsync()
     {
         var auth = Request.Headers.Authorization.ToString();
         if (!auth.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)) return Task.FromResult(AuthenticateResult.NoResult());
         var token = auth["Bearer ".Length..].Trim();
-        var machine = token.Length == 0 ? null : TokenHash.Match(hub.CurrentValue.Machines, token);
+        var machine = accounts.MatchToken(token);
         if (machine is null) return Task.FromResult(AuthenticateResult.Fail("unknown token"));
         var (id, error) = ApiAuth.ResolveMachine(machine, Request);
         if (id is null) return Task.FromResult(AuthenticateResult.Fail(error!));

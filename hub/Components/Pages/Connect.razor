@@ -1,0 +1,38 @@
+@page "/connect"
+@attribute [Authorize]
+@inject MachineConnect Connector
+
+@* Device flow (ADR 0009): a machine ran `klark hub connect` and shows this code. *@
+
+<PageTitle>Connect a machine · klark hub</PageTitle>
+
+<section class="login">
+    <h1>Connect a machine</h1>
+    <Notice Ok="@Ok" Error="@Error" />
+    @if (request is not null && request.Status == "pending")
+    {
+        <p>Machine <b>@request.Machine</b> asks to join this hub with code</p>
+        <p class="code">@request.Code</p>
+        <p class="error">Only approve if you just ran <code>klark hub connect</code> yourself and it shows this same code.
+            You will be recorded as the machine's owner.</p>
+        <form method="post" action="/connect/decide" class="stack">
+            <AntiforgeryToken />
+            <input type="hidden" name="code" value="@request.Code" />
+            <button type="submit" name="decision" value="approve">Approve</button>
+            <button type="submit" name="decision" value="deny" class="danger">Deny</button>
+        </form>
+    }
+    else if (string.IsNullOrEmpty(Ok))
+    {
+        <p class="muted">This code is unknown, already used, or has expired. Run <code>klark hub connect</code> again.</p>
+    }
+</section>
+
+@code {
+    [SupplyParameterFromQuery] public string? Code { get; set; }
+    [SupplyParameterFromQuery] public string? Ok { get; set; }
+    [SupplyParameterFromQuery] public string? Error { get; set; }
+    private MachineConnect.Pending? request;
+
+    protected override void OnInitialized() => request = Connector.Find(Code);
+}

@@ -35,6 +35,23 @@ builder.Configuration.AddCommandLine(args);
 builder.WebHost.UseStaticWebAssets();
 
 builder.Services.Configure<HubOptions>(builder.Configuration.GetSection("Hub"));
+// ADR 0009: with no Hub:Auth:Mode, a hub with an LDAP host uses it; one without works locally (MockLdap).
+builder.Services.PostConfigure<HubOptions>(o =>
+{
+    if (string.IsNullOrWhiteSpace(o.Auth.Mode))
+        o.Auth.Mode = string.IsNullOrWhiteSpace(builder.Configuration["Hub:Auth:Ldap:Host"]) ? "MockLdap" : "Ldap";
+});
+builder.Services.AddSingleton<HubAccounts>();
+builder.Services.AddSingleton<MachineConnect>();
+// Behind a Kubernetes ingress or other proxy: honour X-Forwarded-Proto/Host/For.
+builder.Services.Configure<Microsoft.AspNetCore.Builder.ForwardedHeadersOptions>(o =>
+{
+    o.ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor |
+                         Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto |
+                         Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedHost;
+    o.KnownIPNetworks.Clear();
+    o.KnownProxies.Clear();
+});
 builder.Services.AddSingleton<MockLdapDirectory>();
 builder.Services.AddSingleton<LdapDirectory>();
 builder.Services.AddSingleton<LocalDirectory>();
@@ -87,6 +104,10 @@ builder.Services.AddRateLimiter(o =>
     o.AddPolicy("login", ctx => RateLimitPartition.GetFixedWindowLimiter(
         ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown",
         _ => new FixedWindowRateLimiterOptions { PermitLimit = 10, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
+    // `klark hub connect`: a poll every 2 s for up to 10 min, plus a few starts.
+    o.AddPolicy("connect", ctx => RateLimitPartition.GetFixedWindowLimiter(
+        ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        _ => new FixedWindowRateLimiterOptions { PermitLimit = 60, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
 });
 
 var app = builder.Build();
@@ -94,18 +115,29 @@ var app = builder.Build();
 {
     var auth = app.Services.GetRequiredService<IOptionsMonitor<HubOptions>>().CurrentValue.Auth;
     var log = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("KlarkHub.Auth");
-    log.LogInformation("sign-in mode: {Mode}", auth.Mode);
-    if (auth.Mode.Equals("Ldap", StringComparison.OrdinalIgnoreCase))
-    {
-        log.LogInformation("ldap: {Host}:{Port} ssl={Ssl} starttls={StartTls} {How}", auth.Ldap.Host,
-            auth.Ldap.Port > 0 ? auth.Ldap.Port : (auth.Ldap.UseSsl ? 636 : 389), auth.Ldap.UseSsl, auth.Ldap.StartTls,
-            string.IsNullOrWhiteSpace(auth.Ldap.UserSearchBase) ? $"bind as {auth.Ldap.UserDnTemplate}" : $"search {auth.Ldap.UserSearchBase} {auth.Ldap.UserFilter}");
-    }
-    else if (!auth.Mode.Equals("Local", StringComparison.OrdinalIgnoreCase) && !auth.Mode.Equals("MockLdap", StringComparison.OrdinalIgnoreCase))
+    if (!HubAccounts.Modes.Contains(auth.Mode, StringComparer.OrdinalIgnoreCase))
     {
         throw new InvalidOperationException($"Hub:Auth:Mode must be Ldap, Local or MockLdap, not '{auth.Mode}'");
     }
+    // Creates the built-in admin and the mock users on first start.
+    var accounts = app.Services.GetRequiredService<HubAccounts>();
+    accounts.EnsureReady();
+    var mode = accounts.EffectiveMode();
+    log.LogInformation("sign-in mode: {Mode}", mode);
+    if (mode.Equals("Ldap", StringComparison.OrdinalIgnoreCase))
+    {
+        var l = accounts.EffectiveLdap();
+        log.LogInformation("ldap: {Host}:{Port} ssl={Ssl} starttls={StartTls} {How}", l.Host,
+            l.Port > 0 ? l.Port : (l.UseSsl ? 636 : 389), l.UseSsl, l.StartTls,
+            string.IsNullOrWhiteSpace(l.UserSearchBase) ? $"bind as {l.UserDnTemplate}" : $"search {l.UserSearchBase} {l.UserFilter}");
+    }
+    if (accounts.AdminPasswordIsDefault())
+    {
+        log.LogWarning("the built-in admin still has the default password; sign in as admin and change it at /account/password");
+    }
 }
+
+app.UseForwardedHeaders();
 
 if (!app.Environment.IsDevelopment())
 {
@@ -118,11 +150,30 @@ app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSecond
 app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
+// /admin/* (pages and their form posts): built-in admin or Auth:AdminGroups only.
+app.Use(async (ctx, next) =>
+{
+    if (ctx.Request.Path.StartsWithSegments("/admin"))
+    {
+        if (ctx.User.Identity?.IsAuthenticated != true)
+        {
+            ctx.Response.Redirect("/login?returnUrl=" + Uri.EscapeDataString(ctx.Request.Path + ctx.Request.QueryString));
+            return;
+        }
+        if (!ctx.RequestServices.GetRequiredService<HubAccess>().IsAdmin(ctx.User))
+        {
+            ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
+            await ctx.Response.WriteAsync("admins only");
+            return;
+        }
+    }
+    await next();
+});
 app.UseAntiforgery();
 app.MapStaticAssets();
 
 // klark machines dial in here: `klark expose --hub ws://<host>:8080/agent --token <token>`.
-app.Map("/agent", async (HttpContext ctx, MachineRegistry registry, IOptionsMonitor<HubOptions> options) =>
+app.Map("/agent", async (HttpContext ctx, MachineRegistry registry) =>
 {
     if (!ctx.WebSockets.IsWebSocketRequest)
     {
@@ -130,7 +181,7 @@ app.Map("/agent", async (HttpContext ctx, MachineRegistry registry, IOptionsMoni
     }
     var auth = ctx.Request.Headers.Authorization.ToString();
     var token = auth.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) ? auth["Bearer ".Length..].Trim() : "";
-    var machine = token.Length == 0 ? null : TokenHash.Match(options.CurrentValue.Machines, token);
+    var machine = ctx.RequestServices.GetRequiredService<HubAccounts>().MatchToken(token);
     if (machine is null)
     {
         return Results.Unauthorized();
@@ -158,6 +209,7 @@ app.MapPost("/account/login", async (HttpContext ctx, [FromForm] string username
     {
         new(ClaimTypes.Name, user.Name),
         new("display_name", user.DisplayName),
+        new(AccountEndpoints.SourceClaim, user.Source),
     };
     claims.AddRange(user.Groups.Select(g => new Claim(ClaimTypes.Role, g)));
     var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
@@ -297,11 +349,15 @@ static IResult ServeAsset(HttpContext ctx, Asset asset, AssetService assets)
     return Results.Stream(stream, AssetTypes.ServeAs(asset.Mime));
 }
 
+app.MapAccountEndpoints();
+
 app.MapGet("/healthz", () => Results.Ok("ok"));
 
 app.MapRazorComponents<App>().AddInteractiveServerRenderMode();
 
 app.Run();
+
+public partial class Program;
 
 record TokenRequest(string? Username, string? Password);
 record SendRequest(string? To, string? Text, string? From);

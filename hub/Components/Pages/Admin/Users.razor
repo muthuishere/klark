@@ -1,0 +1,60 @@
+@page "/admin/users"
+@attribute [Authorize]
+@inject HubAccounts Accounts
+
+@* Guarded by the /admin middleware in Program.cs (admins only). *@
+
+<PageTitle>Users · klark hub</PageTitle>
+
+<section class="admin">
+    <h1>Users</h1>
+    <Notice Ok="@Ok" Error="@Error" />
+    <p class="muted">The built-in mock directory, used while the sign-in mode is <b>MockLdap</b> (now: @mode).
+        People change their own password from the ⋯ menu.</p>
+
+    <ul class="rows">
+        @foreach (var u in users)
+        {
+            <li class="row">
+                <div><b>@u.Uid</b> <span class="muted">@u.DisplayName · @(u.Groups.Count == 0 ? "no groups" : string.Join(", ", u.Groups))</span></div>
+                <details>
+                    <summary>Manage</summary>
+                    <form method="post" action="/admin/users/reset" class="stack">
+                        <AntiforgeryToken />
+                        <input type="hidden" name="uid" value="@u.Uid" />
+                        <label>New password <input name="password" type="password" autocomplete="new-password" minlength="8" required /></label>
+                        <button type="submit">Reset password</button>
+                    </form>
+                    <form method="post" action="/admin/users/delete">
+                        <AntiforgeryToken />
+                        <input type="hidden" name="uid" value="@u.Uid" />
+                        <button type="submit" class="danger">Delete @u.Uid</button>
+                    </form>
+                </details>
+            </li>
+        }
+    </ul>
+
+    <h2>Add a user</h2>
+    <form method="post" action="/admin/users/add" class="stack">
+        <AntiforgeryToken />
+        <label>Name <input name="uid" autocomplete="off" required /></label>
+        <label>Display name <input name="display" autocomplete="off" /></label>
+        <label>Groups <input name="groups" value="klark-users" placeholder="klark-users, klark-admins, klark-readonly" /></label>
+        <label>Password <input name="password" type="password" autocomplete="new-password" minlength="8" required /></label>
+        <button type="submit">Add user</button>
+    </form>
+</section>
+
+@code {
+    [SupplyParameterFromQuery] public string? Ok { get; set; }
+    [SupplyParameterFromQuery] public string? Error { get; set; }
+    private List<MockUser> users = new();
+    private string mode = "";
+
+    protected override void OnInitialized()
+    {
+        users = Accounts.MockUsers();
+        mode = Accounts.EffectiveMode();
+    }
+}

@@ -190,7 +190,7 @@ cargo test -p klark-link                 # link: unit + end-to-end (no Zig neede
 just test                                # klark core (needs Zig 0.16: ZIG=/path/to/zig)
 just check                               # formatting + tests
 cd hub && dotnet build                   # hub (needs .NET 9 SDK), or:
-cd hub && docker compose up -d --build   # http://localhost:8080, admin/admin (MockLdap)
+cd hub && docker compose up -d --build   # http://localhost:8080, admin/adminadmin (built-in admin)
 python3 experiments/drive.py             # load matrix against the stand-in hub
 ```
 

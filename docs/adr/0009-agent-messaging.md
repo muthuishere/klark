@@ -86,16 +86,43 @@ The hub stores messages in `hub.db`:
   the JWT in `<klark config dir>/hub.json` (mode 0600).
 
 ## Sign-in modes (amends ADR 0004)
-- The default `Hub:Auth:Mode` is now **`Ldap`**: the organisation's LDAP or
-  Active Directory checks every password, by a bind as the user. The hub
-  never stores passwords. Two styles are supported: direct bind
+- With no `Hub:Auth:Mode` configured, the hub uses **`Ldap`** when
+  `Hub:Auth:Ldap:Host` is set and **`MockLdap`** otherwise, so an unconfigured
+  hub works locally out of the box. `Ldap`: the organisation's LDAP or
+  Active Directory checks every password, by a bind as the user; the hub
+  stores no directory passwords. Two styles are supported: direct bind
   (`UserDnTemplate`, including the AD UPN form `{0}@corp.example.com`) and
   search-then-bind (`UserSearchBase`, `UserFilter`, `BindDn`/`BindPassword`).
   LDAPS (`UseSsl`) and StartTLS are supported, and groups come from a group
   search and/or `memberOf`.
-- **`MockLdap`** stays built into the same image, opt-in with
-  `KLARK_HUB__AUTH__MODE=MockLdap`, for demos and trials.
+- **`MockLdap`** users live in hub.db with PasswordHasher hashes (first start
+  seeds `user1`/`user1pass`, `user2`/`user2pass`, or `Hub:Auth:MockUsers` if
+  configured). The admin manages them at `/admin/users`; users change their own
+  password at `/account/password`.
+- A **built-in `admin`** account always exists (hash in hub.db; first-start
+  password `adminadmin`, or `Hub:Admin:Password`). It is checked before any
+  directory, works in every mode, and sees and drives every machine. While its
+  password is the default the UI shows a banner to change it. The name
+  `admin` is therefore reserved and never reaches the directory.
+- The admin can switch the mode and edit LDAP settings at `/admin/directory`
+  (stored in hub.db, effective on the next sign-in, no restart). Configuration
+  stays the default for anything not stored. "Test connection" binds with a
+  typed test user and password against the saved settings.
 - `Local` is unchanged.
+
+## Connecting a machine (device flow)
+- `klark hub connect --url <hub>` calls `POST /api/connect/start {name}` and
+  gets a code like `ABCD-EFGH`, a secret `poll_id` and a `/connect?code=` link
+  (base from `Hub:PublicUrl`, else the request with X-Forwarded-* honoured).
+- A signed-in person opens the link and approves or denies. Any signed-in user
+  may approve; they are recorded as the machine's owner (`approved_by`), and
+  only they or an admin may re-key a machine of that name.
+- The machine polls `POST /api/connect/poll {poll_id}` every 2 s; on approval
+  it receives a fresh 32-byte token exactly once. Codes expire after 10
+  minutes. Pending requests live in memory (single replica); only the token's
+  SHA-256 is stored, in hub.db next to `Hub:Machines`, and both are accepted.
+- Admins list and revoke machines at `/admin/machines`; revoking drops the
+  live link.
 - Hub settings can be given as environment variables with the prefix
   `KLARK_`, e.g. `KLARK_HUB__AUTH__LDAP__HOST`.
 

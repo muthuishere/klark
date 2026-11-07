@@ -49,12 +49,16 @@ public exposure put a TLS proxy in front and use `wss://` (the link supports bot
   - groups from `GroupSearchBase` and/or `memberOf` (`UseMemberOf`).
   To try it without a directory of your own:
   `docker compose --profile ldap up -d --build` signs in alice/alice or bob/bob against a test OpenLDAP.
-- `MockLdap`: a built-in pretend directory in the same image, for demos and
-  trials. Opt in with `KLARK_HUB__AUTH__MODE=MockLdap` (with compose:
-  `KLARK_HUB_AUTH_MODE=MockLdap docker compose up -d --build`). Demo users are
-  `admin/admin`, `alice/alice`, `bob/bob` and the read-only `viewer/viewer`;
-  set your own in `Hub:Auth:MockUsers` (`Uid`, `Password`, `DisplayName`, `Groups`).
+- `MockLdap`: users kept in hub.db (hashed), managed by the admin at
+  `/admin/users`. First start seeds `user1/user1pass` and `user2/user2pass`
+  (or `Hub:Auth:MockUsers` if set). This is the mode of a hub with no
+  `Hub:Auth:Mode` and no `Hub:Auth:Ldap:Host`, so a bare `dotnet run` works.
 - `Local`: `Hub:Users` with `dotnet run -- hash-password` hashes.
+
+A built-in `admin` account works in every mode (first-start password
+`adminadmin`, or `KLARK_HUB__ADMIN__PASSWORD`); change it at `/account/password`.
+The admin can switch the mode and edit LDAP settings at `/admin/directory`
+without a restart. Deployment: [docs/deploy.md](../docs/deploy.md).
 
 `Hub:Auth:AllowedGroups`, for example `["klark-users"]`, limits who can sign in.
 

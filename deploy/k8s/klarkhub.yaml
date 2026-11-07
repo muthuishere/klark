@@ -1,0 +1,73 @@
+# klarkhub: one replica only (SQLite + local asset store on the PVC). See docs/deploy.md.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: klarkhub-data
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: klarkhub
+  labels: { app: klarkhub }
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate # never two pods on one SQLite file
+  selector:
+    matchLabels: { app: klarkhub }
+  template:
+    metadata:
+      labels: { app: klarkhub }
+    spec:
+      securityContext:
+        fsGroup: 1654 # the .NET image's "app" user, so /data is writable
+      containers:
+        - name: klarkhub
+          image: klarkhub:latest
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            # - name: KLARK_HUB__PUBLICURL
+            #   value: https://klark.example.com
+            - name: KLARK_HUB__ADMIN__PASSWORD # used only on first start
+              valueFrom:
+                secretKeyRef: { name: klarkhub, key: admin-password, optional: true }
+            - name: KLARK_HUB__JWT__KEY
+              valueFrom:
+                secretKeyRef: { name: klarkhub, key: jwt-key, optional: true }
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources: # from the load test (docs/experiments/E-06)
+            requests: { cpu: 250m, memory: 512Mi }
+            limits: { cpu: "1", memory: 512Mi }
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: klarkhub-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: klarkhub
+spec:
+  selector: { app: klarkhub }
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+# Ingress: not included (cluster-specific). It must allow WebSockets with long
+# timeouts on /agent and /_blazor; see docs/deploy.md.

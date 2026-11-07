@@ -202,3 +202,20 @@ body:has(.pane-app) .page { max-width: none; padding: 0; }
   max-width: calc(100vw - 32px); padding: 10px 16px; border-radius: 999px; background: var(--card); color: var(--fg);
   border: 1px solid var(--line); box-shadow: 0 4px 18px rgb(0 0 0 / .14); font-size: .9rem; text-align: center; }
 html.klark-paused #components-reconnect-modal, html.klark-paused .components-reconnect-show { display: none !important; }
+/* account and admin pages */
+.ok { color: var(--idle); }
+.admin { max-width: 640px; margin: 24px auto; display: grid; gap: 12px; }
+.admin h2 { font-size: 1.05rem; margin: 12px 0 0; }
+.stack { display: grid; gap: 12px; }
+.admin label { display: grid; gap: 4px; }
+.admin input:not([type=checkbox]), .admin select { height: 44px; padding: 0 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); color: var(--fg); font-size: 16px; }
+.admin label.check { display: flex; align-items: center; gap: 10px; min-height: 44px; }
+.admin label.check input { width: 22px; height: 22px; }
+.rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.row { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); }
+.row details { width: 100%; }
+.row summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; color: var(--link); }
+.row form { margin: 8px 0 0; }
+button[type=submit].danger { background: var(--card); color: var(--blocked); border-color: var(--blocked); }
+.banner { display: flex; align-items: center; padding: 8px 16px; min-height: 44px; background: color-mix(in srgb, var(--blocked) 16%, var(--card)); color: var(--fg); border-bottom: 1px solid var(--blocked); }
+.code { font: 600 1.8rem ui-monospace, monospace; letter-spacing: .12em; margin: 0; }

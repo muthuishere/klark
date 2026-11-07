@@ -1,0 +1,76 @@
+@page "/admin/directory"
+@attribute [Authorize]
+@inject HubAccounts Accounts
+
+@* Guarded by the /admin middleware in Program.cs (admins only). The bind password is never rendered. *@
+
+<PageTitle>Sign-in · klark hub</PageTitle>
+
+<section class="admin">
+    <h1>Sign-in directory</h1>
+    <Notice Ok="@Ok" Error="@Error" />
+
+    <form method="post" action="/admin/directory/mode" class="stack">
+        <AntiforgeryToken />
+        <label>Mode
+            <select name="mode">
+                @foreach (var m in HubAccounts.Modes)
+                {
+                    <option value="@m" selected="@(string.Equals(m, mode, StringComparison.OrdinalIgnoreCase))">@m</option>
+                }
+            </select>
+        </label>
+        <p class="muted">Takes effect on the next sign-in. The built-in admin works in every mode.
+            Save and test LDAP below before switching to it.</p>
+        <button type="submit">Use this mode</button>
+    </form>
+
+    <h2>LDAP settings</h2>
+    <p class="muted">@(stored ? "Saved on this hub." : "From configuration (environment / appsettings) until saved here.")</p>
+    <form method="post" action="/admin/directory/ldap" class="stack">
+        <AntiforgeryToken />
+        <label>Host <input name="host" value="@l.Host" required /></label>
+        <label>Port (0 = 389, or 636 with LDAPS) <input name="port" type="number" min="0" max="65535" value="@l.Port" /></label>
+        <label>Security
+            <select name="tls">
+                <option value="none" selected="@(!l.UseSsl && !l.StartTls)">None</option>
+                <option value="ssl" selected="@l.UseSsl">LDAPS</option>
+                <option value="starttls" selected="@(!l.UseSsl && l.StartTls)">StartTLS</option>
+            </select>
+        </label>
+        <label class="check"><input type="checkbox" name="skipcert" checked="@l.SkipCertificateCheck" /> Accept any certificate (test servers only)</label>
+        <label>User DN template (direct bind) <input name="userdn" value="@l.UserDnTemplate" placeholder="uid={0},ou=people,dc=example,dc=com" /></label>
+        <label>User search base (search-then-bind; overrides the template) <input name="searchbase" value="@l.UserSearchBase" /></label>
+        <label>User filter <input name="filter" value="@l.UserFilter" /></label>
+        <label>Bind DN <input name="binddn" value="@l.BindDn" autocomplete="off" /></label>
+        <label>Bind password <input name="bindpassword" type="password" autocomplete="new-password"
+            placeholder="@(string.IsNullOrEmpty(l.BindPassword) ? "not set" : "set (leave empty to keep)")" /></label>
+        <label>Group search base <input name="groupbase" value="@l.GroupSearchBase" /></label>
+        <label class="check"><input type="checkbox" name="memberof" checked="@l.UseMemberOf" /> Read memberOf</label>
+        <button type="submit">Save LDAP settings</button>
+    </form>
+
+    <h2>Test connection</h2>
+    <form method="post" action="/admin/directory/test" class="stack">
+        <AntiforgeryToken />
+        <p class="muted">Binds as this user with the saved LDAP settings. Nothing is stored.</p>
+        <label>Test user <input name="testuser" autocomplete="off" required /></label>
+        <label>Test password <input name="testpassword" type="password" autocomplete="off" required /></label>
+        <button type="submit">Test connection</button>
+    </form>
+</section>
+
+@code {
+    [SupplyParameterFromQuery] public string? Ok { get; set; }
+    [SupplyParameterFromQuery] public string? Error { get; set; }
+    private string mode = "";
+    private bool stored;
+    private LdapOptions l = new();
+
+    protected override void OnInitialized()
+    {
+        mode = Accounts.EffectiveMode();
+        stored = Accounts.LdapIsStored();
+        l = Accounts.EffectiveLdap();
+    }
+}

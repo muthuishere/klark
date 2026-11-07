@@ -1,6 +1,7 @@
 services:
   hub:
     build: .
+    image: klarkhub
     ports:
       - "8080:8080"
     environment:
@@ -10,8 +11,8 @@ services:
       #   KLARK_HUB__AUTH__LDAP__HOST: ldap.corp.example.com
       #   KLARK_HUB__AUTH__LDAP__USERDNTEMPLATE: "{0}@corp.example.com"
       #
-      # MockLdap (built-in demo users admin/admin, alice/alice, bob/bob, viewer/viewer)
-      # is a one-line opt-in, in the same image:
+      # MockLdap (users kept in hub.db, seeded user1/user1pass and user2/user2pass)
+      # is a one-line opt-in, in the same image. The built-in admin (adminadmin) works in every mode:
       #   KLARK_HUB_AUTH_MODE=MockLdap docker compose up -d --build
       KLARK_HUB__AUTH__MODE: ${KLARK_HUB_AUTH_MODE:-Ldap}
       KLARK_HUB__AUTH__LDAP__HOST: ${KLARK_HUB_LDAP_HOST:-ldap}

@@ -48,6 +48,16 @@ public sealed class MachineRegistry
         catch (Exception e) { _log.LogWarning(e, "change handler failed"); }
     }
 
+    /// <summary>Close the live links of a machine name (and its fleet members, "name:*").</summary>
+    public async Task DisconnectAsync(string name)
+    {
+        foreach (var m in _machines.Values.Where(m => string.Equals(m.Id, name, StringComparison.OrdinalIgnoreCase) ||
+                                                     m.Id.StartsWith(name + ":", StringComparison.OrdinalIgnoreCase)).ToList())
+        {
+            await m.CloseAsync();
+        }
+    }
+
     /// <summary>Serve one machine's WebSocket until it closes.</summary>
     public async Task RunAsync(WebSocket socket, string machineId, CancellationToken ct)
     {

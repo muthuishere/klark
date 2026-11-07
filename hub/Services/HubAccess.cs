@@ -14,7 +14,8 @@ public sealed class HubAccess
     public HubAccess(IOptionsMonitor<HubOptions> options) => _options = options;
 
     public bool IsAdmin(ClaimsPrincipal user) =>
-        InAny(user, _options.CurrentValue.Auth.AdminGroups);
+        user.Identity?.IsAuthenticated == true &&
+        (user.IsInRole(HubAccounts.AdminRole) || InAny(user, _options.CurrentValue.Auth.AdminGroups));
 
     public bool IsReadOnly(ClaimsPrincipal user) =>
         !IsAdmin(user) && InAny(user, _options.CurrentValue.Auth.ReadOnlyGroups);

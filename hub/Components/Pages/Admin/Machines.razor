@@ -1,0 +1,63 @@
+@page "/admin/machines"
+@attribute [Authorize]
+@using Microsoft.Extensions.Options
+@inject HubAccounts Accounts
+@inject HubStore Store
+@inject MachineRegistry Registry
+@inject IOptionsMonitor<HubOptions> Options
+
+@* Guarded by the /admin middleware in Program.cs (admins only). *@
+
+<PageTitle>Machines · klark hub</PageTitle>
+
+<section class="admin">
+    <h1>Machines</h1>
+    <Notice Ok="@Ok" Error="@Error" />
+    <p class="muted">To add a machine, run <code>klark hub connect --url @baseUrl</code> on it and approve the code it shows.
+        Revoking drops its live link, and its token stops working.</p>
+    <ul class="rows">
+        @foreach (var m in rows)
+        {
+            <li class="row">
+                <div><b>@m.Name</b> <span class="muted">@Status(m.Name) · approved by @(string.IsNullOrEmpty(m.ApprovedBy) ? "?" : m.ApprovedBy), @m.Created.ToLocalTime().ToString("g")</span></div>
+                <form method="post" action="/admin/machines/revoke">
+                    <AntiforgeryToken />
+                    <input type="hidden" name="name" value="@m.Name" />
+                    <button type="submit" class="danger">Revoke</button>
+                </form>
+            </li>
+        }
+        @foreach (var m in Options.CurrentValue.Machines)
+        {
+            <li class="row"><div><b>@m.Name</b> <span class="muted">@Status(m.Name) · from configuration</span></div></li>
+        }
+    </ul>
+    @if (rows.Count == 0 && Options.CurrentValue.Machines.Count == 0)
+    {
+        <p class="muted">No machines yet.</p>
+    }
+</section>
+
+@code {
+    [SupplyParameterFromQuery] public string? Ok { get; set; }
+    [SupplyParameterFromQuery] public string? Error { get; set; }
+    [CascadingParameter] private HttpContext? Http { get; set; }
+    private List<HubAccounts.MachineRow> rows = new();
+    private List<KnownMachine> known = new();
+    private string baseUrl = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        rows = Accounts.MachineRows();
+        known = await Store.KnownMachinesAsync();
+        if (Http is not null) baseUrl = AccountEndpoints.PublicBase(Http, Options.CurrentValue);
+    }
+
+    private string Status(string name)
+    {
+        bool Mine(string id) => string.Equals(id, name, StringComparison.OrdinalIgnoreCase) || id.StartsWith(name + ":", StringComparison.OrdinalIgnoreCase);
+        if (Registry.Machines.Any(c => Mine(c.Id))) return "online";
+        var seen = known.Where(k => Mine(k.Id)).Select(k => (DateTimeOffset?)k.LastSeen).Max();
+        return seen is null ? "never connected" : "last seen " + seen.Value.ToLocalTime().ToString("g");
+    }
+}
