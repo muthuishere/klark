@@ -30,8 +30,23 @@ window.klarkTerm = (() => {
     t.sizer.style.height = `${Math.ceil(h * s)}px`;
   }
 
+  // xterm (300 KB) loads only when a terminal is first opened, never with the chat.
+  let loading = null;
+  function load() {
+    if (window.Terminal) return Promise.resolve();
+    const one = (tag, attrs) => new Promise((ok, bad) => {
+      const el = Object.assign(document.createElement(tag), attrs);
+      el.onload = ok; el.onerror = bad;
+      document.head.appendChild(el);
+    });
+    return loading ??= one("link", { rel: "stylesheet", href: "/lib/xterm.css" })
+      .then(() => one("script", { src: "/lib/xterm.js" }))
+      .then(() => Promise.all([one("script", { src: "/lib/addon-unicode11.js" }), one("script", { src: "/lib/addon-web-links.js" })]));
+  }
+
   return {
-    open(id, host, cols, rows) {
+    async open(id, host, cols, rows) {
+      await load();
       host.innerHTML = "";
       const sizer = document.createElement("div");
       sizer.className = "term-sizer";

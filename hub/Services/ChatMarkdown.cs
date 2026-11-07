@@ -9,6 +9,8 @@ namespace KlarkHub.Services;
 public abstract record MdSegment;
 public sealed record MdHtml(string Html) : MdSegment;
 public sealed record MdCode(string Lang, string Code) : MdSegment;
+/// <summary>Command output with its ANSI colours, already escaped into spans (AnsiHtml).</summary>
+public sealed record MdAnsi(string Html, int Lines) : MdSegment;
 
 /// <summary>
 /// Markdown for the chat view (ADR 0011, D). Raw HTML is disabled; links keep

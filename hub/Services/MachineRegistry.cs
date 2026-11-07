@@ -286,6 +286,14 @@ public sealed class MachineConnection
             : (object)new { type = "get_transcript", id, pane_id = paneId, after }, timeout);
     }
 
+    /// <summary>A file a chat linked to (protocol 4, ADR 0011 G): `{name, path, size, data}` (base64).</summary>
+    public async Task<JsonNode?> GetFileAsync(string paneId, string path, long maxBytes, TimeSpan timeout)
+    {
+        if (Protocol < 4)
+            throw new NotSupportedException($"machine {Id} links with protocol {Protocol}; update klark there to open files");
+        return await RequestAsync("get_file", id => new { type = "get_file", id, pane_id = paneId, path, max_bytes = maxBytes }, timeout);
+    }
+
     /// <summary>Send a request with a fresh id and wait for the machine's `result {id, ...}`.</summary>
     private async Task<JsonNode?> RequestAsync(string what, Func<string, object> build, TimeSpan timeout)
     {

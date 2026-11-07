@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 /// v2 adds `list_agents` and `deliver` (agent messaging, ADR 0009).
 /// v3 adds `pane_size`, `fetch_asset` and `get_transcript` (ADR 0011).
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 4;
 
 /// Machine -> hub.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -139,6 +139,16 @@ pub enum HubMessage {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         limit: Option<u32>,
     },
+    /// v4: a file a chat linked to (absolute, `~/...` or relative to the pane's
+    /// cwd). The machine checks it itself (`files::check`) and answers
+    /// `result {id, result: {name, path, size, data(base64)}}` or `result {id, error}`.
+    GetFile {
+        id: String,
+        pane_id: String,
+        path: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_bytes: Option<u64>,
+    },
 }
 
 /// Socket API methods the hub may invoke through `call`. Anything that can
@@ -233,7 +243,7 @@ mod tests {
 
     #[test]
     fn v3_shapes() {
-        assert_eq!(PROTOCOL_VERSION, 3);
+        assert!(PROTOCOL_VERSION >= 3);
         let size = AgentMessage::PaneSize {
             pane_id: "p1".into(),
             cols: 80,
@@ -279,6 +289,23 @@ mod tests {
                 after: None,
                 before: Some("42".into()),
                 limit: Some(50),
+            }
+        );
+    }
+
+    #[test]
+    fn v4_get_file() {
+        let msg: HubMessage = serde_json::from_str(
+            r#"{"type":"get_file","id":"3","pane_id":"p1","path":"src/a.rs:4","max_bytes":10485760}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            msg,
+            HubMessage::GetFile {
+                id: "3".into(),
+                pane_id: "p1".into(),
+                path: "src/a.rs:4".into(),
+                max_bytes: Some(10_485_760),
             }
         );
     }

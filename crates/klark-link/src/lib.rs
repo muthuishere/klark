@@ -6,6 +6,7 @@
 //! subscribes to, and reads only when asked.
 
 pub mod assets;
+pub mod files;
 pub mod filter;
 pub mod http;
 pub mod protocol;
@@ -551,6 +552,64 @@ impl Session {
                     .run_msg(id, args, MsgReply::Json, self.frames_tx.clone());
                 vec![]
             }
+            // v4: a file a chat linked to. Checked here (files::check), whatever
+            // the hub decided: pane folder or home only, no credentials, size cap.
+            HubMessage::GetFile {
+                id,
+                pane_id,
+                path,
+                max_bytes,
+            } => {
+                let (session, local) = decode_id(&pane_id);
+                let (session, local) = (session.to_string(), local.to_string());
+                let up = match self.upstream_for(&session) {
+                    Ok(up) => up,
+                    Err(e) => {
+                        return vec![AgentMessage::Result {
+                            id,
+                            result: None,
+                            error: Some(e),
+                        }]
+                    }
+                };
+                let out = self.frames_tx.clone();
+                let spawned = std::thread::Builder::new()
+                    .name(format!("klark-link-file-{id}"))
+                    .spawn({
+                        let id = id.clone();
+                        move || {
+                            let outcome = up
+                                .call("pane.get", json!({"pane_id": local}))
+                                .and_then(|info| {
+                                    let pane = info.get("pane").cloned().unwrap_or(info);
+                                    let cwd = pane
+                                        .get("cwd")
+                                        .and_then(Value::as_str)
+                                        .filter(|c| !c.is_empty())
+                                        .map(std::path::PathBuf::from)
+                                        .ok_or("the pane has no working directory")?;
+                                    let home = files::home_dir();
+                                    files::read(&path, &cwd, home.as_deref(), files::max_bytes(max_bytes))
+                                });
+                            if let Err(e) = &outcome {
+                                eprintln!("klark expose: get_file {path}: {e}");
+                            }
+                            let (result, error) = match outcome {
+                                Ok(v) => (Some(v), None),
+                                Err(e) => (None, Some(e)),
+                            };
+                            let _ = out.send(AgentMessage::Result { id, result, error });
+                        }
+                    });
+                match spawned {
+                    Ok(_) => vec![],
+                    Err(e) => vec![AgentMessage::Result {
+                        id,
+                        result: None,
+                        error: Some(e.to_string()),
+                    }],
+                }
+            }
             HubMessage::FetchAsset {
                 id,
                 sha256,
@@ -647,6 +706,7 @@ impl Session {
                 })
             }
             HubMessage::GetTranscript { id, pane_id, .. }
+            | HubMessage::GetFile { id, pane_id, .. }
             | HubMessage::FetchAsset { id, pane_id, .. } => {
                 let (s, l) = decode_id(pane_id);
                 let writes = matches!(msg, HubMessage::FetchAsset { .. });

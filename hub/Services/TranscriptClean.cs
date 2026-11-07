@@ -75,7 +75,7 @@ public static partial class TranscriptClean
 
     public static string StripAnsi(string text) => Ansi().Replace(text, "");
 
-    private static bool IsChrome(string line) => line.Length > 0 && Chrome.Any(re => re.IsMatch(line));
+    internal static bool IsChrome(string line) => line.Length > 0 && Chrome.Any(re => re.IsMatch(line));
 
     private static bool IsBoxTop(string t) => t.Length > 0 && t[0] is '╭' or '┌' or '╔' && t.Count(c => c is '─' or '━' or '═') >= 3 && !t.Contains('┬');
     private static bool IsBoxBottom(string t) => t.Length > 0 && t[0] is '╰' or '└' or '╚' && t.Count(c => c is '─' or '━' or '═') >= 3 && !t.Contains('┴');
@@ -176,7 +176,10 @@ public static partial class TranscriptClean
     /// "⏺ Tool(args)" a tool call, "⎿ " (or "└ ") its result, "⏺ " / "• " other text the agent.
     /// Text before any marker belongs to the agent. Nothing is reworded.
     /// </summary>
-    public static List<ScreenTurn> Turns(string cleaned)
+    public static List<ScreenTurn> Turns(string cleaned) => Turns(cleaned, ">❯›", "⏺●•", "⎿└");
+
+    /// <summary>Turns with one agent's own marker set (see <see cref="ScreenTransformers"/>).</summary>
+    public static List<ScreenTurn> Turns(string cleaned, string userMarks, string agentMarks, string resultMarks)
     {
         var turns = new List<ScreenTurn>();
         string role = "assistant", kind = "text";
@@ -206,7 +209,7 @@ public static partial class TranscriptClean
                 buf.Add(Dedent(line));
                 continue;
             }
-            if (Marker(line, out var markerKind, out var rest))
+            if (Marker(line, userMarks, agentMarks, resultMarks, out var markerKind, out var rest))
             {
                 Flush();
                 switch (markerKind)
@@ -247,25 +250,25 @@ public static partial class TranscriptClean
 
     private static string Dedent(string line) => line.StartsWith("  ") ? line[2..] : line;
 
-    private static bool Marker(string line, out string kind, out string rest)
+    private static bool Marker(string line, string userMarks, string agentMarks, string resultMarks, out string kind, out string rest)
     {
         kind = rest = "";
         if (line.Length < 2) return false;
         var c = line[0];
-        if (c is '>' or '❯' or '›' && line[1] == ' ')
+        if (userMarks.Contains(c) && line[1] == ' ')
         {
             kind = "user";
             rest = line[2..].Trim();
             return rest.Length > 0;
         }
-        if (c is '⏺' or '●' or '•' && line[1] == ' ')
+        if (agentMarks.Contains(c) && line[1] == ' ')
         {
             kind = "agent";
             rest = line[2..];
             return true;
         }
         var t = line.TrimStart();
-        if (t.Length > 1 && t[0] is '⎿' or '└' && t[1] == ' ' && line.Length - t.Length <= 6)
+        if (t.Length > 1 && resultMarks.Contains(t[0]) && t[1] == ' ' && line.Length - t.Length <= 6)
         {
             kind = "result";
             rest = t[2..].Trim();

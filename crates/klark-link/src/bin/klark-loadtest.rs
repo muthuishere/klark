@@ -573,6 +573,14 @@ fn link(
                             },
                             Kind::Other,
                         )),
+                        HubMessage::GetFile { id, .. } => Some((
+                            AgentMessage::Result {
+                                id,
+                                result: None,
+                                error: Some("loadtest machines serve no files".into()),
+                            },
+                            Kind::Other,
+                        )),
                         HubMessage::GetTranscript {
                             id, pane_id, after, ..
                         } => {
