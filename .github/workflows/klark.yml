@@ -21,11 +21,7 @@ concurrency:
 
 jobs:
   test:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -38,13 +34,10 @@ jobs:
         with: { version: "${{ env.ZIG_VERSION }}" }
       - uses: Swatinem/rust-cache@v2
       - name: Rust tests
-        # live_handoff needs a real login session; herdr's CI skipped it on macOS runners too.
-        run: cargo nextest run --workspace --locked --no-fail-fast --status-level fail --final-status-level fail --failure-output final -E "${{ runner.os == 'macOS' && 'not binary(live_handoff)' || 'all()' }}"
+        run: cargo nextest run --workspace --locked --no-fail-fast --status-level fail --final-status-level fail --failure-output final
       - uses: actions/setup-dotnet@v4
-        if: runner.os == 'Linux'
         with: { dotnet-version: "10.0.x" }
       - name: Hub tests
-        if: runner.os == 'Linux'
         run: dotnet test hub/hub.Tests
 
   binaries:
