@@ -33,7 +33,8 @@ klark hub ls / use <name> / rm <name> / status
 ```
 
 Hubs are saved in `<config dir>/hubs.json` (0600). Scripts can pass `--token`/`--token-stdin`
-or `KLARK_HUB_TOKEN` instead of the browser step. See ADR 0012.
+or `KLARK_HUB_TOKEN` instead of the browser step. `https://` hubs work (rustls); for a
+private CA or self-signed ingress set `KLARK_HUB_CA_FILE=/path/ca.pem`. See ADR 0012.
 
 ## Link a machine to a hub
 

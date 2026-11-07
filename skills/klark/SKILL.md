@@ -260,7 +260,7 @@ klark hub connect lab --agents reviewer       # a saved hub by name, only some a
 klark hub ls | use <name> | rm <name> | status [<name>]
 ```
 
-Saved hubs live in `<config dir>/hubs.json` (0600; name defaults to the URL's host, `--as <name>` overrides; the first is the default). Scripts skip the browser with `--token <t>`, `--token-stdin` or `KLARK_HUB_TOKEN`. Never print or paste the token. `klark msg` and `klark offer` use the default hub when `KLARK_HUB_URL` is not set.
+Saved hubs live in `<config dir>/hubs.json` (0600; name defaults to the URL's host, `--as <name>` overrides; the first is the default). Scripts skip the browser with `--token <t>`, `--token-stdin` or `KLARK_HUB_TOKEN`. Never print or paste the token. `https://` hubs work; a private-CA ingress needs `KLARK_HUB_CA_FILE=<ca.pem>`. `klark msg` and `klark offer` use the default hub when `KLARK_HUB_URL` is not set.
 
 ## Exposing and sharing ("share this")
 

@@ -29,9 +29,10 @@ if the hub answers 401/403 for the saved token, the device flow runs again.
 token) when `KLARK_HUB_URL` / `KLARK_HUB_TOKEN` are not set; a `klark msg
 login` JWT in hub.json is used only for the hub it was issued by.
 
+## TLS
+`https://` hubs work end to end (ADR 0005 update): rustls with webpki roots,
+plus `KLARK_HUB_CA_FILE` (PEM) for a private ingress CA. Plain http keeps working.
+
 ## Limits
-- klark's HTTP client is plain http (ADR 0005): the device flow and
-  `status`/`ls` health checks against an `https://` hub fail with a clear
-  error. Use `--token` there until the client gains TLS.
 - The saved-token check is a `GET /agent` with the bearer token; only 401/403
   count as rejection.

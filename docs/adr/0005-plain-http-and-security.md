@@ -21,3 +21,11 @@ mean rendering text to video. Terminal output is small text, so WebSocket
   - the hub can only read panes, type and send keys (allow-list, ADR 0002);
   - antiforgery tokens on forms;
   - login redirects are local-only.
+
+## Update (2026-11-07): TLS on the client side
+The hub may now sit behind an https ingress (e.g. Kubernetes). klark speaks
+`https://` (device flow, `klark hub ls/status`, `klark msg`, `klark offer`)
+and `wss://` (`klark expose`) through rustls with the webpki root store; no
+OpenSSL. A private ingress CA or a self-signed hub is trusted by pointing
+`KLARK_HUB_CA_FILE` at a PEM file (added to, not replacing, the public roots).
+Plain `http://` / `ws://` keep working. See `crates/klark-link/src/tls.rs`.
