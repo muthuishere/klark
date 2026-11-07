@@ -1,67 +1,115 @@
 # klark
 
-klark is a terminal workspace for AI coding agents, with a built-in link to a
-shared web hub.
+**A terminal workspace for AI coding agents, and a self-hosted web hub to watch
+and answer them from any browser or phone.**
+
+Run Claude Code, Codex, Devin and other agents in persistent klark panes. klark
+knows which agent is working, blocked or idle, lets agents message each other
+across sessions and machines, and links each machine to **klarkhub**, where your
+team reads every agent as a clean, Claude-style chat.
+
+![klarkhub chat](docs/screens/chat-claude-1440.png)
+
+Docs: **https://muthuishere.github.io/klark/**
+
+## What you get
 
 - **Persistent panes.** Agents keep running in a background server when you
-  detach. Run `klark` to reattach, and `ctrl+b q` to detach.
-- **Agent-aware.** Every pane is marked working, blocked or idle, so you can
-  see which agent is waiting for an answer.
-- **Hub link.** `klark expose` connects this machine to a [klark hub](hub/README.md),
-  a Blazor Server app where a team signs in and watches and answers the agents
-  on every linked machine (built for 100+ machines). Panes stream only while
-  someone is looking at them.
-- **No phoning home.** No self-update, no hosted announcements, no remote
-  catalogs. klark uses what is built into the binary.
+  detach. `klark` reattaches; `ctrl+b q` detaches.
+- **Folder sessions.** `klark -s` creates or attaches a session named after the
+  current folder; `klark -s ~/work/api` uses that folder; `klark -s review`
+  uses that name.
+- **Agent-aware.** Every agent pane shows working, blocked or idle. Agents can be
+  named (`klark msg name reviewer`) and read (`klark transcript`).
+- **Agents message agents.** `klark msg send reviewer "please review PR 12"`
+  reaches an agent in any session on this machine, or on any other machine
+  connected to the same hub (`machine/session/agent`).
+- **klarkhub, the web hub.** One self-hosted server (Docker or Kubernetes, plain
+  HTTP, SQLite) for many machines and people:
+  - a chat for every agent (Claude, Devin, generic agents, plain shells as
+    command blocks), markdown and tables rendered, tool calls folded;
+  - search across agents, folders and messages (⌘K);
+  - click a file path to open it in a GitHub-style viewer and download it
+    (10 MB limit, secrets refused);
+  - send images from your phone to an agent; agents share files with `klark offer`;
+  - sign-in with LDAP / Active Directory or the built-in user directory;
+  - machines join by browser approval (`klark hub connect --url …`).
+- **Light on load.** Panes stream only while someone is watching. An idle
+  machine costs ~1 B/s and no CPU; a 512 MB hub serves 100 machines (measured,
+  see docs/experiments).
+- **No phoning home.** No self-update, no telemetry, no remote catalogs.
 
-## Build
+## Quick start
 
 ```bash
-cargo build --release          # needs Zig 0.16 for the vendored libghostty-vt
-./target/release/klark
+cargo build --release              # needs Zig 0.16 (for the vendored libghostty-vt)
+ln -s "$PWD/target/release/klark" ~/.local/bin/klark
+klark -s                           # a session for this folder; start an agent in it
 ```
+
+Prebuilt Linux binaries come with each tagged release.
 
 ## Hub in two steps
 
-1. Deploy the hub (klarkhub: `hub/`, Docker image; Kubernetes or `docker compose up -d`).
+1. Run klarkhub (see [deploy guide](docs/deploy.md)):
+
+   ```bash
+   docker run -d -p 8080:8080 -v klarkhub-data:/data ghcr.io/muthuishere/klarkhub:latest
+   # or: kubectl apply -f deploy/k8s/
+   ```
+
+   Open `http://<host>:8080`, sign in as `admin` / `adminadmin`, and change the password.
+
 2. On each machine:
 
-```bash
-klark hub connect --url http://hub-host:8080   # approve this machine in the browser (device code)
-klark hub connect                              # afterwards: reconnect to the default hub
-klark hub ls / use <name> / rm <name> / status
-```
-
-Hubs are saved in `<config dir>/hubs.json` (0600). Scripts can pass `--token`/`--token-stdin`
-or `KLARK_HUB_TOKEN` instead of the browser step. `https://` hubs work (rustls); for a
-private CA or self-signed ingress set `KLARK_HUB_CA_FILE=/path/ca.pem`. See ADR 0012.
-
-## Link a machine to a hub
-
-```bash
-klark expose --hub http://hub-host:8080 --token <machine token> [--name laptop]
-klark expose url            # inside a pane: the hub link to this pane ("share this")
-```
-
-The hub is a **separate web server**: deploy it anywhere with Docker
-(`hub/`, `docker compose up -d`), then link any number of klark machines to it.
-Each machine connects out to whichever hub URL it is given; one hub is built
-for 100+ machines and many users. The `klark` skill (skills/klark) lets an agent hand
-back its own hub link. (herdr-expose is a separate product for herdr; see ADR 0008.)
+   ```bash
+   klark hub connect --url http://<host>:8080   # approve this machine in the browser
+   klark hub connect                            # later: reconnect to the default hub
+   klark hub ls | use <name> | rm <name> | status
+   ```
 
 ## Layout
 
 | path | what |
 |---|---|
 | `src/` | klark itself (Rust) |
-| `crates/klark-link` | the machine side of the hub link |
-| `hub/` | the hub: C# Blazor Server, SQLite, Docker |
-| `api/klark-api.schema.json` | socket API schema (`klark api schema`) |
-| `docs/` | [handover](docs/HANDOVER.md), [status](docs/STATUS.md), [ADRs](docs/README.md), [experiments](docs/experiments/README.md) |
-| `experiments/` | scripts behind the measured experiments |
+| `crates/klark-link` | the machine side of the hub link (HTTP: NDJSON down, POST up) |
+| `hub/` | klarkhub: C# Blazor Server (.NET 10), SQLite, Docker |
+| `deploy/k8s/` | example Kubernetes manifest |
+| `site/` | the documentation site (`just docs`) |
+| `skills/klark` | the skill that teaches agents to use klark |
+| `docs/` | design records: [ADRs](docs/README.md), [status](docs/STATUS.md), [experiments](docs/experiments/README.md) |
 
-Existing users: on first run, klark moves an old `~/.config/herdr` directory to
-`~/.config/klark`. Environment variables are now `KLARK_*` (for example
-`KLARK_SOCKET_PATH`).
+## Where klark comes from
 
-klark is based on [herdr](https://github.com/herdrdev/herdr) (Apache-2.0).
+klark is a fork of **[herdr](https://github.com/herdrdev/herdr)** (Apache-2.0), a
+terminal multiplexer for coding agents. klark keeps herdr's core and builds on it.
+
+**From herdr:**
+- the terminal multiplexer (server, client, panes, tabs, workspaces, layouts,
+  keybindings, copy mode, the libghostty-vt terminal);
+- agent detection and the working / blocked / idle states;
+- persistent sessions and live handoff across restarts;
+- the socket API and its schema, and the agent integrations.
+
+**New in klark:**
+- klarkhub, the self-hosted web hub, and the HTTP-only machine link;
+- agent-to-agent messaging across sessions and machines (`klark msg`);
+- the Claude-style chat view with transformers for Claude, Devin and other agents;
+- structured transcripts (Claude Code logs, Devin's session database);
+- the file viewer, image upload and `klark offer`;
+- LDAP / directory sign-in, browser approval for machines, saved hubs;
+- `klark -s` folder sessions and the single `klark` skill.
+
+**Changed from herdr:** self-update, hosted announcements and remote catalogs are
+removed. The config folder is `~/.config/klark`, and an existing
+`~/.config/herdr` is moved there on first run. Environment variables are
+`KLARK_*`, for example `KLARK_SOCKET_PATH`. The version number follows herdr's
+(currently 0.9.5).
+
+herdr-expose, the earlier web view for herdr, is a separate product; klarkhub
+re-implements its ideas without sharing code (ADR 0008).
+
+## License
+
+Apache-2.0, as herdr.
