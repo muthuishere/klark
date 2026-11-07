@@ -157,8 +157,15 @@ be able to see the asset's machine. The hub streams the object from its file sto
   inside a fenced code block is touched, and table borders and short `---`
   rules are content. Structured items drop system/meta items, harness
   wrappers (`<system-reminder>`, `<local-command-stdout>`) and empty items.
-- As built, "open and visible" means the chat tab is mounted in a live
-  page; a backgrounded browser tab keeps polling until its circuit closes.
+- (Amended) Idle pause (`wwwroot/idle.js`): after 60 s with no mouse,
+  touch, key or scroll input (a hidden tab gets none), the page calls
+  `Blazor.pauseCircuit()`. The server disposes the circuit, so every tree
+  pull, chat poll and pane stream for that tab stops. A pill says "Paused
+  while you're away · last updated N minutes ago". On the next input, or when
+  the tab is shown again, it says "Last updated N ago · refreshing…" and
+  reloads; view state survives the reload (storage, see Navigation). A tab
+  that dies without closing is released after 30 s
+  (`DisconnectedCircuitRetentionPeriod`).
 - Chat search covers the items that are loaded; `get_transcript` only goes
   forward (`after`), so older history than the hub holds cannot be fetched.
 

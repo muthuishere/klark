@@ -196,3 +196,9 @@ body:has(.pane-app) .page { max-width: none; padding: 0; }
 .chat-search .icon, .composer .icon { min-width: 44px; }
 .earlier { min-height: 44px; }
 .jump { min-height: 40px; bottom: 34px; }
+
+/* Idle pause (idle.js): one quiet pill; the reconnect dialog stays hidden while paused. */
+.idle-banner { position: fixed; left: 50%; bottom: calc(16px + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 50;
+  max-width: calc(100vw - 32px); padding: 10px 16px; border-radius: 999px; background: var(--card); color: var(--fg);
+  border: 1px solid var(--line); box-shadow: 0 4px 18px rgb(0 0 0 / .14); font-size: .9rem; text-align: center; }
+html.klark-paused #components-reconnect-modal, html.klark-paused .components-reconnect-show { display: none !important; }
