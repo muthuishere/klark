@@ -455,6 +455,32 @@ pane_history = false
 // Bundled at build time so the printed skill always matches this binary's release.
 const SKILL: &str = include_str!("../skills/klark/SKILL.md");
 
+/// Keep the klark skill installed for the agents present on this machine
+/// (Claude Code, Devin). Writes only where the agent's folder exists, and
+/// never replaces a SKILL.md that is not klark's own (`name: klark`).
+fn install_skill() {
+    if std::env::var_os("KLARK_NO_SKILL_INSTALL").is_some() {
+        return;
+    }
+    let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) else {
+        return;
+    };
+    for root in [home.join(".claude"), home.join(".config/devin")] {
+        if !root.is_dir() {
+            continue;
+        }
+        let file = root.join("skills/klark/SKILL.md");
+        match std::fs::read_to_string(&file) {
+            Ok(old) if old == SKILL || !old.contains("\nname: klark\n") => continue,
+            _ => {}
+        }
+        if let Some(dir) = file.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(&file, SKILL);
+    }
+}
+
 fn should_block_nested(config: &config::Config) -> bool {
     should_block_nested_for_env(config, std::env::var(KLARK_ENV_VAR).ok().as_deref())
 }
@@ -573,6 +599,7 @@ fn main() -> io::Result<()> {
     }
 
     if args.get(1).map(|s| s.as_str()) == Some("server") {
+        install_skill();
         return server::headless::run_server();
     }
 

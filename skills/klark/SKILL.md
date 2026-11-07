@@ -1,6 +1,6 @@
 ---
 name: klark
-description: "Control Klark, a terminal multiplexer for coding agents: panes, tabs, workspaces, commands and agents; agents across klark sessions; messaging other agents (klark msg); exposing this machine or pane to a klark hub (klark expose, --agents, share links); offering files; the hub (login, chat/transcript view). Use when the user mentions Klark, or, running inside a Klark pane, says: share this, give me a link, expose, which agents are running, message/ask/tell another agent, reply to that agent, send a file / send this to my phone, hub. Do not use merely because a task could benefit from a background terminal, delegation, or parallel work. Requires KLARK_ENV=1."
+description: "Control Klark, a terminal multiplexer for coding agents: panes, tabs, workspaces, commands and agents; agents across klark sessions; messaging other agents (klark msg); exposing this machine or pane to a klark hub (klark expose, --agents, share links); offering files; the hub (login, chat/transcript view). Use when the user mentions Klark, or, running inside a Klark pane, says: share this, give me a link, expose, which agents are running, message/ask/tell another agent, reply to that agent, send a file / send this to my phone, show me a file, hub. Do not use merely because a task could benefit from a background terminal, delegation, or parallel work. Requires KLARK_ENV=1."
 ---
 
 # Klark
@@ -35,6 +35,7 @@ When the check passes, the `klark` binary in `PATH` talks to the current session
 | put this machine on a hub | `klark hub connect --url http://host:8080` (owner approves in the browser; owner only) |
 | expose only some agents | `klark expose … --agents reviewer,builder` (or `KLARK_EXPOSE_AGENTS`) |
 | send a file to the person / their phone | `klark offer <path>` |
+| show me / send me a file (any file you mention) | write its **full absolute path** (`/Users/me/Downloads/a.mp3`), never `~/` or a bare name: the hub turns it into a viewer + download link |
 | reach agents on other machines | `klark msg login --hub http://hub.lan:8080 --user <name>` (a person types the password) |
 | check hub, token, sessions | `klark msg status` |
 
@@ -338,3 +339,7 @@ Needs `klark expose` running with a hub (`KLARK_HUB_URL`, `KLARK_HUB_TOKEN`). Ma
 - Never run `klark server stop` from an active session unless the user explicitly intends to stop the server and its pane processes.
 - Never kill the main Klark process. Use named test sessions for experiments that need an isolated server.
 - CLI server errors are JSON on stderr with exit status 1. CLI syntax errors exit with status 2.
+
+## Showing or sending files
+
+Inside a klark pane, the person may be reading you through klarkhub. Whenever you show, list, create or are asked to send a file, write its full absolute path on its own (for example `/Users/me/Downloads/ganesha-speech.mp3`). The hub makes that path a link that opens the file viewer and downloads it from this machine (up to 10 MB). Do not shorten it to `~/…` or a bare file name, and do not route it through another channel (email, chat bots) unless asked. For a file the person should get right away, also run `klark offer <path>`.
