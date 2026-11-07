@@ -189,7 +189,13 @@ fn msg_send_crosses_sessions_and_lands_as_agent_prompt() {
     let fake = bin_dir.join("claude");
     // A symlink, not a copy: macOS kills a copied platform binary (SIGKILL,
     // code signature), and the process name comes from the exec path.
-    std::os::unix::fs::symlink("/bin/cat", &fake).unwrap();
+    // macOS kills a copied platform binary, so link there; Linux names a
+    // process after the file it executed, so copy there (a symlink shows as `cat`).
+    if cfg!(target_os = "macos") {
+        std::os::unix::fs::symlink("/bin/cat", &fake).unwrap();
+    } else {
+        std::fs::copy("/bin/cat", &fake).unwrap();
+    }
     let created = call(
         &work,
         "workspace.create",

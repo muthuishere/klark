@@ -487,19 +487,24 @@ impl Session {
                     .spawn({
                         let id = id.clone();
                         move || {
-                            let outcome = up
-                                .call("pane.get", json!({"pane_id": local}))
-                                .and_then(|info| {
-                                    let pane = info.get("pane").cloned().unwrap_or(info);
-                                    let cwd = pane
-                                        .get("cwd")
-                                        .and_then(Value::as_str)
-                                        .filter(|c| !c.is_empty())
-                                        .map(std::path::PathBuf::from)
-                                        .ok_or("the pane has no working directory")?;
-                                    let home = files::home_dir();
-                                    files::read(&path, &cwd, home.as_deref(), files::max_bytes(max_bytes))
-                                });
+                            let outcome =
+                                up.call("pane.get", json!({"pane_id": local}))
+                                    .and_then(|info| {
+                                        let pane = info.get("pane").cloned().unwrap_or(info);
+                                        let cwd = pane
+                                            .get("cwd")
+                                            .and_then(Value::as_str)
+                                            .filter(|c| !c.is_empty())
+                                            .map(std::path::PathBuf::from)
+                                            .ok_or("the pane has no working directory")?;
+                                        let home = files::home_dir();
+                                        files::read(
+                                            &path,
+                                            &cwd,
+                                            home.as_deref(),
+                                            files::max_bytes(max_bytes),
+                                        )
+                                    });
                             if let Err(e) = &outcome {
                                 eprintln!("klark expose: get_file {path}: {e}");
                             }

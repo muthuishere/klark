@@ -641,7 +641,9 @@ fn main() -> io::Result<()> {
         println!("       klark session attach <name>");
         println!("       klark completion zsh");
         println!("       klark expose --hub <url> --token <token>");
-        println!("       klark hub <connect|ls|use|rm|status>   (connect this machine to a klarkhub)");
+        println!(
+            "       klark hub <connect|ls|use|rm|status>   (connect this machine to a klarkhub)"
+        );
         println!("       klark msg <whoami|ls|send|reply|log|name|login|status> ...");
         println!("       klark channel set <stable|preview>");
         println!("       klark machine <subcommand> ...");

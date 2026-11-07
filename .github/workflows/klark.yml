@@ -38,7 +38,8 @@ jobs:
         with: { version: "${{ env.ZIG_VERSION }}" }
       - uses: Swatinem/rust-cache@v2
       - name: Rust tests
-        run: cargo nextest run --workspace --locked --status-level fail --final-status-level fail --failure-output final
+        # live_handoff needs a real login session; herdr's CI skipped it on macOS runners too.
+        run: cargo nextest run --workspace --locked --no-fail-fast --status-level fail --final-status-level fail --failure-output final -E "${{ runner.os == 'macOS' && 'not binary(live_handoff)' || 'all()' }}"
       - uses: actions/setup-dotnet@v4
         if: runner.os == 'Linux'
         with: { dotnet-version: "10.0.x" }

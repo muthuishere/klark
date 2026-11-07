@@ -140,7 +140,11 @@ pub fn read(asked: &str, cwd: &Path, home: Option<&Path>, max: u64) -> Result<Va
     let (abs, size) = check(asked, cwd, home, max)?;
     let bytes = std::fs::read(&abs).map_err(|e| format!("{}: {e}", abs.display()))?;
     if bytes.len() as u64 > max {
-        return Err(format!("file is {}; limit {}", mb(bytes.len() as u64), mb(max)));
+        return Err(format!(
+            "file is {}; limit {}",
+            mb(bytes.len() as u64),
+            mb(max)
+        ));
     }
     let name = abs
         .file_name()
@@ -211,10 +215,18 @@ mod tests {
         assert_eq!(ok["data"], "aGk=");
         assert!(check("~/h.txt", &cwd, Some(&home), MAX_FILE_BYTES).is_ok());
         let out = other.join("o.txt");
-        assert!(check(out.to_str().unwrap(), &cwd, Some(&home), MAX_FILE_BYTES)
-            .unwrap_err()
-            .contains("outside"));
-        assert!(check("../../../../../../etc/passwd", &cwd, Some(&home), MAX_FILE_BYTES).is_err());
+        assert!(
+            check(out.to_str().unwrap(), &cwd, Some(&home), MAX_FILE_BYTES)
+                .unwrap_err()
+                .contains("outside")
+        );
+        assert!(check(
+            "../../../../../../etc/passwd",
+            &cwd,
+            Some(&home),
+            MAX_FILE_BYTES
+        )
+        .is_err());
         assert!(check(".env", &cwd, Some(&home), MAX_FILE_BYTES)
             .unwrap_err()
             .contains("credential"));

@@ -131,7 +131,13 @@ impl Env {
         if !fake.exists() {
             fs::create_dir_all(fake.parent().unwrap()).unwrap();
             // A symlink, not a copy: macOS kills a copied platform binary.
-            std::os::unix::fs::symlink("/bin/cat", &fake).unwrap();
+            // macOS kills a copied platform binary, so link there; Linux names a
+            // process after the file it executed, so copy there (a symlink shows as `cat`).
+            if cfg!(target_os = "macos") {
+                std::os::unix::fs::symlink("/bin/cat", &fake).unwrap();
+            } else {
+                std::fs::copy("/bin/cat", &fake).unwrap();
+            }
         }
         let created = call(
             socket,
