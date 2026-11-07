@@ -33,6 +33,8 @@ spec:
             - containerPort: 8080
               name: http
           env:
+            - name: KLARK_HUB__TRUSTFORWARDEDHEADERS # the ingress sets X-Forwarded-*; the pod is not reachable directly
+              value: "true"
             # - name: KLARK_HUB__PUBLICURL
             #   value: https://klark.example.com
             - name: KLARK_HUB__ADMIN__PASSWORD # used only on first start

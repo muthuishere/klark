@@ -27,7 +27,7 @@ kubectl apply -f deploy/k8s/
 
 `deploy/k8s/` has a Deployment (1 replica, `Recreate`), a Service on 8080, a
 PVC for `/data`, and probes on `/healthz`. Set `KLARK_HUB__PUBLICURL` to the
-URL people use (otherwise it is derived from `X-Forwarded-Proto`/`X-Forwarded-Host`).
+URL people use (otherwise it is derived from the request; `X-Forwarded-Proto`/`X-Forwarded-Host` count only with `KLARK_HUB__TRUSTFORWARDEDHEADERS=true`, which the k8s manifest sets — enable it only behind a proxy).
 
 Your Ingress must allow WebSockets and long-lived connections on `/agent`
 (machines) and `/_blazor` (browsers). With ingress-nginx, for example:

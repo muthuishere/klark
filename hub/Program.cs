@@ -43,7 +43,8 @@ builder.Services.PostConfigure<HubOptions>(o =>
 });
 builder.Services.AddSingleton<HubAccounts>();
 builder.Services.AddSingleton<MachineConnect>();
-// Behind a Kubernetes ingress or other proxy: honour X-Forwarded-Proto/Host/For.
+// Behind a Kubernetes ingress or other proxy: honour X-Forwarded-Proto/Host/For, but only when
+// Hub:TrustForwardedHeaders is on; otherwise a client could fake its IP past the sign-in rate limit.
 builder.Services.Configure<Microsoft.AspNetCore.Builder.ForwardedHeadersOptions>(o =>
 {
     o.ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor |
@@ -137,7 +138,7 @@ var app = builder.Build();
     }
 }
 
-app.UseForwardedHeaders();
+if (app.Configuration.GetValue<bool>("Hub:TrustForwardedHeaders")) app.UseForwardedHeaders();
 
 if (!app.Environment.IsDevelopment())
 {
