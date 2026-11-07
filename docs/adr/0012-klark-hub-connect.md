@@ -1,6 +1,7 @@
 # ADR 0012: `klark hub connect` — link a machine to a hub with a device code
 
 - Status: accepted (owner decision, 2026-11-07). Builds on ADR 0010 (`klark expose`).
+- The link it starts is plain HTTP since ADR 0013 (no `ws://` URL is derived any more).
 
 ## Decision
 The hub (klarkhub, the `hub/` image) is a separate server the owner deploys

@@ -1,6 +1,6 @@
 //! Wire protocol between a klark machine (the agent) and a klark hub.
 //!
-//! JSON text frames over one WebSocket that the machine dials out to the hub.
+//! JSON messages over plain HTTP that the machine dials out to the hub (ADR 0013).
 //! Every message is `{"type": "...", ...}`. The hub never receives pane bytes it
 //! did not ask for: on connect it gets only the tree, and frames for a pane flow
 //! only between `subscribe` and `unsubscribe`.
@@ -9,7 +9,8 @@ use serde::{Deserialize, Serialize};
 
 /// v2 adds `list_agents` and `deliver` (agent messaging, ADR 0009).
 /// v3 adds `pane_size`, `fetch_asset` and `get_transcript` (ADR 0011).
-pub const PROTOCOL_VERSION: u32 = 3;
+/// v4 is the same messages over plain HTTP: NDJSON stream down, POST segments up (ADR 0013).
+pub const PROTOCOL_VERSION: u32 = 4;
 
 /// Machine -> hub.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -233,7 +234,7 @@ mod tests {
 
     #[test]
     fn v3_shapes() {
-        assert_eq!(PROTOCOL_VERSION, 3);
+        assert_eq!(PROTOCOL_VERSION, 4);
         let size = AgentMessage::PaneSize {
             pane_id: "p1".into(),
             cols: 80,

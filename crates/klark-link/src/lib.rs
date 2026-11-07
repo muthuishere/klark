@@ -1,47 +1,46 @@
 //! klark-link: the machine side of the klark hub.
 //!
-//! A klark machine dials OUT to a hub over WebSocket (no inbound port, no
-//! tunnel), authenticates with a machine token, and then serves the hub lazily:
+//! A klark machine dials OUT to a hub over plain HTTP (no inbound port, no
+//! tunnel, no WebSocket; see `transport` and ADR 0013), authenticates with a
+//! machine token, and then serves the hub lazily:
 //! the pane tree on connect and on change, terminal bytes only for panes the hub
 //! subscribes to, and reads only when asked.
 
 pub mod assets;
+#[doc(hidden)]
+pub mod fakehub;
 pub mod filter;
 pub mod http;
 pub mod protocol;
 pub mod sessions;
 pub mod tls;
+pub mod transport;
 pub mod upstream;
 
 use std::collections::HashMap;
-use std::io::ErrorKind;
-use std::net::TcpStream;
 use std::path::PathBuf;
-use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, TryRecvError};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
-use tungstenite::client::IntoClientRequest;
-use tungstenite::http::HeaderValue;
-use tungstenite::stream::MaybeTlsStream;
-use tungstenite::{Message, WebSocket};
 
 use filter::{AgentFilter, AgentInfo};
 use protocol::{call_allowed, AgentMessage, HubMessage, PROTOCOL_VERSION};
 use sessions::{decode_id, SessionSource, DEFAULT_SESSION};
+pub use transport::HubLink;
 use upstream::{MsgReply, Observer, Upstream};
 
 /// Upper bound on one loop turn, and so on how long pane output is merged
-/// before sending. 50 ms halves message count vs 25 ms and lets gzip pay off
+/// into one pushed segment. 50 ms halves message count vs 25 ms and lets gzip pay off
 /// (docs/experiments/E-03). Input from the hub is handled as soon as it arrives.
 const READ_TICK: Duration = Duration::from_millis(50);
-/// Handshake header carrying the machine's own id.
+/// Request header carrying the machine's own id (fleet tokens).
 pub const MACHINE_HEADER: &str = "X-Klark-Machine";
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone)]
 pub struct LinkConfig {
-    /// e.g. `wss://hub.example.com/agent`
+    /// e.g. `https://hub.example.com` (old `ws(s)://host/agent` URLs still work)
     pub hub_url: String,
     pub token: String,
     pub machine_id: String,
@@ -127,150 +126,57 @@ pub fn pane_url(hub_url: &str, machine_name: &str, pane_id: &str) -> Result<Stri
     Ok(url.to_string())
 }
 
-pub type Socket = WebSocket<MaybeTlsStream<TcpStream>>;
-
-/// One connection's lifetime.
-/// Open the hub WebSocket with the auth and machine headers.
-pub fn connect_hub(hub_url: &str, token: &str, machine_id: &str) -> Result<Socket, String> {
-    let mut request = hub_url.into_client_request().map_err(|e| e.to_string())?;
-    let bearer = HeaderValue::from_str(&format!("Bearer {token}"))
-        .map_err(|_| "token contains invalid header characters".to_string())?;
-    request.headers_mut().insert("Authorization", bearer);
-    if let Ok(id) = HeaderValue::from_str(machine_id) {
-        request.headers_mut().insert(MACHINE_HEADER, id);
-    }
-    let (ws, _) = ws_connect(request).map_err(|e| format!("connect {hub_url}: {e}"))?;
-    set_read_timeout(&ws, Some(READ_TICK));
-    Ok(ws)
-}
-
-/// The WebSocket handshake; `wss://` uses `tls::client_config` (webpki
-/// roots + KLARK_HUB_CA_FILE).
-fn ws_connect(
-    request: tungstenite::handshake::client::Request,
-) -> Result<(Socket, tungstenite::handshake::client::Response), String> {
-    let uri = request.uri().clone();
-    let tls = match uri.scheme_str() {
-        Some("ws") => false,
-        Some("wss") => true,
-        other => return Err(format!("unsupported scheme {other:?}")),
-    };
-    let host = uri.host().ok_or("no host")?.to_string();
-    let port = uri.port_u16().unwrap_or(if tls { 443 } else { 80 });
-    let host_only = host
-        .trim_start_matches('[')
-        .trim_end_matches(']')
-        .to_string();
-    let tcp = TcpStream::connect((host_only.as_str(), port)).map_err(|e| e.to_string())?;
-    let _ = tcp.set_nodelay(true);
-    let connector = if tls {
-        tungstenite::Connector::Rustls(tls::client_config()?)
-    } else {
-        tungstenite::Connector::Plain
-    };
-    tungstenite::client_tls_with_config(request, tcp, None, Some(connector)).map_err(|e| match e {
-        tungstenite::HandshakeError::Failure(e) => e.to_string(),
-        tungstenite::HandshakeError::Interrupted(_) => "handshake interrupted".to_string(),
-    })
-}
-
 pub fn run_once(config: &LinkConfig) -> Result<(), String> {
-    let mut ws = connect_hub(&config.hub_url, &config.token, &config.machine_id)?;
-    eprintln!("klark expose: connected to {}", config.hub_url);
+    let hello = AgentMessage::Hello {
+        protocol: PROTOCOL_VERSION,
+        machine_id: config.machine_id.clone(),
+        machine_name: config.machine_name.clone(),
+        klark_version: config.klark_version.clone(),
+    };
+    let mut link = HubLink::open(&config.hub_url, &config.token, &config.machine_id, &hello)?;
+    eprintln!("klark expose: connected to {}", link.base());
 
     let upstream = Upstream::new(config.socket.clone(), config.bin.clone());
     let mut session = Session::new(upstream);
     session.sessions = config.sessions.clone();
     session.agents = config.agents.clone();
     session.assets = Some(AssetTarget {
-        hub_base: http::hub_http_base(&config.hub_url)?,
+        hub_base: link.base().to_string(),
         token: config.token.clone(),
         uploads_dir: config.uploads_dir.clone(),
     });
 
-    send(
-        &mut ws,
-        &AgentMessage::Hello {
-            protocol: PROTOCOL_VERSION,
-            machine_id: config.machine_id.clone(),
-            machine_name: config.machine_name.clone(),
-            klark_version: config.klark_version.clone(),
-        },
-    )?;
-
+    let mut out: Vec<AgentMessage> = Vec::new();
     loop {
-        // Inbound from the hub.
-        match ws.read() {
-            Ok(Message::Close(_)) => return Ok(()),
-            Ok(msg) => match decode_hub(msg) {
-                Some(Ok(msg)) => {
-                    for reply in session.handle(msg) {
-                        send(&mut ws, &reply)?;
-                    }
-                }
-                Some(Err(e)) => eprintln!("klark expose: ignoring unknown hub message: {e}"),
-                None => {}
-            },
-            Err(tungstenite::Error::Io(e))
-                if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
-            Err(tungstenite::Error::ConnectionClosed) => return Ok(()),
-            Err(e) => return Err(format!("read: {e}")),
-        }
-
-        // Outbound: only output of panes the hub subscribed to.
-        for msg in coalesce(session.drain()) {
-            send(&mut ws, &msg)?;
-        }
-    }
-}
-
-pub fn send(ws: &mut Socket, msg: &AgentMessage) -> Result<(), String> {
-    ws.send(Message::binary(encode(msg)?))
-        .map_err(|e| format!("send: {e}"))
-}
-
-/// Wire encoding: gzip-compressed JSON in a binary frame (ADR 0001, D5).
-pub fn encode(msg: &AgentMessage) -> Result<Vec<u8>, String> {
-    if let AgentMessage::Frame { pane_id, bytes } = msg {
-        use base64::Engine as _;
-        if let Ok(raw) = base64::engine::general_purpose::STANDARD.decode(bytes.as_bytes()) {
-            if pane_id.len() <= u8::MAX as usize {
-                return Ok(encode_frame(pane_id, &raw));
+        // Inbound from the hub. Idle (nothing subscribed, nothing pending):
+        // sleep until the hub sends something. Busy: wait at most one tick,
+        // so pane output goes out as one segment per tick.
+        let mut next = if session.busy() {
+            link.events.recv_timeout(READ_TICK)
+        } else {
+            link.events
+                .recv()
+                .map_err(|_| RecvTimeoutError::Disconnected)
+        };
+        loop {
+            match next {
+                Ok(Ok(msg)) => out.extend(session.handle(msg)),
+                Ok(Err(e)) => return Err(e),
+                Err(RecvTimeoutError::Timeout) => break,
+                Err(RecvTimeoutError::Disconnected) => return Err("event stream ended".into()),
             }
+            next = link.events.recv_timeout(Duration::ZERO);
+        }
+        // Outbound: replies, and output of panes the hub subscribed to, as
+        // one segment per tick.
+        out.extend(session.drain());
+        if !out.is_empty() {
+            link.push(&coalesce(std::mem::take(&mut out)))?;
         }
     }
-    let json = serde_json::to_vec(msg).map_err(|e| e.to_string())?;
-    Ok(gzip(&json))
 }
 
-/// Binary frame layouts (ADR 0001, D5):
-///   0x1f …                       gzip JSON message (the gzip magic byte)
-///   0x01 len id gzip(raw)        terminal output, compressed
-///   0x02 len id raw              terminal output, too small to be worth gzip
-/// Raw output is never base64'd on the wire: base64 inflates it by a third and
-/// defeats gzip.
-pub const FRAME_GZIP: u8 = 0x01;
-pub const FRAME_RAW: u8 = 0x02;
-
-pub fn encode_frame(pane_id: &str, raw: &[u8]) -> Vec<u8> {
-    let compressed = if raw.len() >= 128 {
-        Some(gzip(raw))
-    } else {
-        None
-    };
-    let (kind, body) = match &compressed {
-        Some(gz) if gz.len() < raw.len() => (FRAME_GZIP, gz.as_slice()),
-        _ => (FRAME_RAW, raw),
-    };
-    let mut out = Vec::with_capacity(2 + pane_id.len() + body.len());
-    out.push(kind);
-    out.push(pane_id.len() as u8);
-    out.extend_from_slice(pane_id.as_bytes());
-    out.extend_from_slice(body);
-    out
-}
-
-fn gzip(data: &[u8]) -> Vec<u8> {
+pub(crate) fn gzip(data: &[u8]) -> Vec<u8> {
     use std::io::Write as _;
     let mut gz = flate2::write::GzEncoder::new(
         Vec::with_capacity(data.len() / 3 + 32),
@@ -278,22 +184,6 @@ fn gzip(data: &[u8]) -> Vec<u8> {
     );
     let _ = gz.write_all(data);
     gz.finish().unwrap_or_default()
-}
-
-/// Decode a hub message: gzip JSON in a binary frame, or plain JSON text.
-pub fn decode_hub(msg: Message) -> Option<Result<HubMessage, String>> {
-    use std::io::Read as _;
-    match msg {
-        Message::Text(text) => Some(serde_json::from_str(&text).map_err(|e| e.to_string())),
-        Message::Binary(bytes) => {
-            let mut json = Vec::new();
-            if let Err(e) = flate2::read::GzDecoder::new(&bytes[..]).read_to_end(&mut json) {
-                return Some(Err(e.to_string()));
-            }
-            Some(serde_json::from_slice(&json).map_err(|e| e.to_string()))
-        }
-        _ => None,
-    }
 }
 
 /// Merge consecutive output for the same pane into one frame, so a chatty
@@ -333,15 +223,6 @@ pub fn coalesce(messages: Vec<AgentMessage>) -> Vec<AgentMessage> {
     out
 }
 
-fn set_read_timeout(ws: &Socket, timeout: Option<Duration>) {
-    let tcp = match ws.get_ref() {
-        MaybeTlsStream::Plain(s) => s,
-        MaybeTlsStream::Rustls(s) => s.get_ref(),
-        _ => return,
-    };
-    let _ = tcp.set_read_timeout(timeout);
-}
-
 /// Where `fetch_asset` downloads from and stores to.
 #[derive(Debug, Clone)]
 pub struct AssetTarget {
@@ -356,6 +237,8 @@ pub struct AssetTarget {
 pub struct Session {
     upstream: Upstream,
     observers: HashMap<String, Observer>,
+    /// Ids of requests whose answer comes later through the frames channel.
+    pending: std::collections::HashSet<String>,
     frames_tx: Sender<AgentMessage>,
     frames_rx: Receiver<AgentMessage>,
     pub assets: Option<AssetTarget>,
@@ -380,6 +263,7 @@ impl Session {
         Self {
             upstream,
             observers: HashMap::new(),
+            pending: Default::default(),
             frames_tx,
             frames_rx,
             assets: None,
@@ -434,6 +318,30 @@ impl Session {
     }
 
     pub fn handle(&mut self, msg: HubMessage) -> Vec<AgentMessage> {
+        // Requests answered later through the frames channel: remember them,
+        // so the link keeps draining until their answer is out.
+        let later = match &msg {
+            HubMessage::ListAgents { id }
+            | HubMessage::Deliver { id, .. }
+            | HubMessage::GetTranscript { id, .. }
+            | HubMessage::FetchAsset { id, .. } => Some(id.clone()),
+            _ => None,
+        };
+        let out = self.handle_now(msg);
+        if let Some(id) = later.filter(|_| out.is_empty()) {
+            self.pending.insert(id);
+        }
+        out
+    }
+
+    /// Whether anything can arrive on the frames channel: a subscribed pane
+    /// or an answer still being worked on. When not, the link sleeps until
+    /// the hub sends something (no timer runs while idle).
+    pub fn busy(&self) -> bool {
+        !self.observers.is_empty() || !self.pending.is_empty()
+    }
+
+    fn handle_now(&mut self, msg: HubMessage) -> Vec<AgentMessage> {
         if let Some(refused) = self.refuse(&msg) {
             return refused;
         }
@@ -816,6 +724,9 @@ impl Session {
                         AgentMessage::Closed { pane_id, .. } => {
                             self.observers.remove(pane_id);
                         }
+                        AgentMessage::Result { id, .. } => {
+                            self.pending.remove(id);
+                        }
                         // Never report the size of a pane nobody watches.
                         AgentMessage::PaneSize { pane_id, .. }
                             if !self.observers.contains_key(pane_id) =>
@@ -1046,42 +957,6 @@ mod tests {
                 },
             ]
         );
-    }
-
-    #[test]
-    fn frames_go_binary_without_base64() {
-        let raw = "compiling crate\r\n".repeat(50);
-        let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &raw);
-        let wire = encode(&AgentMessage::Frame {
-            pane_id: "p1".into(),
-            bytes: b64,
-        })
-        .unwrap();
-        assert_eq!(wire[0], FRAME_GZIP);
-        assert_eq!(&wire[2..4], b"p1");
-        assert!(
-            wire.len() < raw.len() / 4,
-            "{} bytes for {}",
-            wire.len(),
-            raw.len()
-        );
-        let small = encode(&AgentMessage::Frame {
-            pane_id: "p1".into(),
-            bytes: "aGk=".into(),
-        })
-        .unwrap();
-        assert_eq!(small, vec![FRAME_RAW, 2, b'p', b'1', b'h', b'i']);
-    }
-
-    #[test]
-    fn encode_round_trips_through_gzip() {
-        use std::io::Read as _;
-        let bytes = encode(&AgentMessage::Pong).unwrap();
-        let mut json = String::new();
-        flate2::read::GzDecoder::new(&bytes[..])
-            .read_to_string(&mut json)
-            .unwrap();
-        assert_eq!(json, r#"{"type":"pong"}"#);
     }
 
     #[test]

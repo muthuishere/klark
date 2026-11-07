@@ -3,23 +3,22 @@
 //! session's are namespaced `work/<id>` (crates/klark-link/src/sessions.rs).
 //!
 //! Two headless servers (default + work) in one config dir, a real
-//! `klark expose` child, and a tiny in-test WebSocket hub.
+//! `klark expose` child, and a tiny in-process HTTP hub (klark_link::fakehub).
 
 #![cfg(unix)]
 
 pub mod support;
 
 use std::fs;
-use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use klark_link::fakehub::{self, FakeHub};
 use serde_json::{json, Value};
-use tungstenite::{Message, WebSocket};
 
 const BIN: &str = env!("CARGO_BIN_EXE_klark");
 
@@ -148,52 +147,23 @@ enum In {
     Frame(String, Vec<u8>),
 }
 
-fn read_in(ws: &mut WebSocket<TcpStream>) -> Option<In> {
-    let gunzip = |b: &[u8]| {
-        let mut out = Vec::new();
-        flate2::read::GzDecoder::new(b)
-            .read_to_end(&mut out)
-            .unwrap();
-        out
-    };
-    match ws.read() {
-        Ok(Message::Binary(b)) if b.first() == Some(&0x1f) => {
-            Some(In::Json(serde_json::from_slice(&gunzip(&b)).unwrap()))
-        }
-        Ok(Message::Binary(b)) if matches!(b.first(), Some(1 | 2)) => {
-            let n = b[1] as usize;
-            let id = String::from_utf8_lossy(&b[2..2 + n]).to_string();
-            let body = if b[0] == 1 {
-                gunzip(&b[2 + n..])
-            } else {
-                b[2 + n..].to_vec()
-            };
-            Some(In::Frame(id, body))
-        }
-        Ok(Message::Text(t)) => Some(In::Json(serde_json::from_str(&t).unwrap())),
-        Ok(_) => None,
-        Err(tungstenite::Error::Io(e))
-            if matches!(
-                e.kind(),
-                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-            ) =>
-        {
-            None
-        }
-        Err(e) => panic!("hub read: {e}"),
+fn read_in(hub: &mut FakeHub) -> Option<In> {
+    match hub.recv(Duration::from_millis(200))? {
+        fakehub::In::Hello(v) | fakehub::In::Json(v) => Some(In::Json(v)),
+        fakehub::In::Frame(id, body) => Some(In::Frame(id, body)),
     }
 }
 
-fn send(ws: &mut WebSocket<TcpStream>, v: Value) {
-    ws.send(Message::text(v.to_string())).unwrap();
+fn send(hub: &mut FakeHub, v: Value) {
+    hub.send(v);
 }
 
 /// Read until `f` accepts a message, or time out.
-fn until<T>(ws: &mut WebSocket<TcpStream>, what: &str, mut f: impl FnMut(In) -> Option<T>) -> T {
+fn until<T>(hub: &mut FakeHub, what: &str, mut f: impl FnMut(In) -> Option<T>) -> T {
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
         assert!(Instant::now() < deadline, "timed out waiting for {what}");
-        if let Some(msg) = read_in(ws) {
+        if let Some(msg) = read_in(hub) {
             if let Some(v) = f(msg) {
                 return v;
             }
@@ -219,18 +189,13 @@ fn expose_serves_every_running_session() {
     let d_pane = new_pane(&default, &env.base);
     let w_pane = new_pane(&work, &env.base);
 
-    let hub = TcpListener::bind("127.0.0.1:0").unwrap();
-    let url = format!("ws://{}/agent", hub.local_addr().unwrap());
+    let mut ws = FakeHub::start();
+    let url = ws.url();
     env.spawn({
         let mut c = env.cmd(None);
         c.args(["expose", "--hub", &url, "--token", "t0ken"]);
         c
     });
-    let (stream, _) = hub.accept().unwrap();
-    let mut ws = tungstenite::accept(stream).unwrap();
-    ws.get_ref()
-        .set_read_timeout(Some(Duration::from_millis(200)))
-        .unwrap();
     until(&mut ws, "hello", |m| match m {
         In::Json(v) if v["type"] == "hello" => Some(()),
         _ => None,
@@ -356,7 +321,7 @@ fn fake_agent(env: &Env, socket: &Path) -> String {
     }
 }
 
-fn tree_panes(ws: &mut WebSocket<TcpStream>) -> Vec<String> {
+fn tree_panes(ws: &mut FakeHub) -> Vec<String> {
     send(ws, json!({"type": "get_tree"}));
     let tree = until(ws, "tree", |m| match m {
         In::Json(v) if v["type"] == "tree" => Some(v),
@@ -396,8 +361,8 @@ fn expose_agents_filter_shows_and_accepts_only_listed_agents() {
         assert!(r["error"].is_null(), "{r}");
     }
 
-    let hub = TcpListener::bind("127.0.0.1:0").unwrap();
-    let url = format!("ws://{}/agent", hub.local_addr().unwrap());
+    let mut ws = FakeHub::start();
+    let url = ws.url();
     env.spawn({
         let mut c = env.cmd(None);
         // Case-insensitive; the type `claude` would have matched both.
@@ -406,11 +371,6 @@ fn expose_agents_filter_shows_and_accepts_only_listed_agents() {
         ]);
         c
     });
-    let (stream, _) = hub.accept().unwrap();
-    let mut ws = tungstenite::accept(stream).unwrap();
-    ws.get_ref()
-        .set_read_timeout(Some(Duration::from_millis(200)))
-        .unwrap();
     until(&mut ws, "hello", |m| match m {
         In::Json(v) if v["type"] == "hello" => Some(()),
         _ => None,

@@ -165,30 +165,14 @@ pub fn name_from_url(url: &str) -> Result<String, String> {
     Ok(host.to_string())
 }
 
-/// The machine WebSocket URL for a hub URL: http→ws, https→wss, path /agent.
-/// A ws/wss URL with a path is taken as given.
+/// The URL the machine link dials for a hub URL: its http(s) origin (plain
+/// HTTP only, ADR 0013). Old `ws://host/agent` URLs map to `http://host`.
 pub fn agent_url(hub: &str) -> Result<String, String> {
-    let hub = hub.trim().trim_end_matches('/');
-    let (scheme, rest) = hub
-        .split_once("://")
-        .ok_or(format!("hub url {hub}: expected http(s)://host[:port]"))?;
-    let scheme = match scheme {
-        "http" | "ws" => "ws",
-        "https" | "wss" => "wss",
-        other => {
-            return Err(format!(
-                "hub url scheme {other} is not http, https, ws or wss"
-            ))
-        }
-    };
-    if rest.is_empty() {
-        return Err(format!("hub url {hub}: no host"));
+    let hub = hub.trim();
+    if !hub.contains("://") {
+        return Err(format!("hub url {hub}: expected http(s)://host[:port]"));
     }
-    if rest.contains('/') {
-        Ok(format!("{scheme}://{rest}"))
-    } else {
-        Ok(format!("{scheme}://{rest}/agent"))
-    }
+    klark_link::http::hub_http_base(hub)
 }
 
 #[derive(Debug, Default, PartialEq)]
@@ -620,12 +604,12 @@ mod tests {
 
     #[test]
     fn urls_and_names() {
-        assert_eq!(agent_url("http://h:8080").unwrap(), "ws://h:8080/agent");
+        assert_eq!(agent_url("http://h:8080").unwrap(), "http://h:8080");
         assert_eq!(
             agent_url("https://hub.example.com/").unwrap(),
-            "wss://hub.example.com/agent"
+            "https://hub.example.com"
         );
-        assert_eq!(agent_url("ws://h:1/agent").unwrap(), "ws://h:1/agent");
+        assert_eq!(agent_url("ws://h:1/agent").unwrap(), "http://h:1");
         assert!(agent_url("ftp://h").is_err());
         assert!(agent_url("h:8080").is_err());
         assert_eq!(
@@ -663,7 +647,7 @@ mod tests {
             expose_args(&hub("https://x"), &s(&["r"])).unwrap(),
             s(&[
                 "--hub",
-                "wss://x/agent",
+                "https://x",
                 "--token",
                 "secret-token",
                 "--name",

@@ -21,6 +21,7 @@ and the wire do. E-06 and E-10 are measured against the real hub image, with
 | [E-08](E-08-sqlite-write-load.md) | SQLite writer under 100 streaming panes; how fast the cap triggers | to do |
 | [E-09](E-09-browser-render.md) | xterm.js in a phone browser at 20 KB/s | to do |
 | [E-10](E-10-reconnect-storm.md) | Hub restart with 100 machines reconnecting | done: all back in 1.6 s |
+| [E-11](E-11-http-transport.md) | HTTP-only transport (ADR 0013) vs WebSocket: idle cost, active bytes, keystroke latency | done: idle below WS, active 1.25× WS bytes, echo p50 65 ms (1.2×) |
 
 ## How to rerun
 ```bash

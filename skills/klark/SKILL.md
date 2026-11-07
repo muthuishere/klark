@@ -267,8 +267,8 @@ Saved hubs live in `<config dir>/hubs.json` (0600; name defaults to the URL's ho
 `klark expose` dials out to a klark hub (no inbound port) and serves this machine: by default every pane of every running session; panes stream only while someone on the hub watches them. Don't start it yourself unless the owner asks: it puts the machine on the hub.
 
 ```bash
-klark expose --hub ws://hub.lan:8080/agent --token "$KLARK_HUB_TOKEN"            # everything
-klark expose --hub ws://hub.lan:8080/agent --token "$KLARK_HUB_TOKEN" --agents reviewer,builder
+klark expose --hub http://hub.lan:8080 --token "$KLARK_HUB_TOKEN"            # everything
+klark expose --hub http://hub.lan:8080 --token "$KLARK_HUB_TOKEN" --agents reviewer,builder
 klark expose … --agent reviewer --agent work/builder                             # repeatable
 KLARK_EXPOSE_AGENTS=claude klark expose …                                         # every claude
 ```

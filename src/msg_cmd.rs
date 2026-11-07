@@ -1249,7 +1249,7 @@ mod tests {
         let dir = scratch("hub");
         let path = dir.join("hub.json");
         let cfg = HubConfig {
-            hub: "ws://hub:8080/agent".into(),
+            hub: "http://hub:8080".into(),
             name: Some("box".into()),
             user: Some("alice".into()),
             jwt: Some("a.b.c".into()),
