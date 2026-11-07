@@ -1,0 +1,63 @@
+---
+title: Tour of the web app
+description: The sidebar, search, and how the hub lays out every agent on every machine.
+---
+
+import { Image } from 'astro:assets';
+import home from '../../../assets/screens/home-1440.png';
+import list390 from '../../../assets/screens/list-390.png';
+import search from '../../../assets/screens/search-message-hit-1920.png';
+import light from '../../../assets/screens/chat-claude-light-1440.png';
+
+The hub is laid out like the Claude desktop app: a sidebar of agents on the
+left, the selected agent's chat on the right.
+
+<div class="shots">
+	<Image src={home} alt="The hub's home page: agents grouped by project folder in the sidebar, 'Pick an agent' in the main area." />
+	<Image src={list390} alt="On a phone the agent list is the whole screen." />
+</div>
+
+## The sidebar
+
+- Only **agent panes** are listed. Plain shells and empty panes are hidden
+  unless you tick **Show all panes** (remembered per browser).
+- Agents are grouped by **project folder** (the pane's working directory name;
+  hover for the full path). Groups collapse and stay collapsed.
+- **Blocked agents first**, then the most recent activity.
+- Each row: status dot, agent badge (Claude, Devin, Codex, other, shell), title,
+  time since the last activity, and a one-line preview of the latest message.
+- On desktop the sidebar collapses (the icon at the top). Up to 860 px wide it
+  is a drawer. On a phone the list page *is* the sidebar.
+
+## Search: ⌘K / Ctrl+K
+
+Search matches every word you type (AND) against name, agent type, status,
+folder, full path, session, machine and pane id.
+
+It also searches the **text of every chat the hub holds in memory**. Hits show
+under **Messages** with the match marked. Click one to open that chat scrolled
+to the message.
+
+<Image src={search} alt="Searching for 'ndjson' finds a message inside a chat and opens it at that point." />
+
+## Light and dark
+
+The theme toggle sits at the bottom of the sidebar.
+
+<Image src={light} alt="A Claude chat in the light theme." />
+
+## Where each URL goes
+
+| URL | page |
+|---|---|
+| `/` | the agent list |
+| `/m/{machine}/p/{pane}` | one agent's chat (`?view=terminal` for the terminal) |
+| `/m/{machine}/f?pane=…&path=…` | the file viewer |
+| `/go?machine=…&pane=…` | a share link from `klark expose url` |
+| `/messages` | every agent message the hub routed; send as yourself |
+| `/token` | a CLI token (JWT) for `klark msg` and scripts |
+| `/account/password` | change your password |
+| `/admin/users`, `/admin/directory`, `/admin/machines` | admin pages |
+
+Back never leaves the app. The list keeps its search and scroll position, and
+marks the chat you came from.

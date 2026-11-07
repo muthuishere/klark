@@ -119,3 +119,15 @@ build-libghostty-vt:
 # Print default config
 default-config:
     cargo run --release --locked -- --default-config
+
+# Docs site (site/, Astro Starlight): live preview on http://localhost:4321
+docs:
+    cd site && npm ci && npm run dev
+
+# Build the docs site to site/dist (static; fails on broken internal links)
+docs-build:
+    cd site && npm ci && npm run build
+
+# Regenerate the CLI reference page from the klark binary's own help
+docs-cli:
+    site/scripts/gen-cli.sh

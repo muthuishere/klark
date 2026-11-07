@@ -1,0 +1,77 @@
+---
+title: File links and the viewer
+description: Paths in a chat become links. The viewer fetches the file from the machine, with strict limits.
+---
+
+import { Image } from 'astro:assets';
+import code from '../../../assets/screens/viewer-code-line42-1920.png';
+import code390 from '../../../assets/screens/viewer-code-390.png';
+import md from '../../../assets/screens/viewer-markdown-1920.png';
+import img from '../../../assets/screens/viewer-image-1920.png';
+
+## File links
+
+Paths in agent text, tool rows and command output become links:
+
+- absolute paths, `~/` paths, and paths relative to the pane's folder;
+- with an optional `:line` or `:line:col`, such as `src/main.rs:42`.
+
+A relative path needs a known extension or two `/`, so "and/or" is not a link.
+Text inside code blocks is left alone.
+
+A click opens the viewer in the same tab; Back returns to the same spot in the
+chat. Cmd/Ctrl-click or middle-click opens a new tab. Anyone who can see the
+machine can open the link.
+
+## The viewer
+
+<div class="shots">
+	<Image src={code} alt="The file viewer showing a Rust file with line 42 marked." />
+	<Image src={code390} alt="The file viewer on a phone." />
+</div>
+
+- Header: path breadcrumb, size, line count, language, **Raw**, **Copy**,
+  **Download**.
+- Code with line numbers. Click a number for a `#L42` link; `path:42` links
+  scroll to and mark that line. Word-wrap toggle, find in file.
+- Syntax highlighting for about 190 languages, loaded one language at a time.
+  Files over 2 MB stay plain.
+- **Markdown**: Preview or Code. **CSV/TSV**: a table (first 5000 rows).
+  **JSON**: a collapsible tree. **Images**: inline, click to zoom. **PDF**: the
+  browser's viewer. **Diffs**: red and green rows. **Binary**: size and Download.
+
+<Image src={md} alt="A Markdown file in the viewer's Preview mode." />
+
+<Image src={img} alt="An image file in the viewer." />
+
+## Safety rules
+
+The hub and the machine both check every request.
+
+1. You must be signed in and allowed to see the machine.
+2. The path must be under the pane's working directory or the home directory.
+   Symlinks are judged by their target.
+3. Credential-shaped paths are refused: `.env`, `*.pem`, `id_*`, `.ssh/`,
+   `credentials`, `*.key`.
+4. Only regular files.
+5. **10 MB at most.** The machine refuses a bigger file before reading it, with
+   "file is X MB; limit 10 MB". The hub limit is `Hub:Files:MaxBytes`; the
+   machine can lower its own with `KLARK_FILES_MAX_BYTES`.
+6. Responses are `nosniff` with `Content-Security-Policy: default-src 'none';
+   sandbox`, so a file never runs as part of the hub.
+
+Every fetch and every refusal is logged with the person's name. The machine
+must run protocol v5 (a current klark); older machines get "update klark".
+
+## Files from the agent: `klark offer`
+
+```sh
+klark offer ./report.pdf
+```
+
+Offered files appear as attachment cards at the end of the chat: a thumbnail or
+icon, name, size and download. The limit is 100 MB, and files expire after 24
+hours (`Hub:Assets:RetentionHours`).
+
+Downloads are served with `nosniff`. HTML, SVG and XML are sent as
+`application/octet-stream`, and anything that is not an image is an attachment.
