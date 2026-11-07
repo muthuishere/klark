@@ -139,7 +139,7 @@ jobs:
         with: { node-version: 22 }
       - name: Build docs
         if: steps.has.outputs.yes == 'true'
-        run: cd site && npm ci && npm run build
+        run: cd site && npm ci && SITE=https://muthuishere.github.io BASE=/klark/ npm run build
       - uses: actions/upload-pages-artifact@v3
         if: steps.has.outputs.yes == 'true'
         with: { path: site/dist }

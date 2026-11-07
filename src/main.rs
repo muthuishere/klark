@@ -641,7 +641,7 @@ fn main() -> io::Result<()> {
         println!("       klark session attach <name>");
         println!("       klark completion zsh");
         println!("       klark expose --hub <url> --token <token>");
-        println!("       klark hub <up|connect|status|down|logs>   (a local hub in Docker)");
+        println!("       klark hub <connect|ls|use|rm|status>   (connect this machine to a klarkhub)");
         println!("       klark msg <whoami|ls|send|reply|log|name|login|status> ...");
         println!("       klark channel set <stable|preview>");
         println!("       klark machine <subcommand> ...");
@@ -745,7 +745,7 @@ fn main() -> io::Result<()> {
         println!("Config: {}", config::config_path().display());
         println!("Logs:   {}", logging::help_log_paths_summary());
         println!("Env:    KLARK_CONFIG_PATH overrides config file path");
-        println!("Home:   https://klark.dev");
+        println!("Home:   https://github.com/muthuishere/klark");
         println!();
         println!("{}", cli::AGENT_HELP_FOOTER);
         return Ok(());
