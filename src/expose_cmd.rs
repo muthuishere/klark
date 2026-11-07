@@ -6,7 +6,7 @@
 //! `klark expose url` prints the hub link for a pane: what an agent hands back
 //! when someone says "share this" (skills/klark, ADR 0008).
 
-const USAGE: &str = "usage: klark expose --hub <ws://hub-host:8080/agent> --token <machine-token> [--name <machine-name>] [--agents <name>[,<name>...]]
+const USAGE: &str = "usage: klark expose --hub <http://hub-host:8080> --token <machine-token> [--name <machine-name>] [--agents <name>[,<name>...]]
        klark expose url [--pane <pane-id>] [--hub <url>] [--name <machine-name>] [--agents <name>[,<name>...]]
        (or set KLARK_HUB_URL / KLARK_HUB_TOKEN / KLARK_MACHINE_NAME / KLARK_EXPOSE_AGENTS; --pane defaults to KLARK_PANE_ID)
        --agents (or repeated --agent) exposes only panes running those agents: an agent name, <session>/<name>,

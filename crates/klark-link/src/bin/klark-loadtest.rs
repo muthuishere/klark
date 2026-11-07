@@ -1,10 +1,11 @@
 //! Simulate many klark machines against a hub.
 //!
-//!   klark-loadtest --hub ws://localhost:8080/agent --token <fleet token> \
+//!   klark-loadtest --hub http://localhost:8080 --token <fleet token> \
 //!       [--machines 100] [--panes 12] [--rate 20000] [--seconds 60] [--tick-ms 50] \
 //!       [--csv stats.csv] [--interval-ms 2000] [--reconnect] [--prefix sim]
 //!
-//! Each simulated machine speaks the real link protocol v3 (crates/klark-link)
+//! Each simulated machine speaks the real link protocol v4 (crates/klark-link,
+//! HTTP: NDJSON event stream down, gzip NDJSON POST segments up)
 //! and behaves like a real klark machine as far as the hub can tell:
 //! - a realistic tree: 3 workspaces x 2 tabs, `--panes` panes, two thirds of
 //!   them running an agent (claude / codex / devin) whose status changes now
@@ -37,7 +38,6 @@ use std::time::{Duration, Instant};
 use base64::Engine as _;
 use klark_link::protocol::{AgentMessage, HubMessage, PROTOCOL_VERSION};
 use serde_json::{json, Value};
-use tungstenite::Message;
 
 macro_rules! counters {
     ($($name:ident),* $(,)?) => {
@@ -62,7 +62,7 @@ counters!(
     msgs_in,
     bytes_in, // every hub->machine byte (payload, after websocket framing)
     msgs_out,
-    bytes_out, // every machine->hub byte
+    bytes_out, // every machine->hub body byte (gzip segments)
     get_tree,
     tree_full,
     tree_full_bytes,
@@ -140,7 +140,7 @@ fn parse_args() -> Args {
         i += step;
     }
     if a.hub.is_empty() || a.token.is_empty() {
-        eprintln!("usage: klark-loadtest --hub <ws url> --token <fleet token> [--machines N] [--panes N] [--rate B/s] [--seconds S] [--csv FILE] [--reconnect]");
+        eprintln!("usage: klark-loadtest --hub <hub url> --token <fleet token> [--machines N] [--panes N] [--rate B/s] [--seconds S] [--csv FILE] [--reconnect]");
         std::process::exit(2);
     }
     a
@@ -384,7 +384,13 @@ fn simulate(
     stats: &Stats,
     deadline: Instant,
 ) -> Result<(), String> {
-    let mut ws = klark_link::connect_hub(&args.hub, &args.token, machine_id)?;
+    let hello = AgentMessage::Hello {
+        protocol: PROTOCOL_VERSION,
+        machine_id: machine_id.to_string(),
+        machine_name: machine_id.to_string(),
+        klark_version: "loadtest".into(),
+    };
+    let mut ws = klark_link::HubLink::open(&args.hub, &args.token, machine_id, &hello)?;
     stats.connected.fetch_add(1, Ordering::Relaxed);
     stats.connects.fetch_add(1, Ordering::Relaxed);
     let mut subscribed: Vec<String> = Vec::new();
@@ -401,9 +407,6 @@ fn simulate(
     stats
         .subscribed
         .fetch_sub(subscribed.len() as u64, Ordering::Relaxed);
-    if result.is_ok() {
-        let _ = ws.close(None);
-    }
     result
 }
 
@@ -418,7 +421,7 @@ enum Kind {
 }
 
 fn link(
-    ws: &mut klark_link::Socket,
+    ws: &mut klark_link::HubLink,
     machine_id: &str,
     st: &mut MachineState,
     args: &Args,
@@ -426,14 +429,15 @@ fn link(
     deadline: Instant,
     subscribed: &mut Vec<String>,
 ) -> Result<(), String> {
-    let send = |ws: &mut klark_link::Socket,
+    // Everything of one loop turn goes out as one pushed segment; per-kind
+    // counters are the JSON size before the segment's gzip.
+    let mut batch: Vec<AgentMessage> = Vec::new();
+    let send = |batch: &mut Vec<AgentMessage>,
                 msg: &AgentMessage,
                 kind: Kind|
      -> Result<(), String> {
-        let bytes = klark_link::encode(msg)?;
-        let len = bytes.len() as u64;
+        let len = serde_json::to_vec(msg).map_err(|e| e.to_string())?.len() as u64;
         stats.msgs_out.fetch_add(1, Ordering::Relaxed);
-        stats.bytes_out.fetch_add(len, Ordering::Relaxed);
         match kind {
             Kind::Tree => stats.tree_full_bytes.fetch_add(len, Ordering::Relaxed),
             Kind::Transcript => stats.transcript_bytes.fetch_add(len, Ordering::Relaxed),
@@ -441,34 +445,21 @@ fn link(
             Kind::Frame => stats.frame_wire_bytes.fetch_add(len, Ordering::Relaxed),
             Kind::Unchanged | Kind::Other => stats.other_bytes.fetch_add(len, Ordering::Relaxed),
         };
-        ws.send(Message::binary(bytes))
-            .map_err(|e| format!("send: {e}"))
+        batch.push(msg.clone());
+        Ok(())
     };
-    send(
-        ws,
-        &AgentMessage::Hello {
-            protocol: PROTOCOL_VERSION,
-            machine_id: machine_id.to_string(),
-            machine_name: machine_id.to_string(),
-            klark_version: "loadtest".into(),
-        },
-        Kind::Other,
-    )?;
 
     let b64 = base64::engine::general_purpose::STANDARD;
     let mut last_emit = Instant::now();
     let mut echo: HashMap<String, String> = HashMap::new();
     let tick = Duration::from_millis(args.tick_ms);
     while Instant::now() < deadline {
-        match ws.read() {
-            Ok(Message::Close(_)) => return Err("hub closed".into()),
-            Ok(msg) => {
-                let len = match &msg {
-                    Message::Text(t) => t.len(),
-                    Message::Binary(b) => b.len(),
-                    _ => 0,
-                } as u64;
-                if let Some(Ok(msg)) = klark_link::decode_hub(msg) {
+        match ws.events.recv_timeout(Duration::from_millis(50)) {
+            Ok(Err(e)) => return Err(e),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return Err("hub closed".into()),
+            Ok(Ok(msg)) => {
+                let len = serde_json::to_vec(&msg).map(|v| v.len()).unwrap_or(0) as u64;
+                {
                     stats.msgs_in.fetch_add(1, Ordering::Relaxed);
                     stats.bytes_in.fetch_add(len, Ordering::Relaxed);
                     let reply: Option<(AgentMessage, Kind)> = match msg {
@@ -601,16 +592,11 @@ fn link(
                         }
                     };
                     if let Some((reply, kind)) = reply {
-                        send(ws, &reply, kind)?;
+                        send(&mut batch, &reply, kind)?;
                     }
                 }
             }
-            Err(tungstenite::Error::Io(e))
-                if matches!(
-                    e.kind(),
-                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                ) => {}
-            Err(e) => return Err(format!("read: {e}")),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
         }
         // A keystroke echo goes out at once, like a real shell's.
         for (pane_id, text) in echo.drain() {
@@ -619,7 +605,7 @@ fn link(
                 .frame_raw_bytes
                 .fetch_add(text.len() as u64, Ordering::Relaxed);
             send(
-                ws,
+                &mut batch,
                 &AgentMessage::Frame {
                     pane_id,
                     bytes: b64.encode(text),
@@ -645,7 +631,7 @@ fn link(
                     .frame_raw_bytes
                     .fetch_add(out.len() as u64, Ordering::Relaxed);
                 send(
-                    ws,
+                    &mut batch,
                     &AgentMessage::Frame {
                         pane_id,
                         bytes: b64.encode(out),
@@ -655,6 +641,10 @@ fn link(
             }
         } else if subscribed.is_empty() {
             last_emit = Instant::now();
+        }
+        if !batch.is_empty() {
+            let wire = ws.push(&std::mem::take(&mut batch))?;
+            stats.bytes_out.fetch_add(wire as u64, Ordering::Relaxed);
         }
     }
     Ok(())

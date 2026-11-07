@@ -3,6 +3,8 @@
 - Status: accepted (owner decision, 2026-11-06). Renames the `klark link`
   command from ADRs 0001, 0002, 0005, 0008 and 0009; those keep their wording
   as history.
+- The WebSocket transport here is superseded by ADR 0013 (plain HTTP; `--hub`
+  takes `http(s)://host:port`, old `ws://` URLs still map to `http://`).
 
 ## Decision
 The command that puts this machine's sessions, tabs and panes on a hub is

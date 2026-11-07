@@ -322,13 +322,10 @@ public class HubAccountsHttpTests : IDisposable
         var api = Client();
         api.DefaultRequestHeaders.Authorization = new("Bearer", token);
         Assert.Equal(HttpStatusCode.OK, (await api.GetAsync("/api/messages")).StatusCode);
-        // ... and on /agent.
-        var ws = _factory.Server.CreateWebSocketClient();
-        ws.ConfigureRequest = req => req.Headers.Authorization = "Bearer " + token;
-        using (var socket = await ws.ConnectAsync(new Uri(_factory.Server.BaseAddress, "agent"), CancellationToken.None))
-        {
-            Assert.Equal(System.Net.WebSockets.WebSocketState.Open, socket.State);
-        }
+        // ... and opens a link session (ADR 0013).
+        var session = await api.PostAsJsonAsync("/agent/session",
+            new { type = "hello", protocol = 4, machine_id = "laptop", machine_name = "laptop", klark_version = "t" });
+        Assert.Equal(HttpStatusCode.OK, session.StatusCode);
 
         var accounts = _factory.Services.GetRequiredService<HubAccounts>();
         Assert.Equal("user1", accounts.MachineRows().Single().ApprovedBy);

@@ -1,6 +1,5 @@
 using System.Collections.Concurrent;
-using System.IO.Compression;
-using System.Net.WebSockets;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -12,17 +11,49 @@ namespace KlarkHub.Services;
 /// server, shared by all signed-in users: that is what lets many people gather
 /// on one hub and see every machine's panes.
 /// </summary>
-public sealed class MachineRegistry
+public sealed class MachineRegistry : IDisposable
 {
     private readonly ConcurrentDictionary<string, MachineConnection> _machines = new();
+    private readonly ConcurrentDictionary<string, MachineConnection> _sessions = new();
     private readonly ILogger<MachineRegistry> _log;
     private readonly HubStore _store;
+    private readonly Timer _sweeper;
+    private readonly object _openLock = new();
 
     public MachineRegistry(ILogger<MachineRegistry> log, HubStore store)
     {
         _log = log;
         _store = store;
+        _sweeper = new Timer(_ => Tick(), null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
     }
+
+    /// <summary>A machine is offline once it has had no event stream open for this long (ADR 0013).</summary>
+    public TimeSpan OfflineAfter { get; set; } = TimeSpan.FromSeconds(45);
+
+    /// <summary>How often an idle event stream carries a heartbeat line.</summary>
+    public TimeSpan Heartbeat
+    {
+        get => _heartbeat;
+        set
+        {
+            _heartbeat = value;
+            var period = value < TimeSpan.FromSeconds(5) ? value : TimeSpan.FromSeconds(5);
+            _sweeper.Change(period, period);
+        }
+    }
+    private TimeSpan _heartbeat = TimeSpan.FromSeconds(15);
+
+    /// <summary>
+    /// The one hub-wide timer: drops offline machines and rings each quiet stream for its
+    /// heartbeat line. Streams themselves own no timers; each is a single awaiting writer.
+    /// </summary>
+    private void Tick()
+    {
+        Sweep();
+        foreach (var m in _sessions.Values) m.PingIfQuiet(_heartbeat);
+    }
+
+    public void Dispose() => _sweeper.Dispose();
 
     internal HubStore Store => _store;
 
@@ -49,63 +80,266 @@ public sealed class MachineRegistry
     }
 
     /// <summary>Close the live links of a machine name (and its fleet members, "name:*").</summary>
-    public async Task DisconnectAsync(string name)
+    public Task DisconnectAsync(string name)
     {
         foreach (var m in _machines.Values.Where(m => string.Equals(m.Id, name, StringComparison.OrdinalIgnoreCase) ||
                                                      m.Id.StartsWith(name + ":", StringComparison.OrdinalIgnoreCase)).ToList())
         {
-            await m.CloseAsync();
+            Remove(m, "revoked");
+        }
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Open a link session for an authenticated machine (POST /agent/session, ADR 0013).
+    /// A new session for a machine that is already linked replaces the old one: that is
+    /// how a reconnect looks. Returns null with an error for a hello this hub cannot serve.
+    /// </summary>
+    public (MachineConnection? Conn, string? Error) Open(string machineId, string token, JsonNode? hello)
+    {
+        if (hello?["type"]?.GetValue<string>() != "hello") return (null, "the body must be a hello message");
+        var protocol = hello["protocol"]?.GetValue<int>() ?? 0;
+        if (protocol is < MachineConnection.MinProtocol or > MachineConnection.MaxProtocol)
+        {
+            // A machine on another protocol would misread what we send (STATUS S-10).
+            _log.LogWarning("machine {Machine} speaks protocol {Protocol}; this hub speaks {Min}-{Max}", machineId, protocol,
+                MachineConnection.MinProtocol, MachineConnection.MaxProtocol);
+            return (null, $"unsupported protocol {protocol}; hub speaks {MachineConnection.MinProtocol}-{MachineConnection.MaxProtocol}");
+        }
+        var conn = new MachineConnection(machineId, TokenHash.Sha256Hex(token), this, _log);
+        lock (_openLock)
+        {
+            if (_machines.TryGetValue(conn.Id, out var previous))
+            {
+                _log.LogInformation("machine {Machine} reconnected; dropping the old session", conn.Id);
+                Remove(previous, "replaced");
+            }
+            _machines[conn.Id] = conn;
+            _sessions[conn.SessionId] = conn;
+        }
+        conn.Hello(hello);
+        return (conn, null);
+    }
+
+    /// <summary>The live session with this id whose machine token is <paramref name="token"/>; null otherwise.</summary>
+    public MachineConnection? Session(string? sessionId, string token, out bool wrongToken)
+    {
+        wrongToken = false;
+        if (string.IsNullOrEmpty(sessionId) || !_sessions.TryGetValue(sessionId, out var conn)) return null;
+        if (!conn.TokenMatches(token))
+        {
+            wrongToken = true;
+            return null;
+        }
+        return conn;
+    }
+
+    /// <summary>Drop machines whose event stream has been gone for <see cref="OfflineAfter"/>.</summary>
+    internal void Sweep()
+    {
+        foreach (var m in _sessions.Values.Where(m => m.IdleFor() > OfflineAfter).ToList())
+        {
+            _log.LogInformation("machine {Machine} offline: no event stream for {Seconds:0}s", m.Id, m.IdleFor().TotalSeconds);
+            Remove(m, "offline");
         }
     }
 
-    /// <summary>Serve one machine's WebSocket until it closes.</summary>
-    public async Task RunAsync(WebSocket socket, string machineId, CancellationToken ct)
+    private void Remove(MachineConnection conn, string why)
     {
-        var conn = new MachineConnection(machineId, socket, this, _log);
-        if (_machines.TryGetValue(conn.Id, out var previous))
-        {
-            _log.LogInformation("machine {Machine} reconnected; dropping the old link", conn.Id);
-            await previous.CloseAsync();
-        }
-        _machines[conn.Id] = conn;
+        if (!_sessions.TryRemove(new KeyValuePair<string, MachineConnection>(conn.SessionId, conn))) return;
+        _machines.TryRemove(new KeyValuePair<string, MachineConnection>(conn.Id, conn));
+        conn.Close(why);
+        conn.FailPending();
+        _store.MachineDisconnected(conn.Id);
         NotifyChanged();
-        try
-        {
-            await conn.ReceiveLoopAsync(ct);
-        }
-        catch (Exception e) when (e is System.Net.WebSockets.WebSocketException or OperationCanceledException)
-        {
-            _log.LogInformation("machine {Machine} link closed: {Error}", conn.Id, e.Message);
-        }
-        finally
-        {
-            _machines.TryRemove(new KeyValuePair<string, MachineConnection>(conn.Id, conn));
-            conn.FailPending();
-            _store.MachineDisconnected(conn.Id);
-            NotifyChanged();
-        }
     }
 }
 
 /// <summary>One linked klark machine.</summary>
 public sealed class MachineConnection
 {
-    private readonly WebSocket _socket;
     private readonly MachineRegistry _registry;
     private readonly ILogger _log;
-    private readonly SemaphoreSlim _sendLock = new(1, 1);
+    private readonly byte[] _tokenSha;
+    private readonly CancellationTokenSource _closed = new();
+    // Outbound: hub messages with their seq, kept until the machine's stream
+    // asks for something after them (resume after a dropped stream).
+    private readonly object _outLock = new();
+    private readonly List<(long Seq, byte[] Line)> _outbox = new();
+    private long _outSeq;
+    // The stream's doorbell: rung when a message is queued or a heartbeat is due.
+    private readonly System.Threading.Channels.Channel<bool> _bell =
+        System.Threading.Channels.Channel.CreateBounded<bool>(new System.Threading.Channels.BoundedChannelOptions(1)
+        {
+            FullMode = System.Threading.Channels.BoundedChannelFullMode.DropWrite,
+            SingleReader = true,
+        });
+    private int _pingDue;
+    private long _lastWriteTicks = DateTimeOffset.UtcNow.UtcTicks;
+    private static readonly byte[] PingLine = "{\"type\":\"ping\"}\n"u8.ToArray();
+    private CancellationTokenSource? _stream;
+    private int _streams;
+    private long _lastSeenTicks = DateTimeOffset.UtcNow.UtcTicks;
+    private readonly SemaphoreSlim _pushLock = new(1, 1);
+    private long _lastPush;
+    private const int OutboxLimit = 4096;
     private readonly object _subsLock = new();
     private readonly Dictionary<string, List<PaneViewer>> _viewers = new();
     private readonly ConcurrentDictionary<string, TaskCompletionSource<JsonNode?>> _pending = new();
     private long _nextCallId;
 
-    internal MachineConnection(string id, WebSocket socket, MachineRegistry registry, ILogger log)
+    internal MachineConnection(string id, string tokenSha256, MachineRegistry registry, ILogger log)
     {
         Id = id;
         Name = id;
-        _socket = socket;
+        SessionId = Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
+        _tokenSha = Encoding.ASCII.GetBytes(tokenSha256);
         _registry = registry;
         _log = log;
+    }
+
+    /// <summary>The link session (ADR 0013); a reconnect gets a new one.</summary>
+    public string SessionId { get; }
+
+    internal bool TokenMatches(string token) =>
+        CryptographicOperations.FixedTimeEquals(_tokenSha, Encoding.ASCII.GetBytes(TokenHash.Sha256Hex(token)));
+
+    /// <summary>Whether the hub dropped this session (replaced, revoked, offline).</summary>
+    public bool IsClosed => _closed.IsCancellationRequested;
+
+    /// <summary>Zero while an event stream is open; otherwise how long since the machine was last heard.</summary>
+    internal TimeSpan IdleFor() => Volatile.Read(ref _streams) > 0
+        ? TimeSpan.Zero
+        : DateTimeOffset.UtcNow - new DateTimeOffset(Interlocked.Read(ref _lastSeenTicks), TimeSpan.Zero);
+
+    private void Seen() => Interlocked.Exchange(ref _lastSeenTicks, DateTimeOffset.UtcNow.UtcTicks);
+
+    /// <summary>
+    /// Serve GET /agent/events: NDJSON, one hub message per line with its seq, held open,
+    /// a {"type":"ping"} line when idle. A newer stream for this session ends this one.
+    /// </summary>
+    public async Task StreamAsync(HttpResponse response, long after, CancellationToken ct)
+    {
+        var mine = CancellationTokenSource.CreateLinkedTokenSource(ct, _closed.Token);
+        CancellationTokenSource? older;
+        lock (_outLock)
+        {
+            older = _stream;
+            _stream = mine;
+            _outbox.RemoveAll(e => e.Seq <= after);
+        }
+        older?.Cancel();
+        Interlocked.Increment(ref _streams);
+        Seen();
+        try
+        {
+            response.ContentType = "application/x-ndjson";
+            response.Headers.CacheControl = "no-cache";
+            response.Headers["X-Accel-Buffering"] = "no";
+            response.HttpContext.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpResponseBodyFeature>()?.DisableBuffering();
+            await response.StartAsync(mine.Token);
+            await response.Body.FlushAsync(mine.Token);
+            var sent = after;
+            var lines = new List<byte[]>();
+            _bell.Writer.TryWrite(true); // whatever is already queued
+            while (await _bell.Reader.WaitToReadAsync(mine.Token))
+            {
+                _bell.Reader.TryRead(out _);
+                lines.Clear();
+                lock (_outLock)
+                {
+                    foreach (var e in _outbox)
+                        if (e.Seq > sent) lines.Add(e.Line);
+                    if (_outbox.Count > 0) sent = Math.Max(sent, _outbox[^1].Seq);
+                }
+                foreach (var l in lines) await response.Body.WriteAsync(l, mine.Token);
+                var wrote = lines.Count > 0;
+                if (Interlocked.Exchange(ref _pingDue, 0) == 1 && !wrote)
+                {
+                    await response.Body.WriteAsync(PingLine, mine.Token);
+                    wrote = true;
+                }
+                if (wrote)
+                {
+                    await response.Body.FlushAsync(mine.Token);
+                    Interlocked.Exchange(ref _lastWriteTicks, DateTimeOffset.UtcNow.UtcTicks);
+                }
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (IOException) { }
+        finally
+        {
+            Seen();
+            Interlocked.Decrement(ref _streams);
+            lock (_outLock)
+            {
+                if (_stream == mine) _stream = null;
+            }
+            mine.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// POST /agent/push: one segment of machine messages, one JSON per line. A seq this
+    /// session already took is ignored (a retried push); a gap is logged.
+    /// </summary>
+    public async Task<bool> PushAsync(long seq, ReadOnlyMemory<byte> ndjson)
+    {
+        Seen();
+        await _pushLock.WaitAsync();
+        try
+        {
+            if (seq <= _lastPush) return false;
+            if (seq != _lastPush + 1)
+                _log.LogWarning("machine {Machine} push gap: got {Seq} after {Last}", Id, seq, _lastPush);
+            _lastPush = seq;
+            var rest = ndjson;
+            while (!rest.IsEmpty)
+            {
+                var nl = rest.Span.IndexOf((byte)'\n');
+                var line = nl < 0 ? rest : rest[..nl];
+                rest = nl < 0 ? ReadOnlyMemory<byte>.Empty : rest[(nl + 1)..];
+                if (line.Span.Trim((byte)'\r').IsEmpty) continue;
+                try
+                {
+                    await HandleAsync(JsonNode.Parse(line.Span));
+                }
+                catch (Exception e) when (e is JsonException or InvalidOperationException or FormatException)
+                {
+                    _log.LogWarning(e, "bad message from {Machine}", Id);
+                }
+            }
+            return true;
+        }
+        finally
+        {
+            _pushLock.Release();
+        }
+    }
+
+    /// <summary>Ring the stream for a heartbeat line if it wrote nothing for <paramref name="every"/>.</summary>
+    internal void PingIfQuiet(TimeSpan every)
+    {
+        if (Volatile.Read(ref _streams) == 0) return;
+        if (DateTimeOffset.UtcNow.UtcTicks - Interlocked.Read(ref _lastWriteTicks) < every.Ticks) return;
+        Interlocked.Exchange(ref _pingDue, 1);
+        _bell.Writer.TryWrite(true);
+    }
+
+    internal void Close(string why)
+    {
+        _log.LogInformation("machine {Machine} session {Session} closed: {Why}", Id, SessionId, why);
+        _closed.Cancel();
+    }
+
+    internal void Hello(JsonNode hello)
+    {
+        Protocol = hello["protocol"]?.GetValue<int>() ?? 0;
+        Host = hello["machine_name"]?.GetValue<string>() ?? "";
+        Version = hello["klark_version"]?.GetValue<string>() ?? "";
+        _registry.Store.MachineConnected(Id, Host, Version);
+        _registry.NotifyChanged();
     }
 
     /// <summary>The configured machine name the token belongs to; never what the machine claims.</summary>
@@ -286,10 +520,10 @@ public sealed class MachineConnection
             : (object)new { type = "get_transcript", id, pane_id = paneId, after }, timeout);
     }
 
-    /// <summary>A file a chat linked to (protocol 4, ADR 0011 G): `{name, path, size, data}` (base64).</summary>
+    /// <summary>A file a chat linked to (protocol 5, ADR 0011 G): `{name, path, size, data}` (base64).</summary>
     public async Task<JsonNode?> GetFileAsync(string paneId, string path, long maxBytes, TimeSpan timeout)
     {
-        if (Protocol < 4)
+        if (Protocol < 5)
             throw new NotSupportedException($"machine {Id} links with protocol {Protocol}; update klark there to open files");
         return await RequestAsync("get_file", id => new { type = "get_file", id, pane_id = paneId, path, max_bytes = maxBytes }, timeout);
     }
@@ -320,37 +554,24 @@ public sealed class MachineConnection
         return result?["read"]?["text"]?.GetValue<string>() ?? "";
     }
 
-    private async Task SendAsync(object message)
+    private Task SendAsync(object message)
     {
-        var bytes = JsonSerializer.SerializeToUtf8Bytes(message);
-        await _sendLock.WaitAsync();
-        try
+        if (IsClosed) return Task.CompletedTask;
+        var node = JsonSerializer.SerializeToNode(message) as JsonObject ?? new JsonObject();
+        lock (_outLock)
         {
-            if (_socket.State == WebSocketState.Open)
+            var seq = ++_outSeq;
+            node["seq"] = seq;
+            var line = Encoding.UTF8.GetBytes(node.ToJsonString() + "\n");
+            if (_outbox.Count >= OutboxLimit)
             {
-                await _socket.SendAsync(bytes, WebSocketMessageType.Text, true, CancellationToken.None);
+                _log.LogWarning("machine {Machine} is not reading its event stream; dropping old messages", Id);
+                _outbox.RemoveRange(0, _outbox.Count / 2);
             }
+            _outbox.Add((seq, line));
         }
-        catch (Exception e)
-        {
-            _log.LogDebug(e, "send to {Machine} failed", Id);
-        }
-        finally
-        {
-            _sendLock.Release();
-        }
-    }
-
-    internal async Task CloseAsync()
-    {
-        try
-        {
-            await _socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "replaced", CancellationToken.None);
-        }
-        catch (Exception)
-        {
-            _socket.Abort();
-        }
+        _bell.Writer.TryWrite(true);
+        return Task.CompletedTask;
     }
 
     internal void FailPending()
@@ -376,114 +597,14 @@ public sealed class MachineConnection
         }
     }
 
-    internal async Task ReceiveLoopAsync(CancellationToken ct)
-    {
-        var buffer = new byte[64 * 1024];
-        using var message = new MemoryStream();
-        while (!ct.IsCancellationRequested && _socket.State == WebSocketState.Open)
-        {
-            WebSocketReceiveResult result;
-            message.SetLength(0);
-            do
-            {
-                result = await _socket.ReceiveAsync(buffer, ct);
-                if (result.MessageType == WebSocketMessageType.Close)
-                {
-                    return;
-                }
-                message.Write(buffer, 0, result.Count);
-                if (message.Length > 64 * 1024 * 1024)
-                {
-                    throw new InvalidOperationException("message too large");
-                }
-            } while (!result.EndOfMessage);
-
-            try
-            {
-                if (result.MessageType == WebSocketMessageType.Binary && message.Length >= 2 &&
-                    message.GetBuffer()[0] is FrameGzip or FrameRaw)
-                {
-                    await HandleBinaryFrameAsync(message);
-                    continue;
-                }
-                await HandleAsync(JsonNode.Parse(Decode(message, result.MessageType)));
-            }
-            catch (Exception e) when (e is JsonException or InvalidOperationException or FormatException or InvalidDataException)
-            {
-                _log.LogWarning(e, "bad message from {Machine}", Id);
-            }
-        }
-    }
-
     /// <summary>klark-link PROTOCOL_VERSIONs this hub understands. v2 adds list_agents and deliver (ADR 0009).</summary>
-    /// <remarks>v3 adds pane_size, fetch_asset and get_transcript (ADR 0011).</remarks>
-    public const int MinProtocol = 1, MaxProtocol = 3;
-
-    private const byte FrameGzip = 0x01;
-    private const byte FrameRaw = 0x02;
-
-    /// <summary>
-    /// Terminal output: [kind][id length][pane id][raw or gzip bytes] (ADR 0001, D5).
-    /// No base64 and no JSON on the hot path.
-    /// </summary>
-    private async Task HandleBinaryFrameAsync(MemoryStream message)
-    {
-        var buf = message.GetBuffer();
-        var len = (int)message.Length;
-        int idLen = buf[1];
-        if (2 + idLen > len) throw new InvalidDataException("short frame");
-        var paneId = Encoding.UTF8.GetString(buf, 2, idLen);
-        byte[] raw;
-        if (buf[0] == FrameGzip)
-        {
-            using var src = new MemoryStream(buf, 2 + idLen, len - 2 - idLen, writable: false);
-            using var gz = new GZipStream(src, CompressionMode.Decompress);
-            using var dst = new MemoryStream();
-            gz.CopyTo(dst);
-            raw = dst.ToArray();
-        }
-        else
-        {
-            raw = buf.AsSpan(2 + idLen, len - 2 - idLen).ToArray();
-        }
-        _registry.Store.AppendOutput(Id, paneId, raw);
-        var b64 = Convert.ToBase64String(raw);
-        Dispatch(paneId, v => v.Enqueue(b64));
-        await Task.CompletedTask;
-    }
-
-    /// <summary>Machines send gzip JSON in binary frames (ADR 0001, D5); text frames are plain JSON.</summary>
-    private static byte[] Decode(MemoryStream message, WebSocketMessageType type)
-    {
-        message.Position = 0;
-        if (type != WebSocketMessageType.Binary) return message.ToArray();
-        using var gz = new GZipStream(message, CompressionMode.Decompress, leaveOpen: true);
-        using var json = new MemoryStream();
-        gz.CopyTo(json);
-        if (json.Length > 64 * 1024 * 1024) throw new InvalidDataException("message too large");
-        return json.ToArray();
-    }
+    /// <remarks>v3 adds pane_size, fetch_asset and get_transcript (ADR 0011); v4 is v3 over plain HTTP (ADR 0013); v5 adds get_file (ADR 0011 G).</remarks>
+    public const int MinProtocol = 4, MaxProtocol = 5;
 
     private async Task HandleAsync(JsonNode? msg)
     {
         switch (msg?["type"]?.GetValue<string>())
         {
-            case "hello":
-                var protocol = msg["protocol"]?.GetValue<int>() ?? 0;
-                if (protocol is < MinProtocol or > MaxProtocol)
-                {
-                    // A machine on another protocol would misread what we send (STATUS S-10).
-                    _log.LogWarning("machine {Machine} speaks protocol {Protocol}; this hub speaks {Min}-{Max}", Id, protocol, MinProtocol, MaxProtocol);
-                    await _socket.CloseAsync(WebSocketCloseStatus.PolicyViolation,
-                        $"unsupported protocol {protocol}; hub speaks {MinProtocol}-{MaxProtocol}", CancellationToken.None);
-                    return;
-                }
-                Protocol = protocol;
-                Host = msg["machine_name"]?.GetValue<string>() ?? "";
-                Version = msg["klark_version"]?.GetValue<string>() ?? "";
-                _registry.Store.MachineConnected(Id, Host, Version);
-                _registry.NotifyChanged();
-                break;
             case "tree":
                 Tree = SessionTree.Parse(msg["snapshot"]);
                 _treeRev = msg["rev"]?.GetValue<string>();
@@ -511,12 +632,14 @@ public sealed class MachineConnection
                 TreeArrived();
                 break;
             case "frame":
+                // UTF-8 output arrives as "text" (ADR 0013); anything else as base64 "bytes".
                 var framePane = msg["pane_id"]?.GetValue<string>();
-                var b64 = msg["bytes"]?.GetValue<string>() ?? "";
-                if (framePane is not null && b64.Length > 0)
-                {
-                    _registry.Store.AppendOutput(Id, framePane, Convert.FromBase64String(b64));
-                }
+                var raw = msg["text"]?.GetValue<string>() is { } text
+                    ? Encoding.UTF8.GetBytes(text)
+                    : Convert.FromBase64String(msg["bytes"]?.GetValue<string>() ?? "");
+                if (framePane is null || raw.Length == 0) break;
+                _registry.Store.AppendOutput(Id, framePane, raw);
+                var b64 = Convert.ToBase64String(raw);
                 Dispatch(framePane, v => v.Enqueue(b64));
                 break;
             case "closed":

@@ -4,10 +4,12 @@ A Blazor Server app that many people sign in to in order to watch and answer
 the coding agents on many klark machines from one place.
 
 ```
-klark machine ──(outbound wss, machine token)──▶ klark hub ◀──(browser, sign-in)── people
+klark machine ──(outbound http(s), machine token)──▶ klark hub ◀──(browser, sign-in)── people
 ```
 
-- **Machines dial out.** `klark expose` opens one WebSocket to `/agent`. Nothing
+- **Machines dial out.** `klark expose` holds one HTTP request open to
+  `/agent/events` (NDJSON, hub → machine) and POSTs short segments to
+  `/agent/push` (machine → hub); no WebSocket anywhere (ADR 0013). Nothing
   listens on the machine and no tunnel is needed.
 - **Always pull.** A machine never sends anything unasked. The hub pulls pane
   trees only while someone has the machines page open, and gets "unchanged"
@@ -31,9 +33,10 @@ dotnet run
 ```
 
 Or with Docker: put your LDAP settings and machine hashes in `hub/appsettings.Production.json` (or `KLARK_HUB__...` variables), then run `cd hub && docker compose up -d --build`.
-The hub is plain HTTP on port 8080; machines connect with `ws://`. Run it on a
-trusted network or VPN. Tokens and passwords cross the wire unencrypted, so for
-public exposure put a TLS proxy in front and use `wss://` (the link supports both).
+The hub is plain HTTP on port 8080; machines connect with `http://` (no
+WebSockets, for machines or browsers: ADR 0013). Run it on a trusted network or
+VPN. Tokens and passwords cross the wire unencrypted, so for public exposure put
+a TLS proxy in front and use `https://` (the link supports both).
 
 ## Sign-in
 
@@ -194,7 +197,7 @@ dotnet test hub.Tests     # xUnit: screen cleaning (Claude Code, Codex, Devin fi
 ```bash
 # hub config: "Machines": [{ "Name": "load", "Fleet": true, "TokenSha256": "<hash-token fleet-secret>" }]
 cargo run --release -p klark-link --bin klark-loadtest -- \
-  --hub ws://localhost:8080/agent --token fleet-secret --machines 100 --seconds 60
+  --hub http://localhost:8080 --token fleet-secret --machines 100 --seconds 60
 ```
 
 Then sign in and open a few panes: only those panes start streaming.
@@ -242,7 +245,7 @@ Writes are batched by one background writer, so disk never slows the machine soc
 ## Link a machine
 
 ```bash
-klark expose --hub ws://hub-host:8080/agent --token <machine token> [--name laptop]
+klark expose --hub http://hub-host:8080 --token <machine token> [--name laptop]
 # or KLARK_HUB_URL / KLARK_HUB_TOKEN / KLARK_MACHINE_NAME
 ```
 

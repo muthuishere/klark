@@ -18,6 +18,11 @@
     <script src="@Assets["chat.js"]"></script>
     <script src="@Assets["terminal.js"]"></script>
     <script src="@Assets["idle.js"]"></script>
-    <script src="_framework/blazor.web.js"></script>
+    @* No WebSockets anywhere (ADR 0013): the circuit uses Server-Sent Events, long polling as a fallback.
+       2 | 4 = HttpTransportType.ServerSentEvents | LongPolling (signalR is not a global here). *@
+    <script src="_framework/blazor.web.js" autostart="false"></script>
+    <script>
+        Blazor.start({ circuit: { configureSignalR: b => b.withUrl("_blazor", { transport: 2 | 4 }) } });
+    </script>
 </body>
 </html>

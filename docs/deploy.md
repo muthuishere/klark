@@ -30,8 +30,13 @@ NodePort Service (plain http on every node at `:30080`), a PVC for `/data`, and
 probes on `/healthz`. Open `http://<node-ip>:30080`. Set `KLARK_HUB__PUBLICURL`
 to that address so the links `klark hub connect` prints point there.
 
-No Ingress or TLS is needed. If you later put the hub behind a proxy, it must
-allow WebSockets with long timeouts on `/agent` and `/_blazor`, and you can set
+No Ingress or TLS is needed, and nothing uses WebSockets (ADR 0013): machines
+and browsers speak ordinary HTTP requests, so any proxy, NodePort or corporate
+firewall that passes HTTP passes the hub. Behind a proxy, two settings help:
+do not buffer responses (the hub already sends `X-Accel-Buffering: no` on the
+machine event stream, which nginx honours) and allow a response to stay open
+for at least 60 s (`/agent/events` is held open with a line every 15 s; the
+browser's `/_blazor` uses Server-Sent Events or long polling). Set
 `KLARK_HUB__TRUSTFORWARDEDHEADERS=true` there.
 
 ## First sign-in

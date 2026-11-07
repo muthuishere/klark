@@ -1,6 +1,6 @@
 //! Wire protocol between a klark machine (the agent) and a klark hub.
 //!
-//! JSON text frames over one WebSocket that the machine dials out to the hub.
+//! JSON messages over plain HTTP that the machine dials out to the hub (ADR 0013).
 //! Every message is `{"type": "...", ...}`. The hub never receives pane bytes it
 //! did not ask for: on connect it gets only the tree, and frames for a pane flow
 //! only between `subscribe` and `unsubscribe`.
@@ -9,7 +9,9 @@ use serde::{Deserialize, Serialize};
 
 /// v2 adds `list_agents` and `deliver` (agent messaging, ADR 0009).
 /// v3 adds `pane_size`, `fetch_asset` and `get_transcript` (ADR 0011).
-pub const PROTOCOL_VERSION: u32 = 4;
+/// v4 is the same messages over plain HTTP: NDJSON stream down, POST segments up (ADR 0013).
+/// v5 adds `get_file` (the chat's file viewer, ADR 0011 G).
+pub const PROTOCOL_VERSION: u32 = 5;
 
 /// Machine -> hub.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -139,7 +141,7 @@ pub enum HubMessage {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         limit: Option<u32>,
     },
-    /// v4: a file a chat linked to (absolute, `~/...` or relative to the pane's
+    /// v5: a file a chat linked to (absolute, `~/...` or relative to the pane's
     /// cwd). The machine checks it itself (`files::check`) and answers
     /// `result {id, result: {name, path, size, data(base64)}}` or `result {id, error}`.
     GetFile {

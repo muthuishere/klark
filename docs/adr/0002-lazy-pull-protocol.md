@@ -2,6 +2,8 @@
 
 - Status: accepted, implemented (`crates/klark-link/src/protocol.rs`, `hub/Services/MachineRegistry.cs`)
 - Supersedes: the "tree on connect and on change" part of ADR 0001 D4
+- Transport superseded by ADR 0013: the messages below now travel over plain
+  HTTP (NDJSON stream down, POST segments up), not a WebSocket.
 
 ## Context
 With 100+ machines and only a few people looking at any moment, anything a

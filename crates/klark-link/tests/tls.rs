@@ -1,4 +1,4 @@
-//! https and wss against a local rustls server whose self-signed certificate
+//! https (the API and the link, ADR 0013) against a local rustls server whose self-signed certificate
 //! (tests/fixtures/localhost-*.pem) is trusted through KLARK_HUB_CA_FILE.
 
 use std::io::{BufRead, BufReader, Read, Write};
@@ -138,48 +138,94 @@ fn https_refuses_a_hub_cert_without_the_ca_file() {
 }
 
 #[test]
-fn wss_handshake_carries_the_token() {
+fn https_link_session_events_and_push() {
     trust_fixture();
     let l = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = l.local_addr().unwrap().port();
     let cfg = server_config();
+    // Connection 1 (kept alive): POST /agent/session, then POST /agent/push.
+    // Connection 2: GET /agent/events, one chunked NDJSON line.
     let t = std::thread::spawn(move || {
+        let mut seen = Vec::new();
+        let read_req =
+            |r: &mut BufReader<&mut StreamOwned<ServerConnection, std::net::TcpStream>>| {
+                let mut line = String::new();
+                r.read_line(&mut line).unwrap();
+                let (mut len, mut auth) = (0, String::new());
+                loop {
+                    let mut h = String::new();
+                    r.read_line(&mut h).unwrap();
+                    if h == "\r\n" {
+                        break;
+                    }
+                    let lower = h.to_ascii_lowercase();
+                    if let Some(v) = lower.strip_prefix("content-length:") {
+                        len = v.trim().parse().unwrap();
+                    }
+                    if lower.starts_with("authorization:") {
+                        auth = h.trim().to_string();
+                    }
+                }
+                let mut b = vec![0u8; len];
+                r.read_exact(&mut b).unwrap();
+                (line.trim().to_string(), auth)
+            };
         let (tcp, _) = l.accept().unwrap();
-        let s = StreamOwned::new(ServerConnection::new(cfg).unwrap(), tcp);
-        let mut auth = String::new();
-        let mut ws = tungstenite::accept_hdr(
-            s,
-            |req: &tungstenite::handshake::server::Request,
-             resp: tungstenite::handshake::server::Response| {
-                auth = req
-                    .headers()
-                    .get("Authorization")
-                    .and_then(|v| v.to_str().ok())
-                    .unwrap_or("")
-                    .to_string();
-                Ok(resp)
-            },
+        let mut s1 = StreamOwned::new(ServerConnection::new(cfg.clone()).unwrap(), tcp);
+        {
+            let mut r = BufReader::new(&mut s1);
+            seen.push(read_req(&mut r));
+        }
+        let body = r#"{"session_id":"abc"}"#;
+        write!(
+            s1,
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
         )
         .unwrap();
-        ws.send(tungstenite::Message::text("hi")).unwrap();
-        auth
-    });
-    let mut ws =
-        klark_link::connect_hub(&format!("wss://localhost:{port}/agent"), "tok", "box").unwrap();
-    let msg = loop {
-        match ws.read() {
-            Ok(m) => break m,
-            Err(tungstenite::Error::Io(e))
-                if matches!(
-                    e.kind(),
-                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                ) =>
-            {
-                continue
-            }
-            Err(e) => panic!("{e}"),
+        s1.flush().unwrap();
+
+        let (tcp, _) = l.accept().unwrap();
+        let mut s2 = StreamOwned::new(ServerConnection::new(cfg).unwrap(), tcp);
+        {
+            let mut r = BufReader::new(&mut s2);
+            seen.push(read_req(&mut r));
         }
-    };
-    assert_eq!(msg.into_text().unwrap(), "hi");
-    assert_eq!(t.join().unwrap(), "Bearer tok");
+        let line = "{\"seq\":1,\"type\":\"ping\"}\n";
+        write!(
+            s2,
+            "HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nTransfer-Encoding: chunked\r\n\r\n{:x}\r\n{line}\r\n",
+            line.len()
+        )
+        .unwrap();
+        s2.flush().unwrap();
+
+        // The push reuses connection 1.
+        {
+            let mut r = BufReader::new(&mut s1);
+            seen.push(read_req(&mut r));
+        }
+        write!(s1, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{{}}").unwrap();
+        s1.flush().unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+        seen
+    });
+    let hello = klark_link::protocol::AgentMessage::Pong;
+    let mut link =
+        klark_link::HubLink::open(&format!("https://localhost:{port}"), "tok", "box", &hello)
+            .unwrap();
+    assert_eq!(link.session_id(), "abc");
+    let msg = link
+        .events
+        .recv_timeout(Duration::from_secs(5))
+        .unwrap()
+        .unwrap();
+    assert_eq!(msg, klark_link::protocol::HubMessage::Ping);
+    link.push(&[klark_link::protocol::AgentMessage::Pong])
+        .unwrap();
+    let seen = t.join().unwrap();
+    assert_eq!(seen[0].0, "POST /agent/session HTTP/1.1");
+    assert_eq!(seen[0].1, "Authorization: Bearer tok");
+    assert_eq!(seen[1].0, "GET /agent/events?session=abc&after=0 HTTP/1.1");
+    assert_eq!(seen[2].0, "POST /agent/push?session=abc&seq=1 HTTP/1.1");
 }

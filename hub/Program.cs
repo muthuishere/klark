@@ -147,7 +147,6 @@ if (!app.Environment.IsDevelopment())
 }
 
 app.UseResponseCompression();
-app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(20) });
 app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
@@ -173,29 +172,82 @@ app.Use(async (ctx, next) =>
 app.UseAntiforgery();
 app.MapStaticAssets();
 
-// klark machines dial in here: `klark expose --hub ws://<host>:8080/agent --token <token>`.
-app.Map("/agent", async (HttpContext ctx, MachineRegistry registry) =>
+// ---- machine link (ADR 0013): plain HTTP, no WebSocket ---------------------
+// `klark hub connect --url http://<host>:8080` / `klark expose --hub http://<host>:8080`.
+// POST /agent/session opens a session; GET /agent/events streams hub messages
+// down as NDJSON; POST /agent/push carries machine messages up in short segments.
+
+static string BearerOf(HttpRequest req)
 {
-    if (!ctx.WebSockets.IsWebSocketRequest)
-    {
-        return Results.BadRequest("websocket required");
-    }
-    var auth = ctx.Request.Headers.Authorization.ToString();
-    var token = auth.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) ? auth["Bearer ".Length..].Trim() : "";
-    var machine = ctx.RequestServices.GetRequiredService<HubAccounts>().MatchToken(token);
-    if (machine is null)
-    {
-        return Results.Unauthorized();
-    }
+    var auth = req.Headers.Authorization.ToString();
+    return auth.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) ? auth["Bearer ".Length..].Trim() : "";
+}
+
+// The token probe `klark hub connect` uses: 401 for a token this hub does not know.
+app.MapGet("/agent", (HttpContext ctx, HubAccounts accounts) =>
+{
+    var machine = accounts.MatchToken(BearerOf(ctx.Request));
+    if (machine is null) return Results.Json(new { error = "unknown machine token" }, statusCode: 401);
+    var (id, error) = ApiAuth.ResolveMachine(machine, ctx.Request);
+    return id is null ? Results.Json(new { error }, statusCode: 400) : Results.Ok(new { machine = id });
+});
+
+app.MapPost("/agent/session", async (HttpContext ctx, HubAccounts accounts, MachineRegistry registry) =>
+{
+    var token = BearerOf(ctx.Request);
+    var machine = accounts.MatchToken(token);
+    if (machine is null) return Results.Json(new { error = "unknown machine token" }, statusCode: 401);
     var (machineId, error) = ApiAuth.ResolveMachine(machine, ctx.Request);
-    if (machineId is null) return Results.BadRequest(error);
-    using var socket = await ctx.WebSockets.AcceptWebSocketAsync();
+    if (machineId is null) return Results.Json(new { error }, statusCode: 400);
+    System.Text.Json.Nodes.JsonNode? hello;
+    try { hello = await System.Text.Json.Nodes.JsonNode.ParseAsync(ctx.Request.Body, cancellationToken: ctx.RequestAborted); }
+    catch (JsonException) { return Results.Json(new { error = "the body must be a hello message" }, statusCode: 400); }
+    var (conn, refused) = registry.Open(machineId, token, hello);
+    return conn is null
+        ? Results.Json(new { error = refused }, statusCode: 400)
+        : Results.Ok(new { session_id = conn.SessionId, heartbeat_seconds = (int)registry.Heartbeat.TotalSeconds });
+}).DisableAntiforgery();
+
+app.MapGet("/agent/events", async (HttpContext ctx, string? session, long? after, MachineRegistry registry) =>
+{
+    var conn = registry.Session(session, BearerOf(ctx.Request), out var wrongToken);
+    if (conn is null)
+        return wrongToken ? Results.Json(new { error = "token does not match the session" }, statusCode: 401)
+                          : Results.Json(new { error = "unknown session; open a new one" }, statusCode: 404);
     // Stop with the host too, so SIGTERM is not held up by linked machines.
     using var linked = CancellationTokenSource.CreateLinkedTokenSource(ctx.RequestAborted,
         ctx.RequestServices.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping);
-    await registry.RunAsync(socket, machineId, linked.Token);
+    await conn.StreamAsync(ctx.Response, after ?? 0, linked.Token);
     return Results.Empty;
 });
+
+app.MapPost("/agent/push", async (HttpContext ctx, string? session, long? seq, MachineRegistry registry) =>
+{
+    var conn = registry.Session(session, BearerOf(ctx.Request), out var wrongToken);
+    if (conn is null)
+        return wrongToken ? Results.Json(new { error = "token does not match the session" }, statusCode: 401)
+                          : Results.Json(new { error = "unknown session; open a new one" }, statusCode: 404);
+    if (seq is not > 0) return Results.Json(new { error = "seq is required" }, statusCode: 400);
+    const int max = 64 * 1024 * 1024;
+    Stream body = ctx.Request.Body;
+    if (ctx.Request.Headers.ContentEncoding.ToString().Contains("gzip", StringComparison.OrdinalIgnoreCase))
+        body = new System.IO.Compression.GZipStream(body, System.IO.Compression.CompressionMode.Decompress);
+    using var buf = new MemoryStream();
+    var chunk = new byte[64 * 1024];
+    int n;
+    try
+    {
+        while ((n = await body.ReadAsync(chunk, ctx.RequestAborted)) > 0)
+        {
+            buf.Write(chunk, 0, n);
+            if (buf.Length > max) return Results.Json(new { error = "segment too large" }, statusCode: 413);
+        }
+    }
+    catch (InvalidDataException) { return Results.Json(new { error = "bad gzip body" }, statusCode: 400); }
+    var fresh = await conn.PushAsync(seq.Value, buf.GetBuffer().AsMemory(0, (int)buf.Length));
+    // 204, no body: the common case costs only a status line on the wire.
+    return fresh ? Results.NoContent() : Results.Ok(new { duplicate = true });
+}).DisableAntiforgery();
 
 app.MapPost("/account/login", async (HttpContext ctx, [FromForm] string username, [FromForm] string password,
     [FromForm] string? returnUrl, SignInService signIn) =>
@@ -355,7 +407,16 @@ app.MapFileEndpoints();
 
 app.MapGet("/healthz", () => Results.Ok("ok"));
 
-app.MapRazorComponents<App>().AddInteractiveServerRenderMode();
+// Browsers never open a WebSocket (ADR 0013): the circuit runs over Server-Sent Events,
+// long polling as the fallback. Fine without sticky sessions at one replica.
+// The circuit hub's endpoints carry their HttpConnectionDispatcherOptions as metadata;
+// restricting Transports there makes /_blazor/negotiate stop offering WebSockets.
+app.MapRazorComponents<App>().AddInteractiveServerRenderMode().Finally(e =>
+{
+    foreach (var o in e.Metadata.OfType<Microsoft.AspNetCore.Http.Connections.HttpConnectionDispatcherOptions>())
+        o.Transports = Microsoft.AspNetCore.Http.Connections.HttpTransportType.ServerSentEvents |
+                       Microsoft.AspNetCore.Http.Connections.HttpTransportType.LongPolling;
+});
 
 app.Run();
 

@@ -132,7 +132,9 @@ public sealed partial class HubStore : BackgroundService
 
     // ---- the single writer ---------------------------------------------------
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    // Schema before the host serves requests: since .NET 10 ExecuteAsync runs entirely in
+    // the background, so a page could otherwise query hub.db before its tables exist.
+    public override Task StartAsync(CancellationToken cancellationToken)
     {
         Directory.CreateDirectory(Path.Combine(_options.DataDir, "machines"));
         _hubDb = Open(Path.Combine(_options.DataDir, "hub.db"));
@@ -147,6 +149,11 @@ public sealed partial class HubStore : BackgroundService
               text TEXT NOT NULL, sender TEXT NOT NULL, ok INTEGER NOT NULL, error TEXT);
             CREATE INDEX IF NOT EXISTS messages_ts ON messages (ts);
             """);
+        return base.StartAsync(cancellationToken);
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
 
         var batch = new List<StoreItem>(1024);
         var reader = _queue.Reader;

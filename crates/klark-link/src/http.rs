@@ -273,6 +273,234 @@ pub fn get_to_writer(
     Ok(total)
 }
 
+/// A response head: status and how its body is framed.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Head {
+    pub status: u16,
+    pub chunked: bool,
+    pub length: Option<u64>,
+    /// The server closes after this response (`Connection: close`).
+    pub close: bool,
+}
+
+/// Read a status line and headers.
+pub fn read_head(r: &mut impl BufRead) -> Result<Head, String> {
+    let mut status_line = String::new();
+    if r.read_line(&mut status_line)
+        .map_err(|e| format!("read: {e}"))?
+        == 0
+    {
+        return Err("connection closed".into());
+    }
+    let status: u16 = status_line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| format!("malformed status line: {}", status_line.trim()))?;
+    let mut head = Head {
+        status,
+        chunked: false,
+        length: None,
+        close: false,
+    };
+    loop {
+        let mut line = String::new();
+        let n = r.read_line(&mut line).map_err(|e| format!("read: {e}"))?;
+        if n == 0 || line == "\r\n" || line == "\n" {
+            if matches!(head.status, 204 | 304) || (100..200).contains(&head.status) {
+                head.length = Some(0);
+            }
+            return Ok(head);
+        }
+        if let Some((k, v)) = line.split_once(':') {
+            let (k, v) = (k.trim().to_ascii_lowercase(), v.trim().to_ascii_lowercase());
+            match k.as_str() {
+                "transfer-encoding" if v.contains("chunked") => head.chunked = true,
+                "content-length" => head.length = v.parse().ok(),
+                "connection" if v.contains("close") => head.close = true,
+                _ => {}
+            }
+        }
+    }
+}
+
+/// A chunked body as a plain byte stream, read as it arrives (for held
+/// responses such as the hub's event stream).
+pub struct Chunked<R: BufRead> {
+    inner: R,
+    left: u64,
+    done: bool,
+}
+
+impl<R: BufRead> Chunked<R> {
+    pub fn new(inner: R) -> Self {
+        Self {
+            inner,
+            left: 0,
+            done: false,
+        }
+    }
+}
+
+impl<R: BufRead> Read for Chunked<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        use std::io::{Error, ErrorKind};
+        if self.done || buf.is_empty() {
+            return Ok(0);
+        }
+        if self.left == 0 {
+            let mut line = String::new();
+            // The CRLF that ends the previous chunk, then the size line.
+            while line.trim().is_empty() {
+                line.clear();
+                if self.inner.read_line(&mut line)? == 0 {
+                    return Err(Error::new(ErrorKind::UnexpectedEof, "stream ended"));
+                }
+            }
+            self.left = u64::from_str_radix(line.trim().split(';').next().unwrap_or(""), 16)
+                .map_err(|_| Error::new(ErrorKind::InvalidData, "bad chunk size"))?;
+            if self.left == 0 {
+                self.done = true;
+                return Ok(0);
+            }
+        }
+        let want = buf.len().min(self.left as usize);
+        let n = self.inner.read(&mut buf[..want])?;
+        if n == 0 {
+            return Err(Error::new(ErrorKind::UnexpectedEof, "stream ended"));
+        }
+        self.left -= n as u64;
+        Ok(n)
+    }
+}
+
+fn read_body(r: &mut impl BufRead, head: &Head) -> Result<Vec<u8>, String> {
+    let mut body = Vec::new();
+    if head.chunked {
+        Chunked::new(&mut *r)
+            .read_to_end(&mut body)
+            .map_err(|e| format!("read body: {e}"))?;
+    } else if let Some(n) = head.length {
+        body.resize(n as usize, 0);
+        r.read_exact(&mut body)
+            .map_err(|e| format!("read body: {e}"))?;
+    } else {
+        r.read_to_end(&mut body)
+            .map_err(|e| format!("read body: {e}"))?;
+    }
+    Ok(body)
+}
+
+/// One HTTP/1.1 connection to a hub, kept alive across requests: the link's
+/// pushes reuse it instead of paying a TCP (and TLS) handshake each.
+pub struct KeepAlive {
+    base: String,
+    timeout: Duration,
+    conn: Option<(BufReader<Conn>, String)>,
+}
+
+impl KeepAlive {
+    pub fn new(base: &str, timeout: Duration) -> Self {
+        Self {
+            base: base.trim_end_matches('/').to_string(),
+            timeout,
+            conn: None,
+        }
+    }
+
+    /// `method base+path` with extra header lines (each ending in CRLF) and a
+    /// body. A reused connection the server closed meanwhile is retried once
+    /// on a fresh one, so callers must make retries harmless (the link's
+    /// pushes carry a sequence number the hub dedupes on).
+    pub fn send(
+        &mut self,
+        method: &str,
+        path: &str,
+        headers: &str,
+        body: &[u8],
+    ) -> Result<(u16, Vec<u8>), String> {
+        let mut attempt = 0;
+        loop {
+            let fresh = self.conn.is_none();
+            if fresh {
+                let (conn, hostport, _) = open(&format!("{}{path}", self.base), self.timeout)?;
+                self.conn = Some((BufReader::new(conn), hostport));
+            }
+            match self.try_send(method, path, headers, body) {
+                Ok((head, body)) => {
+                    if head.close || (!head.chunked && head.length.is_none()) {
+                        self.conn = None;
+                    }
+                    return Ok((head.status, body));
+                }
+                Err(e) => {
+                    self.conn = None;
+                    attempt += 1;
+                    if fresh || attempt > 1 {
+                        return Err(e);
+                    }
+                }
+            }
+        }
+    }
+
+    fn try_send(
+        &mut self,
+        method: &str,
+        path: &str,
+        headers: &str,
+        body: &[u8],
+    ) -> Result<(Head, Vec<u8>), String> {
+        let (r, hostport) = self.conn.as_mut().ok_or("not connected")?;
+        let mut req = format!(
+            "{method} {path} HTTP/1.1\r\nHost: {hostport}\r\n{headers}Content-Length: {}\r\n\r\n",
+            body.len()
+        )
+        .into_bytes();
+        req.extend_from_slice(body);
+        let w = r.get_mut();
+        w.write_all(&req)
+            .and_then(|_| w.flush())
+            .map_err(|e| format!("send to {hostport}: {e}"))?;
+        let head = read_head(r)?;
+        let body = read_body(r, &head)?;
+        Ok((head, body))
+    }
+}
+
+/// A held-open body, read as it arrives.
+pub type Stream = Box<dyn BufRead + Send>;
+
+/// `GET url` whose response is held open and read as it arrives (the hub's
+/// event stream). A non-2xx is `Err((status, error text))`; a failure before
+/// any response is status 0.
+pub fn open_stream(url: &str, headers: &str, timeout: Duration) -> Result<Stream, (u16, String)> {
+    let (conn, hostport, path) = open(url, timeout).map_err(|e| (0, e))?;
+    let mut r = BufReader::new(conn);
+    let req = format!(
+        "GET {path} HTTP/1.1\r\nHost: {hostport}\r\nUser-Agent: klark-link\r\nAccept: application/x-ndjson\r\n{headers}\r\n"
+    );
+    let w = r.get_mut();
+    w.write_all(req.as_bytes())
+        .and_then(|_| w.flush())
+        .map_err(|e| (0, format!("send to {hostport}: {e}")))?;
+    let head = read_head(&mut r).map_err(|e| (0, e))?;
+    if !(200..300).contains(&head.status) {
+        let body = read_body(&mut r, &head).unwrap_or_default();
+        let text = HttpResponse {
+            status: head.status,
+            body: String::from_utf8_lossy(&body).into_owned(),
+        }
+        .error_text();
+        return Err((head.status, text));
+    }
+    Ok(if head.chunked {
+        Box::new(BufReader::new(Chunked::new(r)))
+    } else {
+        Box::new(r)
+    })
+}
+
 /// Parse a full HTTP/1.1 response (Content-Length, chunked, or read-to-close).
 pub fn parse_response(raw: &[u8]) -> Result<HttpResponse, String> {
     let split = raw

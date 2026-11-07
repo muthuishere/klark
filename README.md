@@ -39,7 +39,7 @@ private CA or self-signed ingress set `KLARK_HUB_CA_FILE=/path/ca.pem`. See ADR 
 ## Link a machine to a hub
 
 ```bash
-klark expose --hub ws://hub-host:8080/agent --token <machine token> [--name laptop]
+klark expose --hub http://hub-host:8080 --token <machine token> [--name laptop]
 klark expose url            # inside a pane: the hub link to this pane ("share this")
 ```
 
