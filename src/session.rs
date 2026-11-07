@@ -74,6 +74,27 @@ pub fn configure_from_args(args: &[String]) -> Result<Vec<String>, String> {
             index += 1;
             continue;
         }
+        // `-s` alone: a session named after the current folder (create or attach).
+        // `-s <name>` / `-s=<name>`: that session. A following word that is a
+        // klark command (`klark -s pane list`) is not taken as the name.
+        if arg == "-s" {
+            match args.get(index + 1) {
+                Some(next) if !next.starts_with('-') && !is_command_word(next) => {
+                    requested_session = Some(session_for_value(next)?);
+                    index += 2;
+                }
+                _ => {
+                    requested_session = Some(folder_session_name()?);
+                    index += 1;
+                }
+            }
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("-s=") {
+            requested_session = Some(session_for_value(value)?);
+            index += 1;
+            continue;
+        }
 
         cleaned.push(arg.clone());
         index += 1;
@@ -93,6 +114,61 @@ pub fn configure_from_args(args: &[String]) -> Result<Vec<String>, String> {
     }
 
     Ok(cleaned)
+}
+
+const COMMAND_WORDS: &[&str] = &[
+    "server", "client", "remote-client-bridge", "update", "expose", "hub", "offer", "status",
+    "config", "channel", "machine", "workspace", "worktree", "pane", "session", "integration",
+    "agent", "msg", "transcript", "help",
+];
+
+fn is_command_word(word: &str) -> bool {
+    COMMAND_WORDS.contains(&word)
+}
+
+/// `-s <value>`: a folder (`.`, `~/x`, `../app`, or any existing directory) names the
+/// session after it and starts there; anything else is the session name itself.
+fn session_for_value(value: &str) -> Result<String, String> {
+    let looks_like_path =
+        value.contains('/') || value == "." || value == ".." || value.starts_with('~');
+    let path = match value.strip_prefix('~') {
+        Some(rest) if rest.is_empty() || rest.starts_with('/') => match std::env::var_os("HOME") {
+            Some(home) => PathBuf::from(home).join(rest.trim_start_matches('/')),
+            None => return Err("HOME is not set".to_string()),
+        },
+        _ => PathBuf::from(value),
+    };
+    if path.is_dir() {
+        let dir = path.canonicalize().map_err(|e| format!("cannot open {value}: {e}"))?;
+        std::env::set_current_dir(&dir).map_err(|e| format!("cannot open {value}: {e}"))?;
+        return folder_to_session_name(&dir);
+    }
+    if looks_like_path {
+        return Err(format!("{value}: no such folder"));
+    }
+    Ok(value.to_string())
+}
+
+/// The current folder's name as a valid session name: other characters become '-',
+/// at most 64 bytes, like the `herdrc` shell helper.
+pub fn folder_session_name() -> Result<String, String> {
+    let cwd = std::env::current_dir().map_err(|e| format!("cannot read the current folder: {e}"))?;
+    folder_to_session_name(&cwd)
+}
+
+fn folder_to_session_name(path: &Path) -> Result<String, String> {
+    let base = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let mut name: String = base
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '-' })
+        .collect();
+    name.truncate(MAX_SESSION_NAME_LEN);
+    let name = name.trim_matches('-').to_string();
+    if name.is_empty() {
+        return Err("cannot name a session after this folder; use -s <name>".to_string());
+    }
+    validate_name(&name)?;
+    Ok(name)
 }
 
 pub fn active_name() -> Option<String> {
@@ -717,6 +793,26 @@ mod tests {
         handle.join().unwrap();
         let _ = std::fs::remove_dir_all(&config_home);
         std::env::remove_var("XDG_CONFIG_HOME");
+    }
+
+    #[test]
+    fn folder_names_become_valid_session_names() {
+        assert_eq!(folder_to_session_name(Path::new("/x/klark")).unwrap(), "klark");
+        assert_eq!(folder_to_session_name(Path::new("/x/my app.v2")).unwrap(), "my-app-v2");
+        assert!(folder_to_session_name(Path::new("/")).is_err());
+        let long = "a".repeat(100);
+        assert_eq!(folder_to_session_name(Path::new(&long)).unwrap().len(), MAX_SESSION_NAME_LEN);
+    }
+
+    #[test]
+    fn short_s_flag_takes_a_name_but_not_a_command() {
+        assert!(is_command_word("pane") && !is_command_word("reviewer"));
+    }
+
+    #[test]
+    fn s_value_is_a_name_unless_it_is_a_folder() {
+        assert_eq!(session_for_value("reviewer-zz-nonexistent").unwrap(), "reviewer-zz-nonexistent");
+        assert!(session_for_value("./no/such/folder-zz").is_err());
     }
 
     #[test]

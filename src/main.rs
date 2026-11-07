@@ -731,6 +731,7 @@ fn main() -> io::Result<()> {
         println!();
         println!("Options:");
         println!("  --session <name>    Use or create a named persistent session");
+        println!("  -s [name|folder]    Create or attach; no value = named after this folder, a folder = named after it and started there");
         println!("  --machine <label-or-id>  Run an API command on a saved SSH machine");
         println!("  --remote <target>   Attach through SSH to a remote Klark server");
         println!("  --remote-keybindings <local|server>");
