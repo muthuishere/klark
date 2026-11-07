@@ -1,5 +1,5 @@
 id = "devin"
-version = "2026.06.15.1"
+version = "2026.11.08.1"
 min_engine_version = 1
 updated_at = "2026-06-15T00:00:00Z"
 aliases = ["devin-cli", "devin cli"]
@@ -23,6 +23,15 @@ priority = 290
 region = "bottom_non_empty_lines(8)"
 visible_blocker = true
 contains = ["approve once", "select", "confirm", "esc cancel"]
+
+[[rules]]
+id = "question_prompt"
+state = "blocked"
+priority = 280
+region = "bottom_non_empty_lines(8)"
+visible_blocker = true
+contains = ["navigate", "esc cancel"]
+line_regex = ['(select|help me out)']
 
 [[rules]]
 id = "running_tools_footer"

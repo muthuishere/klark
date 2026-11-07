@@ -324,7 +324,7 @@ public static partial class TranscriptClean
     /// <summary>A question an agent is blocked on, and the quick replies a screen offers.</summary>
     public sealed record BlockedPrompt(string Question, IReadOnlyList<(string Label, string Send, bool Enter)> Options);
 
-    [GeneratedRegex(@"^\s*(?:[❯>]\s*)?(\d{1,2})[.)]\s+(.{1,80})$")]
+    [GeneratedRegex(@"^\s*(?:[❯>·]\s*)?(\d{1,2})(?:[.)]\s+|\s+)([^\s│|].{0,79})$")]
     private static partial Regex NumberedOption();
 
     [GeneratedRegex(@"\((?:y/n|yes/no)\)|\[(?:y/n|Y/n|y/N)\]", RegexOptions.IgnoreCase)]

@@ -158,3 +158,16 @@ public class ScreenTransformerTests
         Assert.Equal("Here is how they compare:", TranscriptFeeds.Preview(f));
     }
 }
+
+public class DevinQuestionTests
+{
+    [Xunit.Fact]
+    public void DevinPickerOptionsBecomeButtons()
+    {
+        var screen = "── File · Destination ──\n Which MP3 should I send?\n ❯ 1 ganesha-speech.mp3\n     1.5 MB, Aug 12\n · 2 kathir_clean.mp3\n     2.5 MB, Jul 26\n ·   Other (type your own)\n\n↑↓ navigate · ⏎select · esc cancel";
+        var b = KlarkHub.Services.TranscriptClean.Blocked(screen);
+        Xunit.Assert.Equal(2, b.Options.Count);
+        Xunit.Assert.Equal("1. ganesha-speech.mp3", b.Options[0].Label);
+        Xunit.Assert.Contains("Which MP3", b.Question);
+    }
+}

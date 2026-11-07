@@ -1,12 +1,12 @@
 /* The file viewer (ADR 0011, G): GitHub-style, its own small stylesheet. */
-:root { --bg: #ffffff; --fg: #1f2328; --muted: #656d76; --line: #d0d7de; --head: #f6f8fa; --hover: #eaeef2; --accent: #c96442; --link: #0969da;
+:root { --bg: #ffffff; --fg: #1f2328; --muted: #656d76; --line: #d0d7de; --head: #f6f8fa; --hover: #eaeef2; --accent: #1a7f37; --link: #0969da;
   --num: #8c959f; --hlline: #fff8c5; --add-bg: #e6ffec; --del-bg: #ffebe9; --hunk: #ddf4ff; --mark: #fde68a;
   --hl-kw: #cf222e; --hl-str: #0a3069; --hl-num: #0550ae; --hl-com: #6e7781; --hl-fn: #8250df; --hl-type: #953800; --hl-attr: #116329; color-scheme: light; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
-  --bg: #1f1e1d; --fg: #e6edf3; --muted: #9198a1; --line: #3d444d; --head: #262624; --hover: #30302e; --accent: #d97757; --link: #4493f8;
+  --bg: #0d1117; --fg: #e6edf3; --muted: #9198a1; --line: #3d444d; --head: #161b22; --hover: #1c2128; --accent: #3fb950; --link: #4493f8;
   --num: #6e7681; --hlline: #3b2e0a; --add-bg: #12261e; --del-bg: #2d1416; --hunk: #13233a; --mark: #a16207;
   --hl-kw: #ff7b72; --hl-str: #a5d6ff; --hl-num: #79c0ff; --hl-com: #8b949e; --hl-fn: #d2a8ff; --hl-type: #ffa657; --hl-attr: #7ee787; color-scheme: dark; } }
-:root[data-theme="dark"] { --bg: #1f1e1d; --fg: #e6edf3; --muted: #9198a1; --line: #3d444d; --head: #262624; --hover: #30302e; --accent: #d97757; --link: #4493f8;
+:root[data-theme="dark"] { --bg: #0d1117; --fg: #e6edf3; --muted: #9198a1; --line: #3d444d; --head: #161b22; --hover: #1c2128; --accent: #3fb950; --link: #4493f8;
   --num: #6e7681; --hlline: #3b2e0a; --add-bg: #12261e; --del-bg: #2d1416; --hunk: #13233a; --mark: #a16207;
   --hl-kw: #ff7b72; --hl-str: #a5d6ff; --hl-num: #79c0ff; --hl-com: #8b949e; --hl-fn: #d2a8ff; --hl-type: #ffa657; --hl-attr: #7ee787; color-scheme: dark; }
 * { box-sizing: border-box; }
