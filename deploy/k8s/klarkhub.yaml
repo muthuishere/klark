@@ -28,7 +28,7 @@ spec:
         fsGroup: 1654 # the .NET image's "app" user, so /data is writable
       containers:
         - name: klarkhub
-          image: klarkhub:latest
+          image: ghcr.io/muthuishere/klarkhub:latest
           ports:
             - containerPort: 8080
               name: http

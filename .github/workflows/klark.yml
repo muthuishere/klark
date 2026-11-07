@@ -1,0 +1,148 @@
+# The one klark workflow: test on every push and PR; on a v* tag, release the
+# klark binaries and the klarkhub image; on master, publish the docs site.
+name: klark
+
+on:
+  push:
+    branches: [master]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  RUST_TOOLCHAIN_VERSION: 1.96.1
+  ZIG_VERSION: 0.16.0
+
+concurrency:
+  group: klark-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with: { persist-credentials: false }
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # v1
+        with: { toolchain: "${{ env.RUST_TOOLCHAIN_VERSION }}" }
+      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
+        with: { tool: "cargo-nextest" }
+      - uses: vercel-labs/setup-zig@83c1594f26b86da8a9a8ddd9b5ee5f3af0f96943 # v1.0.2
+        with: { version: "${{ env.ZIG_VERSION }}" }
+      - uses: Swatinem/rust-cache@v2
+      - name: Rust tests
+        run: cargo nextest run --workspace --locked --status-level fail --final-status-level fail --failure-output final
+      - uses: actions/setup-dotnet@v4
+        if: runner.os == 'Linux'
+        with: { dotnet-version: "10.0.x" }
+      - name: Hub tests
+        if: runner.os == 'Linux'
+        run: dotnet test hub/hub.Tests
+
+  binaries:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: test
+    strategy:
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, name: klark-linux-x86_64 }
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, name: klark-linux-aarch64 }
+          - { os: macos-13, target: x86_64-apple-darwin, name: klark-macos-x86_64 }
+          - { os: macos-latest, target: aarch64-apple-darwin, name: klark-macos-aarch64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with: { persist-credentials: false }
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # v1
+        with: { toolchain: "${{ env.RUST_TOOLCHAIN_VERSION }}", targets: "${{ matrix.target }}" }
+      - uses: vercel-labs/setup-zig@83c1594f26b86da8a9a8ddd9b5ee5f3af0f96943 # v1.0.2
+        with: { version: "${{ env.ZIG_VERSION }}" }
+      - name: Build
+        run: |
+          cargo build --release --locked --target ${{ matrix.target }}
+          cp target/${{ matrix.target }}/release/klark ${{ matrix.name }}
+          shasum -a 256 ${{ matrix.name }} > ${{ matrix.name }}.sha256
+      - uses: actions/upload-artifact@v4
+        with: { name: "${{ matrix.name }}", path: "${{ matrix.name }}*" }
+
+  release:
+    needs: [binaries, hub-image]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: dist, merge-multiple: true }
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "klark $GITHUB_REF_NAME" --generate-notes
+
+  hub-image:
+    if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/master'
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with: { persist-credentials: false }
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Tags
+        id: tags
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/klarkhub"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "tags=$image:${GITHUB_REF_NAME#v},$image:latest" >> "$GITHUB_OUTPUT"
+          else
+            echo "tags=$image:edge" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: docker/build-push-action@v6
+        with:
+          context: hub
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+
+  docs:
+    if: github.ref == 'refs/heads/master'
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with: { persist-credentials: false }
+      - name: Skip when there is no docs site yet
+        id: has
+        run: test -f site/package.json && echo "yes=true" >> "$GITHUB_OUTPUT" || echo "yes=false" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@v4
+        if: steps.has.outputs.yes == 'true'
+        with: { node-version: 22 }
+      - name: Build docs
+        if: steps.has.outputs.yes == 'true'
+        run: cd site && npm ci && npm run build
+      - uses: actions/upload-pages-artifact@v3
+        if: steps.has.outputs.yes == 'true'
+        with: { path: site/dist }
+      - id: deploy
+        if: steps.has.outputs.yes == 'true'
+        uses: actions/deploy-pages@v4
