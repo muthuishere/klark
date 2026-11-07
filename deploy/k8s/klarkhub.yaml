@@ -33,10 +33,8 @@ spec:
             - containerPort: 8080
               name: http
           env:
-            - name: KLARK_HUB__TRUSTFORWARDEDHEADERS # the ingress sets X-Forwarded-*; the pod is not reachable directly
-              value: "true"
-            # - name: KLARK_HUB__PUBLICURL
-            #   value: https://klark.example.com
+            # - name: KLARK_HUB__PUBLICURL # the address people open; used in klark hub connect links
+            #   value: http://<node-ip>:30080
             - name: KLARK_HUB__ADMIN__PASSWORD # used only on first start
               valueFrom:
                 secretKeyRef: { name: klarkhub, key: admin-password, optional: true }
@@ -66,10 +64,10 @@ kind: Service
 metadata:
   name: klarkhub
 spec:
+  type: NodePort # plain http on every node at :30080; use LoadBalancer if your cluster has one
   selector: { app: klarkhub }
   ports:
     - name: http
       port: 8080
       targetPort: http
-# Ingress: not included (cluster-specific). It must allow WebSockets with long
-# timeouts on /agent and /_blazor; see docs/deploy.md.
+      nodePort: 30080

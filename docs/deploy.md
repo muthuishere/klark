@@ -25,20 +25,14 @@ kubectl create secret generic klarkhub \
 kubectl apply -f deploy/k8s/
 ```
 
-`deploy/k8s/` has a Deployment (1 replica, `Recreate`), a Service on 8080, a
-PVC for `/data`, and probes on `/healthz`. Set `KLARK_HUB__PUBLICURL` to the
-URL people use (otherwise it is derived from the request; `X-Forwarded-Proto`/`X-Forwarded-Host` count only with `KLARK_HUB__TRUSTFORWARDEDHEADERS=true`, which the k8s manifest sets — enable it only behind a proxy).
+`deploy/k8s/` is a plain example: a Deployment (1 replica, `Recreate`), a
+NodePort Service (plain http on every node at `:30080`), a PVC for `/data`, and
+probes on `/healthz`. Open `http://<node-ip>:30080`. Set `KLARK_HUB__PUBLICURL`
+to that address so the links `klark hub connect` prints point there.
 
-Your Ingress must allow WebSockets and long-lived connections on `/agent`
-(machines) and `/_blazor` (browsers). With ingress-nginx, for example:
-
-```yaml
-nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
-nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
-nginx.ingress.kubernetes.io/proxy-body-size: "100m"   # klark offer uploads
-```
-
-Terminate TLS at the Ingress; machines then use `https://` / `wss://`.
+No Ingress or TLS is needed. If you later put the hub behind a proxy, it must
+allow WebSockets with long timeouts on `/agent` and `/_blazor`, and you can set
+`KLARK_HUB__TRUSTFORWARDEDHEADERS=true` there.
 
 ## First sign-in
 
@@ -47,7 +41,7 @@ Terminate TLS at the Ingress; machines then use `https://` / `wss://`.
 3. Pick the sign-in directory at ⋯ → Sign-in directory (`/admin/directory`):
    save LDAP settings, use Test connection, then switch the mode. Or manage the
    mock directory's users at `/admin/users`.
-4. Connect a machine: on it, run `klark hub connect --url https://klark.example.com`.
+4. Connect a machine: on it, run `klark hub connect --url http://<node-ip>:30080`.
    It prints a code and a link; open the link signed in, check the code, and
    Approve. The machine receives its token by itself; nothing is copied by hand.
    Admins list and revoke machines at `/admin/machines`.
