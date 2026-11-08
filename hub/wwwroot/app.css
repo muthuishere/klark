@@ -2,7 +2,7 @@
    column, a large rounded composer. System fonts only: nothing to download. */
 :root {
   --bg: #ffffff; --side: #f6f8fa; --card: #ffffff; --fg: #1f2328; --muted: #656d76; --line: #d0d7de; --hover: #eaeef2;
-  --accent: #1a7f37; --link: #2f5fd0; --bubble: #f6f8fa; --code-bg: #f6f8fa; --code-head: #eaeef2; --out-bg: #0d1117; --out-fg: #c9d1d9;
+  --accent: #1a7f37; --on-accent: #fff; --link: #2f5fd0; --bubble: #f6f8fa; --code-bg: #f6f8fa; --code-head: #eaeef2; --out-bg: #0d1117; --out-fg: #c9d1d9;
   --blocked: #c2410c; --working: #2563eb; --idle: #15803d; --ok: #15803d; --bad: #c2410c; --skel: #eaeef2; --mark: #fde68a;
   --serif: var(--mono);
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -25,6 +25,33 @@
   --hl-kw: #ff7b72; --hl-str: #a5d6ff; --hl-num: #79c0ff; --hl-com: #8b949e; --hl-fn: #d2a8ff; --hl-type: #ffa657; --hl-attr: #7ee787; --hl-add: #3fb950; --hl-del: #f85149;
   color-scheme: dark;
 }
+/* Named themes (picked in the account menu, stored in localStorage klark:theme). Deep Teal is the default;
+   "light" / "dark" are the original terminal palettes. */
+:root[data-theme="teal"] { --bg: #0F1A1E; --side: #0B1417; --card: #15242A; --fg: #DCE7EA; --muted: #8AA3AA; --line: #22363D; --hover: #173036;
+  --accent: #2DD4BF; --on-accent: #062A26; --link: #7EC8F5; --bubble: #1A2C32; --code-bg: #0A1215; --code-head: #122026; --out-bg: #0A0F12; --out-fg: #D6DEE2;
+  --blocked: #FBBF24; --working: #60A5FA; --idle: #34D399; --ok: #34D399; --bad: #F87171; --skel: #1C3038; --mark: #7A5D12;
+  --hl-kw: #F78C6C; --hl-str: #C3E88D; --hl-num: #F78C6C; --hl-com: #5F7F87; --hl-fn: #82AAFF; --hl-type: #FFCB6B; --hl-attr: #89DDFF; --hl-add: #34D399; --hl-del: #F87171;
+  color-scheme: dark; }
+:root[data-theme="indigo"] { --bg: #16171D; --side: #111217; --card: #1E2028; --fg: #E3E4EA; --muted: #9196A6; --line: #2C2F3B; --hover: #262A3A;
+  --accent: #8B9CFF; --on-accent: #11163A; --link: #A5B4FF; --bubble: #22242E; --code-bg: #101116; --code-head: #1A1C24; --out-bg: #0A0F12; --out-fg: #D6DEE2;
+  --blocked: #FCA5A5; --working: #7DD3FC; --idle: #86EFAC; --ok: #86EFAC; --bad: #FCA5A5; --skel: #262A3A; --mark: #5B4A12;
+  --hl-kw: #C792EA; --hl-str: #C3E88D; --hl-num: #F78C6C; --hl-com: #676E82; --hl-fn: #82AAFF; --hl-type: #FFCB6B; --hl-attr: #89DDFF; --hl-add: #86EFAC; --hl-del: #FCA5A5;
+  color-scheme: dark; }
+:root[data-theme="forest"] { --bg: #121815; --side: #0E1311; --card: #19221E; --fg: #E0E8E3; --muted: #93A69C; --line: #26332D; --hover: #1F2E27;
+  --accent: #7FD8A6; --on-accent: #0B2A1A; --link: #8CC8E8; --bubble: #1C2722; --code-bg: #0C110F; --code-head: #16201B; --out-bg: #0A0F12; --out-fg: #D6DEE2;
+  --blocked: #F5B971; --working: #7DD3FC; --idle: #7FD8A6; --ok: #7FD8A6; --bad: #F28B82; --skel: #1F2E27; --mark: #5E4E14;
+  --hl-kw: #E5A86E; --hl-str: #B5D99C; --hl-num: #E5A86E; --hl-com: #64786D; --hl-fn: #8CC8E8; --hl-type: #E8D37A; --hl-attr: #A7E8C4; --hl-add: #7FD8A6; --hl-del: #F28B82;
+  color-scheme: dark; }
+:root[data-theme="dusk"] { --bg: #1A1614; --side: #141110; --card: #221D1A; --fg: #ECE3DC; --muted: #A8998E; --line: #352C26; --hover: #2E2620;
+  --accent: #F2A65A; --on-accent: #2B1704; --link: #8AB4F8; --bubble: #28211D; --code-bg: #120F0E; --code-head: #1E1917; --out-bg: #0A0F12; --out-fg: #D6DEE2;
+  --blocked: #F87171; --working: #93C5FD; --idle: #A3D9A5; --ok: #A3D9A5; --bad: #F87171; --skel: #2E2620; --mark: #6B4A12;
+  --hl-kw: #F28B82; --hl-str: #C5E1A5; --hl-num: #F2A65A; --hl-com: #7A6C62; --hl-fn: #8AB4F8; --hl-type: #FDD663; --hl-attr: #F6C38E; --hl-add: #A3D9A5; --hl-del: #F87171;
+  color-scheme: dark; }
+:root[data-theme="paper"] { --bg: #FBFAF7; --side: #F3F1EC; --card: #FFFFFF; --fg: #1E2329; --muted: #5F6670; --line: #E2DED5; --hover: #ECE9E2;
+  --accent: #2563EB; --on-accent: #FFFFFF; --link: #2563EB; --bubble: #EFEDE7; --code-bg: #F6F4EF; --code-head: #ECE9E2; --out-bg: #0A0F12; --out-fg: #D6DEE2;
+  --blocked: #B45309; --working: #2563EB; --idle: #15803D; --ok: #15803D; --bad: #B91C1C; --skel: #ECE9E2; --mark: #FDE68A;
+  --hl-kw: #A626A4; --hl-str: #50A14F; --hl-num: #986801; --hl-com: #8A8F98; --hl-fn: #2F5FD0; --hl-type: #986801; --hl-attr: #E45649; --hl-add: #15803D; --hl-del: #B91C1C;
+  color-scheme: light; }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html { -webkit-text-size-adjust: 100%; }
 body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.55 var(--mono); }
@@ -67,7 +94,7 @@ h1 { font-size: 1.4rem; margin: 0 0 12px; }
 @media (prefers-reduced-motion: reduce) { .skel, .dot-working, .state-working::before { animation: none; } }
 
 button { min-height: 40px; padding: 8px 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); color: var(--fg); cursor: pointer; font: inherit; }
-button[type=submit] { background: var(--accent); color: #fff; border-color: var(--accent); }
+button[type=submit] { background: var(--accent); color: var(--on-accent, #fff); border-color: var(--accent); }
 .login { max-width: 360px; margin: 40px auto; display: grid; gap: 10px; }
 .login form { display: grid; gap: 12px; }
 .login label { display: grid; gap: 4px; }
@@ -272,7 +299,7 @@ pre.out { margin: 0; padding: 10px 14px; background: var(--out-bg); color: var(-
 .composer textarea { width: 100%; resize: none; max-height: 220px; min-height: 28px; padding: 2px 0; border: 0; outline: 0; background: none; color: var(--fg); font: 16px/1.45 system-ui, -apple-system, sans-serif; }
 .composer-row { display: flex; align-items: center; gap: 2px; margin-top: 6px; }
 .composer-row .grow { flex: 1; }
-.composer .send { width: 36px; height: 36px; min-height: 36px; border-radius: 10px; background: var(--accent); color: #fff; border: 0; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
+.composer .send { width: 36px; height: 36px; min-height: 36px; border-radius: 10px; background: var(--accent); color: var(--on-accent, #fff); border: 0; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
 .composer .key { min-height: 32px; padding: 0 10px; font: .75rem var(--mono); color: var(--muted); background: none; }
 .composer .attach { border: 1px solid var(--line); min-width: 34px; min-height: 34px; border-radius: 10px; }
 .hidden-file { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
@@ -332,3 +359,18 @@ button[type=submit].danger { background: var(--card); color: var(--blocked); bor
 /* tables keep whole words and scroll sideways instead */
 .md th, .md td { overflow-wrap: normal; word-break: normal; min-width: 4em; }
 @media (max-width: 860px) { body:has(.pane-app:not(.home-main)) .banner { display: none; } }
+
+/* theme picker in the account menu */
+.theme-picks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px; padding: 0 4px 4px; }
+.theme-pick { display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 8px; border: 1px solid transparent; border-radius: 8px; background: none; color: var(--fg); font: inherit; font-size: .85rem; cursor: pointer; text-align: left; }
+.theme-pick:hover { background: var(--hover); }
+.theme-pick[aria-pressed="true"] { border-color: var(--accent); }
+.theme-pick { white-space: nowrap; }
+.theme-pick span { width: 12px; height: 12px; border-radius: 4px; flex: none; }
+:root[data-theme="paper"] .theme-pick[data-theme-pick="paper"] { border-color: var(--accent); }
+:root[data-theme="teal"] .theme-pick[data-theme-pick="teal"] { border-color: var(--accent); }
+:root[data-theme="indigo"] .theme-pick[data-theme-pick="indigo"] { border-color: var(--accent); }
+:root[data-theme="forest"] .theme-pick[data-theme-pick="forest"] { border-color: var(--accent); }
+:root[data-theme="dusk"] .theme-pick[data-theme-pick="dusk"] { border-color: var(--accent); }
+:root[data-theme="light"] .theme-pick[data-theme-pick="light"] { border-color: var(--accent); }
+:root[data-theme="dark"] .theme-pick[data-theme-pick="dark"] { border-color: var(--accent); }

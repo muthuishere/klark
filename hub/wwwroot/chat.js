@@ -426,11 +426,14 @@ window.klarkSide = (() => {
       if (!f) f = requestAnimationFrame(() => { f = 0; klarkState.set("sidescroll:" + key, String(Math.round(el.scrollTop)), "s"); });
     }, { passive: true });
   }
-  function theme() {
+  // Named themes (app.css). No argument: step to the next one.
+  const THEMES = ["paper", "teal", "indigo", "forest", "dusk", "light", "dark"];
+  function theme(name) {
     const html = document.documentElement;
-    const dark = html.dataset.theme ? html.dataset.theme === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches;
-    html.dataset.theme = dark ? "light" : "dark";
-    klarkState.set("theme", html.dataset.theme);
+    if (!THEMES.includes(name)) name = THEMES[(THEMES.indexOf(html.dataset.theme || "paper") + 1) % THEMES.length];
+    html.dataset.theme = name;
+    klarkState.set("theme", name);
+    document.querySelectorAll("[data-theme-pick]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.themePick === name)));
   }
   return { toggle, close, track, theme, narrow };
 })();

@@ -38,7 +38,7 @@
                     {
                         <button type="button" class="menu-item" @onclick="ToggleSearchAsync">@(searchOpen ? "Close search" : "Search in chat")</button>
                     }
-                    <button type="button" class="menu-item" onclick="klarkSide.theme()">Light / dark theme</button>
+                    <button type="button" class="menu-item" onclick="klarkSide.theme()">Next theme</button>
                     <div class="menu-info">
                         <div>@AgentLabel · @(offline ? "offline" : StatusLabel)</div>
                         <div>@MachineId@(Session.Length > 0 ? " · " + Session : "")</div>

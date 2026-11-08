@@ -92,11 +92,21 @@
     </div>
     <div class="side-foot">
         <label class="toggle"><input type="checkbox" checked="@showAll" @onchange="ShowAllAsync" /> Show all panes</label>
-        <button type="button" class="icon" onclick="klarkSide.theme()" title="Light / dark" aria-label="Toggle theme">◐</button>
+        <button type="button" class="icon" onclick="klarkSide.theme()" title="Next theme" aria-label="Next theme">◐</button>
         <details class="menu up">
             <summary class="icon" aria-label="Account">@((MarkupString)Icons.More)</summary>
             <div class="menu-pop">
                 <div class="menu-info">@(user.FindFirst("display_name")?.Value ?? user.Identity?.Name)</div>
+                <div class="menu-info">Theme</div>
+                <div class="theme-picks">
+                    <button type="button" class="theme-pick" data-theme-pick="paper" onclick="klarkSide.theme('paper')"><span style="background:#2563EB"></span>Paper</button>
+                    <button type="button" class="theme-pick" data-theme-pick="teal" onclick="klarkSide.theme('teal')"><span style="background:#2DD4BF"></span>Teal</button>
+                    <button type="button" class="theme-pick" data-theme-pick="indigo" onclick="klarkSide.theme('indigo')"><span style="background:#8B9CFF"></span>Indigo</button>
+                    <button type="button" class="theme-pick" data-theme-pick="forest" onclick="klarkSide.theme('forest')"><span style="background:#7FD8A6"></span>Forest</button>
+                    <button type="button" class="theme-pick" data-theme-pick="dusk" onclick="klarkSide.theme('dusk')"><span style="background:#F2A65A"></span>Dusk</button>
+                    <button type="button" class="theme-pick" data-theme-pick="light" onclick="klarkSide.theme('light')"><span style="background:#1a7f37"></span>Term</button>
+                    <button type="button" class="theme-pick" data-theme-pick="dark" onclick="klarkSide.theme('dark')"><span style="background:#3fb950"></span>Term dark</button>
+                </div>
                 <a href="/messages">Messages</a>
                 <a href="/token">CLI token</a>
                 @if (user.FindFirst(AccountEndpoints.SourceClaim)?.Value is DirectoryUser.BuiltIn or DirectoryUser.Mock)

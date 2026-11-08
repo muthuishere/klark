@@ -9,6 +9,23 @@
 :root[data-theme="dark"] { --bg: #0d1117; --fg: #e6edf3; --muted: #9198a1; --line: #3d444d; --head: #161b22; --hover: #1c2128; --accent: #3fb950; --link: #4493f8;
   --num: #6e7681; --hlline: #3b2e0a; --add-bg: #12261e; --del-bg: #2d1416; --hunk: #13233a; --mark: #a16207;
   --hl-kw: #ff7b72; --hl-str: #a5d6ff; --hl-num: #79c0ff; --hl-com: #8b949e; --hl-fn: #d2a8ff; --hl-type: #ffa657; --hl-attr: #7ee787; color-scheme: dark; }
+/* Named themes (picked in the account menu, stored in localStorage klark:theme). Deep Teal is the default;
+   "light" / "dark" are the original terminal palettes. */
+:root[data-theme="teal"] { --bg: #0F1A1E; --fg: #DCE7EA; --muted: #8AA3AA; --line: #22363D; --head: #15242A; --hover: #173036; --accent: #2DD4BF; --link: #7EC8F5;
+  --num: #5F7F87; --hlline: #7A5D12; --add-bg: #12261e; --del-bg: #2d1416; --hunk: #173036; --mark: #7A5D12;
+  --hl-kw: #F78C6C; --hl-str: #C3E88D; --hl-num: #F78C6C; --hl-com: #5F7F87; --hl-fn: #82AAFF; --hl-type: #FFCB6B; --hl-attr: #89DDFF; color-scheme: dark; }
+:root[data-theme="indigo"] { --bg: #16171D; --fg: #E3E4EA; --muted: #9196A6; --line: #2C2F3B; --head: #1E2028; --hover: #262A3A; --accent: #8B9CFF; --link: #A5B4FF;
+  --num: #676E82; --hlline: #5B4A12; --add-bg: #12261e; --del-bg: #2d1416; --hunk: #262A3A; --mark: #5B4A12;
+  --hl-kw: #C792EA; --hl-str: #C3E88D; --hl-num: #F78C6C; --hl-com: #676E82; --hl-fn: #82AAFF; --hl-type: #FFCB6B; --hl-attr: #89DDFF; color-scheme: dark; }
+:root[data-theme="forest"] { --bg: #121815; --fg: #E0E8E3; --muted: #93A69C; --line: #26332D; --head: #19221E; --hover: #1F2E27; --accent: #7FD8A6; --link: #8CC8E8;
+  --num: #64786D; --hlline: #5E4E14; --add-bg: #12261e; --del-bg: #2d1416; --hunk: #1F2E27; --mark: #5E4E14;
+  --hl-kw: #E5A86E; --hl-str: #B5D99C; --hl-num: #E5A86E; --hl-com: #64786D; --hl-fn: #8CC8E8; --hl-type: #E8D37A; --hl-attr: #A7E8C4; color-scheme: dark; }
+:root[data-theme="dusk"] { --bg: #1A1614; --fg: #ECE3DC; --muted: #A8998E; --line: #352C26; --head: #221D1A; --hover: #2E2620; --accent: #F2A65A; --link: #8AB4F8;
+  --num: #7A6C62; --hlline: #6B4A12; --add-bg: #12261e; --del-bg: #2d1416; --hunk: #2E2620; --mark: #6B4A12;
+  --hl-kw: #F28B82; --hl-str: #C5E1A5; --hl-num: #F2A65A; --hl-com: #7A6C62; --hl-fn: #8AB4F8; --hl-type: #FDD663; --hl-attr: #F6C38E; color-scheme: dark; }
+:root[data-theme="paper"] { --bg: #FBFAF7; --fg: #1E2329; --muted: #5F6670; --line: #E2DED5; --head: #FFFFFF; --hover: #ECE9E2; --accent: #2563EB; --link: #2563EB;
+  --num: #8A8F98; --hlline: #FDE68A; --add-bg: #e6ffec; --del-bg: #ffebe9; --hunk: #ECE9E2; --mark: #FDE68A;
+  --hl-kw: #A626A4; --hl-str: #50A14F; --hl-num: #986801; --hl-com: #8A8F98; --hl-fn: #2F5FD0; --hl-type: #986801; --hl-attr: #E45649; color-scheme: light; }
 * { box-sizing: border-box; }
 html, body { height: 100%; }
 body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; display: flex; flex-direction: column; }
