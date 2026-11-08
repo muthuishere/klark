@@ -1,6 +1,6 @@
 # Deploying the hub (`klarkhub`)
 
-The hub is one container, image `klarkhub`, serving plain HTTP on port 8080
+The hub is one container, image `klarkhub`, serving plain HTTP on port 7470
 with all state in `/data` (hub.db, machine files, assets, keys). Run exactly
 one replica: SQLite and the local asset store are not shared.
 
@@ -8,7 +8,7 @@ one replica: SQLite and the local asset store are not shared.
 
 ```sh
 docker build -t klarkhub hub
-docker run -d --name klarkhub -p 8080:8080 -v klarkhub-data:/data klarkhub
+docker run -d --name klarkhub -p 7470:7470 -v klarkhub-data:/data klarkhub
 ```
 
 With nothing configured the hub signs people in with its built-in mock

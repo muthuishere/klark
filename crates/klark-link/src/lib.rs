@@ -103,7 +103,7 @@ fn jitter_from(base: Duration, seed: u64) -> Duration {
 
 /// The browser link to a pane on the hub, built from the hub URL the link uses.
 ///
-/// `ws://hub:8080/agent` becomes `http://hub:8080/go?machine=<name>&pane=<id>`
+/// `ws://hub:7470/agent` becomes `http://hub:7470/go?machine=<name>&pane=<id>`
 /// (`wss` becomes `https`). The hub's `/go` route finds the machine by the name
 /// it reported in `hello`. This is what "share this" hands back (ADR 0008).
 pub fn pane_url(hub_url: &str, machine_name: &str, pane_id: &str) -> Result<String, String> {
@@ -972,8 +972,8 @@ mod tests {
     #[test]
     fn pane_url_maps_the_link_url_to_the_hub_page() {
         assert_eq!(
-            pane_url("ws://hub.lan:8080/agent", "my laptop", "p 1").unwrap(),
-            "http://hub.lan:8080/go?machine=my+laptop&pane=p+1"
+            pane_url("ws://hub.lan:7470/agent", "my laptop", "p 1").unwrap(),
+            "http://hub.lan:7470/go?machine=my+laptop&pane=p+1"
         );
         assert_eq!(
             pane_url("wss://hub.example.com/agent", "m", "p1").unwrap(),

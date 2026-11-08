@@ -30,7 +30,7 @@ spec:
         - name: klarkhub
           image: ghcr.io/muthuishere/klarkhub:latest
           ports:
-            - containerPort: 8080
+            - containerPort: 7470
               name: http
           env:
             # - name: KLARK_HUB__PUBLICURL # the address people open; used in klark hub connect links
@@ -68,6 +68,6 @@ spec:
   selector: { app: klarkhub }
   ports:
     - name: http
-      port: 8080
+      port: 7470
       targetPort: http
       nodePort: 30080

@@ -173,7 +173,7 @@ app.UseAntiforgery();
 app.MapStaticAssets();
 
 // ---- machine link (ADR 0013): plain HTTP, no WebSocket ---------------------
-// `klark hub connect --url http://<host>:8080` / `klark expose --hub http://<host>:8080`.
+// `klark hub connect --url http://<host>:7470` / `klark expose --hub http://<host>:7470`.
 // POST /agent/session opens a session; GET /agent/events streams hub messages
 // down as NDJSON; POST /agent/push carries machine messages up in short segments.
 

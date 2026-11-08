@@ -25,7 +25,7 @@ Setting `KLARK_HUB__AUTH__LDAP__HOST` alone makes `Ldap` the default mode.
 ### Active Directory, direct bind with the UPN
 
 ```sh
-docker run -d --name klarkhub -p 8080:8080 -v klarkhub-data:/data \
+docker run -d --name klarkhub -p 7470:7470 -v klarkhub-data:/data \
   -e KLARK_HUB__AUTH__LDAP__HOST=dc1.corp.example.com \
   -e KLARK_HUB__AUTH__LDAP__USESSL=true \
   -e 'KLARK_HUB__AUTH__LDAP__USERDNTEMPLATE={0}@corp.example.com' \

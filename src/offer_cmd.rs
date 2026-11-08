@@ -250,8 +250,8 @@ mod tests {
     #[test]
     fn put_url_encodes() {
         assert_eq!(
-            put_url("http://h:8080", "p 1", "a b&c.png"),
-            "http://h:8080/api/assets?pane=p%201&name=a%20b%26c.png"
+            put_url("http://h:7470", "p 1", "a b&c.png"),
+            "http://h:7470/api/assets?pane=p%201&name=a%20b%26c.png"
         );
     }
 }
@@ -290,7 +290,7 @@ pub fn run_link(args: &[String]) -> ! {
         std::process::exit(1);
     };
     let Some(hub) = crate::hub_cmd::default_hub() else {
-        eprintln!("klark link: no hub: run `klark hub connect --url http://<hub>:8080` first");
+        eprintln!("klark link: no hub: run `klark hub connect --url http://<hub>:7470` first");
         std::process::exit(1);
     };
     let base = match klark_link::http::hub_http_base(&hub.url) {
@@ -328,8 +328,8 @@ mod link_tests {
     #[test]
     fn view_url_encodes_every_part() {
         assert_eq!(
-            super::view_url("http://hub:8080", "my box", "w1:p2", "/a b/c.mp3"),
-            "http://hub:8080/m/my%20box/f?pane=w1%3Ap2&path=%2Fa%20b%2Fc.mp3"
+            super::view_url("http://hub:7470", "my box", "w1:p2", "/a b/c.mp3"),
+            "http://hub:7470/m/my%20box/f?pane=w1%3Ap2&path=%2Fa%20b%2Fc.mp3"
         );
     }
 }

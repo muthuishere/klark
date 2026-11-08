@@ -10,7 +10,7 @@ A machine joins a hub with a device code. Nobody copies a token by hand.
 On the machine:
 
 ```sh
-klark hub connect --url http://hub.lan:8080
+klark hub connect --url http://hub.lan:7470
 ```
 
 It prints a code such as `ABCD-EFGH` and a link, and opens your browser
@@ -50,8 +50,8 @@ approval again.
 Skip the browser with a machine token:
 
 ```sh
-klark hub connect --url http://hub.lan:8080 --token-stdin < token.txt
-KLARK_HUB_TOKEN=… klark hub connect --url http://hub.lan:8080
+klark hub connect --url http://hub.lan:7470 --token-stdin < token.txt
+KLARK_HUB_TOKEN=… klark hub connect --url http://hub.lan:7470
 ```
 
 ## HTTPS and private CAs

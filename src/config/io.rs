@@ -33,32 +33,7 @@ pub fn config_dir() -> PathBuf {
     } else {
         platform_config_dir()
     };
-    adopt_legacy_dir(&dir);
     dir
-}
-
-/// klark was renamed from its upstream project. The first time klark looks for
-/// its config and finds none, it moves the upstream config directory beside
-/// it into place, so an existing setup carries over instead of starting blank.
-fn adopt_legacy_dir(dir: &Path) {
-    static ONCE: std::sync::Once = std::sync::Once::new();
-    ONCE.call_once(|| {
-        if dir.exists() {
-            return;
-        }
-        let Some(name) = dir.file_name().and_then(|n| n.to_str()) else {
-            return;
-        };
-        // Spelled in two parts so a repository-wide rename never rewrites it.
-        let legacy_name = name.replacen("klark", concat!("her", "dr"), 1);
-        let legacy = dir.with_file_name(legacy_name);
-        if legacy != dir && legacy.is_dir() {
-            match std::fs::rename(&legacy, dir) {
-                Ok(()) => tracing::info!(from = %legacy.display(), to = %dir.display(), "adopted legacy config directory"),
-                Err(err) => warn!(err = %err, from = %legacy.display(), "could not adopt legacy config directory"),
-            }
-        }
-    });
 }
 
 pub fn state_dir() -> PathBuf {

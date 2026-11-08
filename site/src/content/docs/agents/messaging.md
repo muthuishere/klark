@@ -70,7 +70,7 @@ The CLI needs a hub token. It uses, in order:
 3. A user token from `klark msg login`:
 
 ```sh
-klark msg login --hub http://hub.lan:8080 --user alice    # asks for the password
+klark msg login --hub http://hub.lan:7470 --user alice    # asks for the password
 klark msg logout
 ```
 

@@ -7,7 +7,7 @@ description: klark expose, --agents to share only some agents, and share links f
 with a token:
 
 ```sh
-klark expose --hub http://hub.lan:8080 --token "$KLARK_HUB_TOKEN" [--name laptop]
+klark expose --hub http://hub.lan:7470 --token "$KLARK_HUB_TOKEN" [--name laptop]
 ```
 
 Or set `KLARK_HUB_URL`, `KLARK_HUB_TOKEN` and `KLARK_MACHINE_NAME`.
@@ -54,7 +54,7 @@ Inside a pane:
 
 ```sh
 klark expose url
-# http://hub.lan:8080/go?machine=laptop&pane=w1%3Ap1
+# http://hub.lan:7470/go?machine=laptop&pane=w1%3Ap1
 ```
 
 The link is built locally; nothing is sent. Options: `--pane <id>` (default

@@ -3,7 +3,7 @@ services:
     build: .
     image: klarkhub
     ports:
-      - "8080:8080"
+      - "7470:7470"
     environment:
       # Settings use the KLARK_ prefix: KLARK_HUB__AUTH__MODE is Hub:Auth:Mode.
       # Sign-in defaults to Ldap (your directory). Point it at your server here or in

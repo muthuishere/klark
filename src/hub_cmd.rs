@@ -579,7 +579,7 @@ mod tests {
         assert_eq!(parse_connect(&[]).unwrap(), ConnectOptions::default());
         let o = parse_connect(&s(&[
             "--url",
-            "http://h:8080",
+            "http://h:7470",
             "--as",
             "lab",
             "--token-stdin",
@@ -588,7 +588,7 @@ mod tests {
             "a,b",
         ]))
         .unwrap();
-        assert_eq!(o.url.as_deref(), Some("http://h:8080"));
+        assert_eq!(o.url.as_deref(), Some("http://h:7470"));
         assert_eq!(o.name.as_deref(), Some("lab"));
         assert!(o.token_stdin && o.no_browser);
         assert_eq!(o.agents, s(&["a,b"]));
@@ -604,19 +604,19 @@ mod tests {
 
     #[test]
     fn urls_and_names() {
-        assert_eq!(agent_url("http://h:8080").unwrap(), "http://h:8080");
+        assert_eq!(agent_url("http://h:7470").unwrap(), "http://h:7470");
         assert_eq!(
             agent_url("https://hub.example.com/").unwrap(),
             "https://hub.example.com"
         );
         assert_eq!(agent_url("ws://h:1/agent").unwrap(), "http://h:1");
         assert!(agent_url("ftp://h").is_err());
-        assert!(agent_url("h:8080").is_err());
+        assert!(agent_url("h:7470").is_err());
         assert_eq!(
             name_from_url("https://hub.example.com:8443/x").unwrap(),
             "hub.example.com"
         );
-        assert_eq!(name_from_url("http://[::1]:8080").unwrap(), "::1");
+        assert_eq!(name_from_url("http://[::1]:7470").unwrap(), "::1");
         assert!(name_from_url("nohost").is_err());
     }
 
@@ -663,12 +663,12 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("klark-hubs-{}", std::process::id()));
         let path = dir.join("hubs.json");
         let mut h = Hubs::default();
-        h.add("lab", hub("http://lab:8080"));
+        h.add("lab", hub("http://lab:7470"));
         h.save_to(&path).unwrap();
         let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(
             v,
-            json!({"default": "lab", "hubs": {"lab": {"url": "http://lab:8080", "token": "secret-token", "machine": "box"}}})
+            json!({"default": "lab", "hubs": {"lab": {"url": "http://lab:7470", "token": "secret-token", "machine": "box"}}})
         );
         assert_eq!(Hubs::load_from(&path), h);
         #[cfg(unix)]

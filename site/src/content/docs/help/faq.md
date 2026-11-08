@@ -42,11 +42,11 @@ protocol 5. Messaging answers `409` for a machine too old to receive messages.
 
 | port | what |
 |---|---|
-| 8080 | the hub, plain HTTP, inside the container |
+| 7470 | the hub, plain HTTP, inside the container |
 | 30080 | the example Kubernetes NodePort |
 | none | klark machines: they only dial out |
 
-Change the host port with `docker run -p 9000:8080 …`. From source, use
+Change the host port with `docker run -p 9000:7470 …`. From source, use
 `ASPNETCORE_URLS=http://0.0.0.0:9000 dotnet run`.
 
 ## The machine shows "offline" in the hub

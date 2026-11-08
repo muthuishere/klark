@@ -1,6 +1,6 @@
 //! Simulate many klark machines against a hub.
 //!
-//!   klark-loadtest --hub http://localhost:8080 --token <fleet token> \
+//!   klark-loadtest --hub http://localhost:7470 --token <fleet token> \
 //!       [--machines 100] [--panes 12] [--rate 20000] [--seconds 60] [--tick-ms 50] \
 //!       [--csv stats.csv] [--interval-ms 2000] [--reconnect] [--prefix sim]
 //!

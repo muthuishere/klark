@@ -3,7 +3,7 @@ title: HTTP API
 description: Tokens, agents, messages, assets, files and the machine connect flow.
 ---
 
-Base URL: the hub, for example `http://hub.lan:8080`. JSON uses `snake_case`.
+Base URL: the hub, for example `http://hub.lan:7470`. JSON uses `snake_case`.
 
 ## Authentication
 
@@ -25,7 +25,7 @@ Body (JSON or form): `{username, password}`. Same directory and same 10 per
 minute limit as the sign-in page.
 
 ```sh
-curl -s -X POST http://hub.lan:8080/api/token \
+curl -s -X POST http://hub.lan:7470/api/token \
   -H 'content-type: application/json' \
   -d '{"username":"user1","password":"user1pass"}'
 ```
@@ -106,12 +106,12 @@ Used by `klark hub connect`. No token needed.
 ### `POST /api/connect/start`
 
 ```sh
-curl -s -X POST http://hub.lan:8080/api/connect/start \
+curl -s -X POST http://hub.lan:7470/api/connect/start \
   -H 'content-type: application/json' -d '{"name":"laptop"}'
 ```
 
 ```json
-{"code":"8PYA-BBBM","poll_id":"…","url":"http://hub.lan:8080/connect?code=8PYA-BBBM","expires_in":600,"interval":2}
+{"code":"8PYA-BBBM","poll_id":"…","url":"http://hub.lan:7470/connect?code=8PYA-BBBM","expires_in":600,"interval":2}
 ```
 
 A signed-in person opens `url` and approves or denies.

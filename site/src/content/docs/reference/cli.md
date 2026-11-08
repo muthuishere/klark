@@ -137,7 +137,7 @@ env: KLARK_HUB_URL, KLARK_HUB_JWT, KLARK_HUB_TOKEN (machine token), KLARK_MACHIN
 ## `klark expose`
 
 ```text
-usage: klark expose --hub <http://hub-host:8080> --token <machine-token> [--name <machine-name>] [--agents <name>[,<name>...]]
+usage: klark expose --hub <http://hub-host:7470> --token <machine-token> [--name <machine-name>] [--agents <name>[,<name>...]]
        klark expose url [--pane <pane-id>] [--hub <url>] [--name <machine-name>] [--agents <name>[,<name>...]]
        (or set KLARK_HUB_URL / KLARK_HUB_TOKEN / KLARK_MACHINE_NAME / KLARK_EXPOSE_AGENTS; --pane defaults to KLARK_PANE_ID)
        --agents (or repeated --agent) exposes only panes running those agents: an agent name, <session>/<name>,

@@ -66,7 +66,7 @@ A signed-in user opens **CLI token** (`/token`) for a JWT with a copy button.
 Scripts can ask for one directly:
 
 ```sh
-curl -s -X POST http://localhost:8080/api/token \
+curl -s -X POST http://localhost:7470/api/token \
   -H 'content-type: application/json' \
   -d '{"username":"user1","password":"user1pass"}'
 # {"token":"eyJ…","expires_at":"…","user":"user1","groups":["klark-users"]}

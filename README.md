@@ -24,7 +24,7 @@ Docs: **https://muthuishere.github.io/klark/**
 - **Agents message agents.** `klark msg send reviewer "please review PR 12"`
   reaches an agent in any session on this machine, or on any other machine
   connected to the same hub (`machine/session/agent`).
-- **klarkhub, the web hub.** One self-hosted server (Docker or Kubernetes, plain
+- **klarkhub, the web hub (default port 7470).** One self-hosted server (Docker or Kubernetes, plain
   HTTP, SQLite) for many machines and people:
   - a chat for every agent (Claude, Devin, generic agents, plain shells as
     command blocks), markdown and tables rendered, tool calls folded;
@@ -54,16 +54,16 @@ Prebuilt Linux binaries come with each tagged release.
 1. Run klarkhub (see [deploy guide](docs/deploy.md)):
 
    ```bash
-   docker run -d -p 8080:8080 -v klarkhub-data:/data ghcr.io/muthuishere/klarkhub:latest
+   docker run -d -p 7470:7470 -v klarkhub-data:/data ghcr.io/muthuishere/klarkhub:latest
    # or: kubectl apply -f deploy/k8s/
    ```
 
-   Open `http://<host>:8080`, sign in as `admin` / `adminadmin`, and change the password.
+   Open `http://<host>:7470`, sign in as `admin` / `adminadmin`, and change the password.
 
 2. On each machine:
 
    ```bash
-   klark hub connect --url http://<host>:8080   # approve this machine in the browser
+   klark hub connect --url http://<host>:7470   # approve this machine in the browser
    klark hub connect                            # later: reconnect to the default hub
    klark hub ls | use <name> | rm <name> | status
    ```
@@ -102,8 +102,8 @@ terminal multiplexer for coding agents. klark keeps herdr's core and builds on i
 - `klark -s` folder sessions and the single `klark` skill.
 
 **Changed from herdr:** self-update, hosted announcements and remote catalogs are
-removed. The config folder is `~/.config/klark`, and an existing
-`~/.config/herdr` is moved there on first run. Environment variables are
+removed. The config folder is `~/.config/klark`; klark never reads or moves
+`~/.config/herdr`, so herdr and klark run side by side. Environment variables are
 `KLARK_*`, for example `KLARK_SOCKET_PATH`. The version number follows herdr's
 (currently 0.9.5).
 

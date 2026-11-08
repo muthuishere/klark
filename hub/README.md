@@ -33,7 +33,7 @@ dotnet run
 ```
 
 Or with Docker: put your LDAP settings and machine hashes in `hub/appsettings.Production.json` (or `KLARK_HUB__...` variables), then run `cd hub && docker compose up -d --build`.
-The hub is plain HTTP on port 8080; machines connect with `http://` (no
+The hub is plain HTTP on port 7470; machines connect with `http://` (no
 WebSockets, for machines or browsers: ADR 0013). Run it on a trusted network or
 VPN. Tokens and passwords cross the wire unencrypted, so for public exposure put
 a TLS proxy in front and use `https://` (the link supports both).
@@ -134,11 +134,11 @@ session and folder.
 ## Tokens for the CLI and scripts (JWT)
 
 Signed-in users open **CLI token** (`/token`) for a fresh JWT with a copy
-button, or let the CLI fetch one: `klark msg login --hub http://<hub>:8080 --user <name>`.
+button, or let the CLI fetch one: `klark msg login --hub http://<hub>:7470 --user <name>`.
 Scripts can ask directly (same directory, same 10-per-minute limit as the login form):
 
 ```bash
-curl -s -X POST http://hub:8080/api/token -H 'content-type: application/json' \
+curl -s -X POST http://hub:7470/api/token -H 'content-type: application/json' \
   -d '{"username":"alice","password":"..."}'
 # {"token":"eyJ...","expires_at":"...","user":"alice","groups":["..."]}
 ```
@@ -197,7 +197,7 @@ dotnet test hub.Tests     # xUnit: screen cleaning (Claude Code, Codex, Devin fi
 ```bash
 # hub config: "Machines": [{ "Name": "load", "Fleet": true, "TokenSha256": "<hash-token fleet-secret>" }]
 cargo run --release -p klark-link --bin klark-loadtest -- \
-  --hub http://localhost:8080 --token fleet-secret --machines 100 --seconds 60
+  --hub http://localhost:7470 --token fleet-secret --machines 100 --seconds 60
 ```
 
 Then sign in and open a few panes: only those panes start streaming.
@@ -246,7 +246,7 @@ Writes are batched by one background writer, so disk never slows the machine soc
 ## Link a machine
 
 ```bash
-klark expose --hub http://hub-host:8080 --token <machine token> [--name laptop]
+klark expose --hub http://hub-host:7470 --token <machine token> [--name laptop]
 # or KLARK_HUB_URL / KLARK_HUB_TOKEN / KLARK_MACHINE_NAME
 ```
 

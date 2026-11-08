@@ -7,7 +7,7 @@ The hub (klarkhub) is a C# Blazor Server app in `hub/`. People sign in to it and
 watch and answer the agents on every linked machine. It is a separate server:
 deploy it once, then link any number of machines to it.
 
-- One container, one port: plain HTTP on **8080**.
+- One container, one port: plain HTTP on **7470**.
 - All state in `/data`: `hub.db`, one file per machine, temporary assets, keys.
 - Run **exactly one replica**. SQLite and the asset store are local files.
 - Machines dial out to the hub. Nothing listens on the machines.
@@ -16,11 +16,11 @@ deploy it once, then link any number of machines to it.
 
 ```sh
 docker build -t klarkhub hub
-docker run -d --name klarkhub -p 8080:8080 -v klarkhub-data:/data klarkhub
-curl http://localhost:8080/healthz        # "ok"
+docker run -d --name klarkhub -p 7470:7470 -v klarkhub-data:/data klarkhub
+curl http://localhost:7470/healthz        # "ok"
 ```
 
-Open `http://localhost:8080` and [sign in as admin](/hub/sign-in/).
+Open `http://localhost:7470` and [sign in as admin](/hub/sign-in/).
 
 With nothing configured, the hub uses its built-in mock directory
 (`user1`/`user1pass`, `user2`/`user2pass`). To use your LDAP or Active Directory,
@@ -52,7 +52,7 @@ dotnet run
 ```
 
 Needs the .NET 10 SDK. Data goes to `hub/data/` unless `KLARK_HUB__DATADIR` is set.
-`ASPNETCORE_URLS=http://127.0.0.1:18080 dotnet run` picks another port.
+`ASPNETCORE_URLS=http://127.0.0.1:17470 dotnet run` picks another port.
 
 ## Plain HTTP
 

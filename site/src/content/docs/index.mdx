@@ -57,15 +57,15 @@ You need Rust, Zig 0.16 and Docker.
 
    ```sh
    docker build -t klarkhub hub
-   docker run -d --name klarkhub -p 8080:8080 -v klarkhub-data:/data klarkhub
+   docker run -d --name klarkhub -p 7470:7470 -v klarkhub-data:/data klarkhub
    ```
 
-   Open `http://localhost:8080` and sign in as `admin` / `adminadmin`. Change the password when the banner asks.
+   Open `http://localhost:7470` and sign in as `admin` / `adminadmin`. Change the password when the banner asks.
 
 3. Link this machine.
 
    ```sh
-   klark hub connect --url http://localhost:8080
+   klark hub connect --url http://localhost:7470
    ```
 
    Open the link it prints, check the code, and press Approve. Your agents now show up in the hub.

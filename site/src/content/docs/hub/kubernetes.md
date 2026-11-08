@@ -50,7 +50,7 @@ Open `http://<node-ip>:30080`.
 - Resources from E-06: requests `250m` CPU / `512Mi`, limits `1` CPU / `512Mi`.
   Raise memory to `1Gi` for about 100 machines.
 
-**Service `klarkhub`**: `NodePort` 30080 → 8080. Use `LoadBalancer` if your
+**Service `klarkhub`**: `NodePort` 30080 → 7470. Use `LoadBalancer` if your
 cluster has one.
 
 ## Set the public URL

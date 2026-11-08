@@ -10,8 +10,8 @@ use crate::tls::Conn;
 use std::time::Duration;
 
 /// The hub's HTTP base (`http://host:port`) from any hub URL a user or the link
-/// holds: `ws://hub:8080/agent` -> `http://hub:8080`, `wss` -> `https`,
-/// `http(s)://hub:8080/anything` -> its origin.
+/// holds: `ws://hub:7470/agent` -> `http://hub:7470`, `wss` -> `https`,
+/// `http(s)://hub:7470/anything` -> its origin.
 pub fn hub_http_base(hub_url: &str) -> Result<String, String> {
     let mut url = url::Url::parse(hub_url.trim()).map_err(|e| format!("hub url {hub_url}: {e}"))?;
     let scheme = match url.scheme() {
@@ -577,20 +577,20 @@ mod tests {
     #[test]
     fn hub_base_from_any_hub_url() {
         assert_eq!(
-            hub_http_base("ws://hub:8080/agent").unwrap(),
-            "http://hub:8080"
+            hub_http_base("ws://hub:7470/agent").unwrap(),
+            "http://hub:7470"
         );
         assert_eq!(
             hub_http_base("wss://hub.example.com/agent").unwrap(),
             "https://hub.example.com"
         );
         assert_eq!(
-            hub_http_base("http://10.0.0.5:8080/").unwrap(),
-            "http://10.0.0.5:8080"
+            hub_http_base("http://10.0.0.5:7470/").unwrap(),
+            "http://10.0.0.5:7470"
         );
         assert_eq!(
-            hub_http_base("http://h:8080/token?x=1").unwrap(),
-            "http://h:8080"
+            hub_http_base("http://h:7470/token?x=1").unwrap(),
+            "http://h:7470"
         );
         assert!(hub_http_base("ftp://h/").is_err());
         assert!(hub_http_base("not a url").is_err());
