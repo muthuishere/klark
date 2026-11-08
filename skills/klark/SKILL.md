@@ -1,6 +1,6 @@
 ---
 name: klark
-description: "Control Klark, a terminal multiplexer for coding agents: panes, tabs, workspaces, commands and agents; agents across klark sessions; messaging other agents (klark msg); exposing this machine or pane to a klark hub (klark expose, --agents, share links); offering files; the hub (login, chat/transcript view). Use when the user mentions Klark, or, running inside a Klark pane, says: share this, give me a link, expose, which agents are running, message/ask/tell another agent, reply to that agent, send a file / send this to my phone, show me a file, hub. Do not use merely because a task could benefit from a background terminal, delegation, or parallel work. Requires KLARK_ENV=1."
+description: "Control Klark, a terminal multiplexer for coding agents: panes, tabs, workspaces, commands and agents; agents across klark sessions; messaging other agents (klark msg); exposing this machine or pane to a klark hub (klark expose, --agents, share links); offering files; the hub (login, chat/transcript view). Use when the user mentions Klark, or, running inside a Klark pane, says: share this, give me a link, expose, which agents are running, message/ask/tell another agent, tell all agents / broadcast, reply to that agent, send a file / send this to my phone, show me a file, hub. Do not use merely because a task could benefit from a background terminal, delegation, or parallel work. Requires KLARK_ENV=1."
 ---
 
 # Klark
@@ -29,6 +29,9 @@ When the check passes, the `klark` binary in `PATH` talks to the current session
 | know my own address | `klark msg whoami` → `laptop/work/reviewer` |
 | name myself | `klark msg name reviewer` |
 | message another agent (any session or machine) | `klark msg send work/coder "<text>"` |
+| message every agent in this session (worktrees included) | `klark msg send --all "<text>"` |
+| message every agent in every session on this machine | `klark msg send --all-sessions "<text>"` |
+| list every agent, with its worktree | `klark msg ls --local` (`--json`; drop `--local` to include the hub's machines) |
 | answer a message I got | `klark msg reply "<text>"` |
 | see recent messages | `klark msg log` (`-n 50`, `--json`) |
 | share this pane ("share this", "give me a link") | `klark expose url` |

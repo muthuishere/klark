@@ -24,9 +24,11 @@ Addresses: <agent> | <session>/<agent> | <machine>/<session>/<agent>
 
 commands:
   whoami [--json]                        this agent's own address
-  ls [--local] [--json]                  agents in every running session (+ the hub's, unless --local)
+  ls [--local] [--json]                  agents in every running session, worktrees included (+ the hub's, unless --local)
   send [--from <addr>] [--json] <to> <text...>
                                          deliver a message as a prompt to another agent
+  send --all [--json] <text...>          every other agent in this session (worktrees included)
+  send --all-sessions [--json] <text...> every other agent in every running session on this machine
   reply <text...>                        answer the last agent that messaged this pane
   log [-n N] [--json]                    recent sent/received messages
   name <new-name>                        rename this pane's agent (its address)
@@ -538,7 +540,10 @@ fn row(l: &LocalAgent, place: &str) -> [String; 4] {
         l.address.clone(),
         shown_status(&l.status),
         l.agent.clone().unwrap_or_default(),
-        place.to_string(),
+        match &l.worktree {
+            Some(wt) => format!("{place} · worktree {wt}"),
+            None => place.to_string(),
+        },
     ]
 }
 
@@ -592,7 +597,10 @@ fn text_of(words: &[String]) -> R<String> {
 }
 
 fn cmd_send(args: &[String]) -> R<()> {
-    let a = Args::parse(args, &["--from"], &["--json"])?;
+    let a = Args::parse(args, &["--from"], &["--json", "--all", "--all-sessions"])?;
+    if a.has("--all") || a.has("--all-sessions") {
+        return broadcast(&a, a.has("--all-sessions"));
+    }
     let (to, words) = a
         .positional
         .split_first()
@@ -623,6 +631,44 @@ fn cmd_send(args: &[String]) -> R<()> {
             Err(Fail::Error(e))
         }
     }
+}
+
+/// `send --all` / `send --all-sessions`: the same message to every other
+/// agent in this session (or every running session), worktrees included.
+fn broadcast(a: &Args, every_session: bool) -> R<()> {
+    let text = text_of(&a.positional)?;
+    let me = whoami();
+    let from = a.value("--from").unwrap_or_else(|| me.address.clone());
+    let targets: Vec<LocalAgent> = local_agents(&me.machine)
+        .into_iter()
+        .filter(|l| every_session || l.session == me.session)
+        .filter(|l| !(l.session == me.session && me.pane_id.as_deref() == Some(l.pane_id.as_str())))
+        .collect();
+    if targets.is_empty() {
+        return Err(Fail::Error(if every_session {
+            "no other agents in any running session".into()
+        } else {
+            format!("no other agents in session {}", me.session)
+        }));
+    }
+    let mut failed = 0;
+    for t in &targets {
+        let (to, outcome) = send(&format!("{}/{}", t.session, t.pane_id), &from, &text);
+        let to = if outcome.is_ok() { t.address.clone() } else { to };
+        if a.has("--json") {
+            println!("{}", json!({"delivered": outcome.is_ok(), "to": to, "from": from, "error": outcome.as_ref().err()}));
+        } else {
+            match &outcome {
+                Ok(()) => println!("delivered to {to}"),
+                Err(e) => println!("failed {to}: {e}"),
+            }
+        }
+        failed += usize::from(outcome.is_err());
+    }
+    if failed > 0 {
+        return Err(Fail::Error(format!("{failed} of {} not delivered", targets.len())));
+    }
+    Ok(())
 }
 
 /// Send and log; returns the resolved destination address and the outcome.
@@ -1063,6 +1109,7 @@ mod tests {
             pane_id: pane.into(),
             status: "idle".into(),
             address: String::new(),
+            worktree: None,
         };
         a.address = format!("m1/{session}/{}", a.handle());
         a

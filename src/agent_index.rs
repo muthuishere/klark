@@ -59,6 +59,27 @@ pub struct LocalAgent {
     pub pane_id: String,
     pub status: String,
     pub address: String,
+    /// The git worktree the agent works in, when its folder is a linked
+    /// worktree (`git worktree add`), named by the worktree's folder.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree: Option<String>,
+}
+
+/// The linked git worktree containing `dir`, by folder name. A main checkout
+/// (`.git` is a directory) or a folder outside git gives `None`.
+pub fn linked_worktree(dir: &std::path::Path) -> Option<String> {
+    let mut cur = Some(dir);
+    while let Some(d) = cur {
+        let git = d.join(".git");
+        if git.is_file() {
+            return d.file_name().map(|n| n.to_string_lossy().into_owned());
+        }
+        if git.is_dir() {
+            return None;
+        }
+        cur = d.parent();
+    }
+    None
 }
 
 impl LocalAgent {
@@ -150,6 +171,9 @@ pub(crate) fn agents_from_list(session: &str, machine: &str, result: &Value) -> 
                 pane_id,
                 status: s("agent_status").unwrap_or_else(|| "unknown".into()),
                 address: String::new(),
+                worktree: s("foreground_cwd")
+                    .or_else(|| s("cwd"))
+                    .and_then(|c| linked_worktree(std::path::Path::new(&c))),
             };
             agent.address = format!("{machine}/{session}/{}", agent.handle());
             Some(agent)
@@ -255,6 +279,7 @@ mod tests {
             pane_id: pane.into(),
             status: "idle".into(),
             address: String::new(),
+            worktree: None,
         };
         a.address = format!("m1/{session}/{}", a.handle());
         a
@@ -299,5 +324,21 @@ mod tests {
             "{amb}"
         );
         assert!(!amb.contains("m1/default/rev"), "{amb}");
+    }
+}
+
+#[cfg(test)]
+mod worktree_tests {
+    #[test]
+    fn linked_worktree_is_named_main_checkout_is_not() {
+        let base = std::env::temp_dir().join(format!("klark-wt-{}", std::process::id()));
+        let main = base.join("repo");
+        let wt = base.join("repo-feature");
+        std::fs::create_dir_all(main.join(".git")).unwrap();
+        std::fs::create_dir_all(wt.join("src")).unwrap();
+        std::fs::write(wt.join(".git"), "gitdir: ../repo/.git/worktrees/repo-feature\n").unwrap();
+        assert_eq!(super::linked_worktree(&main), None);
+        assert_eq!(super::linked_worktree(&wt.join("src")).as_deref(), Some("repo-feature"));
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

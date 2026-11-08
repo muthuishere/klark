@@ -300,6 +300,26 @@ fn msg_send_crosses_sessions_and_lands_as_agent_prompt() {
         text(&reply)
     );
 
+    // Broadcast: --all is this session only (default has no agents);
+    // --all-sessions reaches the agent in `work`.
+    let none = env.msg(None, None, &["send", "--all", "hello-mine"]);
+    assert!(!none.status.success());
+    assert!(
+        String::from_utf8_lossy(&none.stderr).contains("no other agents in session default"),
+        "{}",
+        text(&none)
+    );
+    let all = env.msg(None, None, &["send", "--all-sessions", "hello-everyone"]);
+    assert!(all.status.success(), "{}", text(&all));
+    assert!(String::from_utf8_lossy(&all.stdout).contains("delivered to testbox/work/rev"));
+    // Inside `work`, --all skips the sender's own pane.
+    let mine = env.msg(Some("work"), Some(&pane), &["send", "--all", "only-me-here"]);
+    assert!(!mine.status.success(), "{}", text(&mine));
+    wait_for("the broadcast to appear in the pane", Duration::from_secs(10), || {
+        let read = call(&work, "pane.read", json!({"pane_id": pane, "source": "recent", "lines": 50}));
+        read["result"]["read"]["text"].as_str().unwrap_or("").contains("hello-everyone").then_some(())
+    });
+
     // Unknown and badly formed targets fail clearly.
     let ghost = env.msg(None, None, &["send", "work/ghost", "hi"]);
     assert!(!ghost.status.success());
