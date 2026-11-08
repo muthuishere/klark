@@ -28,6 +28,10 @@ pub(super) fn global_menu_items(
             ClientGlobalMenuAction::Binding(crate::input::KeybindAction::Settings),
         ),
         (
+            "theme",
+            ClientGlobalMenuAction::Binding(crate::input::KeybindAction::Settings),
+        ),
+        (
             "keybinds",
             ClientGlobalMenuAction::Binding(crate::input::KeybindAction::Help),
         ),

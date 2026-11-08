@@ -524,6 +524,131 @@ impl Palette {
         }
     }
 
+    /// Paper — the klark hub's light default: off-white, blue accent.
+    pub fn klark_paper() -> Self {
+        Self {
+            accent: Color::Rgb(37, 99, 235),
+            panel_bg: Color::Rgb(243, 241, 236),
+            sidebar_bg: Color::Reset,
+            active_row_bg: Color::Rgb(230, 238, 248),
+            selection_bg: Color::Rgb(207, 221, 245),
+            surface0: Color::Rgb(226, 222, 213),
+            surface1: Color::Rgb(207, 202, 192),
+            surface_dim: Color::Rgb(236, 233, 226),
+            overlay0: Color::Rgb(138, 143, 152),
+            overlay1: Color::Rgb(95, 102, 112),
+            text: Color::Rgb(30, 35, 41),
+            subtext0: Color::Rgb(75, 82, 92),
+            mauve: Color::Rgb(166, 38, 164),
+            green: Color::Rgb(21, 128, 61),
+            yellow: Color::Rgb(152, 104, 1),
+            red: Color::Rgb(185, 28, 28),
+            blue: Color::Rgb(37, 99, 235),
+            teal: Color::Rgb(15, 118, 110),
+            peach: Color::Rgb(180, 83, 9),
+        }
+    }
+
+    /// Deep Teal — calm blue-green dark, teal accent.
+    pub fn klark_teal() -> Self {
+        Self {
+            accent: Color::Rgb(45, 212, 191),
+            panel_bg: Color::Rgb(21, 36, 42),
+            sidebar_bg: Color::Reset,
+            active_row_bg: Color::Rgb(23, 48, 54),
+            selection_bg: Color::Rgb(31, 64, 72),
+            surface0: Color::Rgb(34, 54, 61),
+            surface1: Color::Rgb(46, 72, 80),
+            surface_dim: Color::Rgb(21, 36, 42),
+            overlay0: Color::Rgb(95, 127, 135),
+            overlay1: Color::Rgb(138, 163, 170),
+            text: Color::Rgb(220, 231, 234),
+            subtext0: Color::Rgb(180, 198, 203),
+            mauve: Color::Rgb(199, 146, 234),
+            green: Color::Rgb(52, 211, 153),
+            yellow: Color::Rgb(251, 191, 36),
+            red: Color::Rgb(248, 113, 113),
+            blue: Color::Rgb(96, 165, 250),
+            teal: Color::Rgb(45, 212, 191),
+            peach: Color::Rgb(247, 140, 108),
+        }
+    }
+
+    /// Graphite Indigo — neutral grey, soft indigo accent.
+    pub fn klark_indigo() -> Self {
+        Self {
+            accent: Color::Rgb(139, 156, 255),
+            panel_bg: Color::Rgb(30, 32, 40),
+            sidebar_bg: Color::Reset,
+            active_row_bg: Color::Rgb(38, 42, 58),
+            selection_bg: Color::Rgb(48, 54, 77),
+            surface0: Color::Rgb(44, 47, 59),
+            surface1: Color::Rgb(58, 62, 77),
+            surface_dim: Color::Rgb(30, 32, 40),
+            overlay0: Color::Rgb(103, 110, 130),
+            overlay1: Color::Rgb(145, 150, 166),
+            text: Color::Rgb(227, 228, 234),
+            subtext0: Color::Rgb(188, 192, 204),
+            mauve: Color::Rgb(199, 146, 234),
+            green: Color::Rgb(134, 239, 172),
+            yellow: Color::Rgb(255, 203, 107),
+            red: Color::Rgb(252, 165, 165),
+            blue: Color::Rgb(130, 170, 255),
+            teal: Color::Rgb(125, 211, 252),
+            peach: Color::Rgb(247, 140, 108),
+        }
+    }
+
+    /// Forest Mint — green-black, mint accent.
+    pub fn klark_forest() -> Self {
+        Self {
+            accent: Color::Rgb(127, 216, 166),
+            panel_bg: Color::Rgb(25, 34, 30),
+            sidebar_bg: Color::Reset,
+            active_row_bg: Color::Rgb(31, 46, 39),
+            selection_bg: Color::Rgb(40, 64, 52),
+            surface0: Color::Rgb(38, 51, 45),
+            surface1: Color::Rgb(51, 68, 60),
+            surface_dim: Color::Rgb(25, 34, 30),
+            overlay0: Color::Rgb(100, 120, 109),
+            overlay1: Color::Rgb(147, 166, 156),
+            text: Color::Rgb(224, 232, 227),
+            subtext0: Color::Rgb(186, 202, 192),
+            mauve: Color::Rgb(201, 160, 220),
+            green: Color::Rgb(127, 216, 166),
+            yellow: Color::Rgb(232, 211, 122),
+            red: Color::Rgb(242, 139, 130),
+            blue: Color::Rgb(140, 200, 232),
+            teal: Color::Rgb(167, 232, 196),
+            peach: Color::Rgb(229, 168, 110),
+        }
+    }
+
+    /// Dusk Amber — warm brown-black, amber accent.
+    pub fn klark_dusk() -> Self {
+        Self {
+            accent: Color::Rgb(242, 166, 90),
+            panel_bg: Color::Rgb(34, 29, 26),
+            sidebar_bg: Color::Reset,
+            active_row_bg: Color::Rgb(46, 38, 32),
+            selection_bg: Color::Rgb(61, 49, 40),
+            surface0: Color::Rgb(53, 44, 38),
+            surface1: Color::Rgb(70, 58, 50),
+            surface_dim: Color::Rgb(34, 29, 26),
+            overlay0: Color::Rgb(122, 108, 98),
+            overlay1: Color::Rgb(168, 153, 142),
+            text: Color::Rgb(236, 227, 220),
+            subtext0: Color::Rgb(203, 191, 181),
+            mauve: Color::Rgb(215, 166, 232),
+            green: Color::Rgb(163, 217, 165),
+            yellow: Color::Rgb(253, 214, 99),
+            red: Color::Rgb(248, 113, 113),
+            blue: Color::Rgb(138, 180, 248),
+            teal: Color::Rgb(128, 203, 196),
+            peach: Color::Rgb(242, 166, 90),
+        }
+    }
+
     /// Resolve a theme by name. Returns None for unknown names.
     pub fn from_name(name: &str) -> Option<Self> {
         match crate::config::canonical_theme_name(name)? {
@@ -545,6 +670,11 @@ impl Palette {
             "rose-pine" => Some(Self::rose_pine()),
             "rose-pine-dawn" => Some(Self::rose_pine_dawn()),
             "vesper" => Some(Self::vesper()),
+            "paper" => Some(Self::klark_paper()),
+            "teal" => Some(Self::klark_teal()),
+            "indigo" => Some(Self::klark_indigo()),
+            "forest" => Some(Self::klark_forest()),
+            "dusk" => Some(Self::klark_dusk()),
             _ => None,
         }
     }

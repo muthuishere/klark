@@ -225,6 +225,21 @@ pub(crate) fn render_sidebar(
             .fg(palette.overlay0)
             .add_modifier(Modifier::BOLD),
     );
+    // The product name, right-aligned on the spaces header row.
+    const BRAND: &str = "klark ";
+    let brand_w = BRAND.len() as u16;
+    if workspace_area.width >= brand_w + 9 {
+        put_text(
+            buffer,
+            workspace_area.right().saturating_sub(brand_w + 1),
+            workspace_area.y,
+            brand_w,
+            BRAND,
+            Style::default()
+                .fg(palette.accent)
+                .add_modifier(Modifier::BOLD),
+        );
+    }
 
     let entries = workspace_entries(snapshot, state.collapsed_groups);
     let body = Rect::new(

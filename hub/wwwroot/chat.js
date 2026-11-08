@@ -138,7 +138,7 @@ window.klarkChat = (() => {
       }
       const b = e.target.closest("button.copy");
       if (!b) return;
-      const code = b.closest(".code")?.querySelector("pre code");
+      const code = b.closest(".codeblk, .code")?.querySelector("pre code");
       if (!code) return;
       copyText(code.textContent).then(() => { b.textContent = "Copied"; setTimeout(() => (b.textContent = "Copy"), 1200); });
     };

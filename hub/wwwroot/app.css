@@ -374,3 +374,7 @@ button[type=submit].danger { background: var(--card); color: var(--blocked); bor
 :root[data-theme="dusk"] .theme-pick[data-theme-pick="dusk"] { border-color: var(--accent); }
 :root[data-theme="light"] .theme-pick[data-theme-pick="light"] { border-color: var(--accent); }
 :root[data-theme="dark"] .theme-pick[data-theme-pick="dark"] { border-color: var(--accent); }
+
+/* The default-password reminder shows for 5 s, then gets out of the way. */
+@keyframes banner-away { to { opacity: 0; visibility: hidden; pointer-events: none; } }
+a.banner { animation: banner-away .4s ease 5s forwards; }
