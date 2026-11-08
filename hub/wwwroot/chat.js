@@ -278,7 +278,7 @@ window.klarkChat = (() => {
     textarea.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
         e.preventDefault();
-        if (textarea.value.trim()) { klarkState.set(draftKey, ""); send.click(); setTimeout(grow, 50); }
+        if (textarea.value.trim() || textarea.dataset.attached === "1") { klarkState.set(draftKey, ""); send.click(); setTimeout(grow, 50); }
       }
     });
     send.addEventListener("click", () => { setTimeout(() => { if (!textarea.value) klarkState.set(draftKey, ""); grow(); }, 50); });

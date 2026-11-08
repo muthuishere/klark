@@ -19,7 +19,7 @@ use serde_json::{json, Value};
 const USAGE: &str =
     "usage: klark hub connect [--url http://host[:port]] [--as <name>] [<name>] [--agents a,b]
                          [--token <machine-token> | --token-stdin] [--no-browser] [--foreground]
-       klark hub stop [<name>]          (alias: disconnect)
+       klark hub stop                   ends the connection (alias: disconnect)
        klark hub ls | use <name> | rm <name> | status [<name>]
        connect --url adds (or refreshes) a hub: approve this machine in the browser and the hub
        issues its token. With a <name>, connects to that saved hub; with nothing, the default.
@@ -463,8 +463,11 @@ fn connect(o: ConnectOptions) {
             }
         }
     };
-    if hubs.hubs.get(&name) != Some(&hub) {
+    // The hub you connect to is the default from now on.
+    let make_default = hubs.default.as_deref() != Some(name.as_str());
+    if hubs.hubs.get(&name) != Some(&hub) || make_default {
         hubs.add(&name, hub.clone());
+        hubs.default = Some(name.clone());
         hubs.save_to(&path).unwrap_or_else(|e| fail(e));
         eprintln!(
             "klark hub: saved {name} ({}) in {}",
@@ -511,7 +514,12 @@ fn stop_background(name: &str) -> bool {
 /// Run the connection detached from this terminal: closing the tab or Ctrl-C no longer
 /// drops the machine off the hub. The child reads the saved token, so none is on its argv.
 fn background(name: &str, agents: &[String]) {
-    stop_background(name);
+    // One hub at a time: connecting here ends any other background connection.
+    for other in Hubs::load().hubs.keys() {
+        if stop_background(other) && other != name {
+            eprintln!("klark hub: disconnected from {other}");
+        }
+    }
     let log_path = Hubs::path().with_file_name(format!("hub-{name}.log"));
     let log = std::fs::OpenOptions::new()
         .create(true)
@@ -535,7 +543,7 @@ fn background(name: &str, agents: &[String]) {
     let child = cmd.spawn().unwrap_or_else(|e| fail(e.to_string()));
     let _ = std::fs::write(pid_path(name), child.id().to_string());
     eprintln!(
-        "klark hub: connected in the background (pid {}, log {}); stop with `klark hub stop {name}`",
+        "klark hub: connected in the background (pid {}, log {}); stop with `klark hub stop`",
         child.id(),
         log_path.display()
     );
@@ -543,13 +551,18 @@ fn background(name: &str, agents: &[String]) {
 
 fn disconnect(name: Option<&str>) {
     let hubs = Hubs::load();
-    let Some((name, _)) = hubs.get(name) else {
-        fail("no such hub (see `klark hub ls`)".to_string());
+    // No name: whatever is connected.
+    let names: Vec<String> = match name {
+        Some(n) if !hubs.hubs.contains_key(n) => fail(format!("no saved hub named {n} (see `klark hub ls`)")),
+        Some(n) => vec![n.to_string()],
+        None => hubs.hubs.keys().cloned().collect(),
     };
-    if stop_background(&name) {
-        println!("klark hub: disconnected from {name}");
-    } else {
-        println!("klark hub: no background connection to {name}");
+    let stopped: Vec<String> = names.into_iter().filter(|n| stop_background(n)).collect();
+    if stopped.is_empty() {
+        println!("klark hub: not connected to any hub");
+    }
+    for n in stopped {
+        println!("klark hub: disconnected from {n}");
     }
 }
 

@@ -128,6 +128,9 @@ pub enum HubMessage {
         pane_id: String,
         #[serde(default)]
         caption: Option<String>,
+        /// false: only store the file on the machine; the person sends it with their next message.
+        #[serde(default = "default_true")]
+        prompt: bool,
     },
     /// v3: the pane agent's conversation, read from its local session log
     /// (or the screen). `after` returns newer items, `before` older ones.
@@ -267,6 +270,7 @@ mod tests {
                 size: 3,
                 pane_id: "p1".into(),
                 caption: Some("look".into()),
+                prompt: true,
             }
         );
         let raw = r#"{"type":"fetch_asset","id":"9","sha256":"ab","name":null,"mime":"image/png","size":3,"pane_id":"p1"}"#;
@@ -276,6 +280,7 @@ mod tests {
             HubMessage::FetchAsset {
                 name: None,
                 caption: None,
+                prompt: true,
                 ..
             }
         ));
@@ -318,4 +323,8 @@ mod tests {
         assert!(!call_allowed("pane.close"));
         assert!(!call_allowed("command.invoke"));
     }
+}
+
+fn default_true() -> bool {
+    true
 }

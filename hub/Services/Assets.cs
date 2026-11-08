@@ -337,7 +337,7 @@ public sealed class AssetService : BackgroundService
     /// fetch_asset to the machine and wait for the path it wrote.
     /// </summary>
     public async Task<SendAssetOutcome> SendToAgentAsync(ClaimsPrincipal user, string machineId, string paneId, Stream body,
-        string? name, string? caption, CancellationToken ct)
+        string? name, string? caption, CancellationToken ct, bool prompt = true)
     {
         // Checked here, on the server, whatever the page showed (STATUS S-06).
         if (!_access.CanType(user, machineId)) return new(403, null, null, $"you may not type into {machineId}");
@@ -359,7 +359,7 @@ public sealed class AssetService : BackgroundService
         var asset = Record(obj, mime, clean, machineId, paneId, "to_agent", "user:" + user.Identity?.Name);
         try
         {
-            var path = await machine.FetchAssetAsync(asset, caption ?? "", TimeSpan.FromSeconds(60));
+            var path = await machine.FetchAssetAsync(asset, caption ?? "", TimeSpan.FromSeconds(60), prompt);
             _log.LogInformation("asset {Sha} ({Size} bytes) delivered to {Machine}/{Pane}", asset.Sha256[..12], asset.Size, machineId, paneId);
             return new(200, asset, path, null);
         }

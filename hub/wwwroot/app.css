@@ -378,3 +378,9 @@ button[type=submit].danger { background: var(--card); color: var(--blocked); bor
 /* The default-password reminder shows for 5 s, then gets out of the way. */
 @keyframes banner-away { to { opacity: 0; visibility: hidden; pointer-events: none; } }
 a.banner { animation: banner-away .4s ease 5s forwards; }
+
+/* images uploaded to the machine, waiting for Send */
+.attachments { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.attachment { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 4px 4px 4px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bubble); font-size: .8rem; overflow-wrap: anywhere; }
+.attachment button { border: 0; background: none; color: var(--muted); cursor: pointer; font: inherit; min-width: 24px; min-height: 24px; border-radius: 6px; }
+.attachment button:hover { background: var(--hover); color: var(--fg); }

@@ -500,13 +500,13 @@ public sealed class MachineConnection
     public event Action<string, int, int>? PaneSizeChanged;
 
     /// <summary>Ask the machine to download an asset into a pane's agent (ADR 0011). Returns the path it wrote.</summary>
-    public async Task<string> FetchAssetAsync(Asset asset, string caption, TimeSpan timeout)
+    public async Task<string> FetchAssetAsync(Asset asset, string caption, TimeSpan timeout, bool prompt = true)
     {
         RequireProtocol3("receive images");
         var result = await RequestAsync("fetch_asset", id => new
         {
             type = "fetch_asset", id, sha256 = asset.Sha256, name = asset.Name, mime = asset.Mime, size = asset.Size,
-            pane_id = asset.PaneId, caption,
+            pane_id = asset.PaneId, caption, prompt,
         }, timeout);
         return result?["path"]?.GetValue<string>() ?? "";
     }

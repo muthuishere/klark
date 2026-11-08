@@ -532,6 +532,7 @@ impl Session {
                 size,
                 pane_id,
                 caption,
+                prompt,
             } => {
                 let Some(target) = self.assets.clone() else {
                     return vec![AgentMessage::Result {
@@ -569,7 +570,9 @@ impl Session {
                             .and_then(|path| {
                                 let text =
                                     assets::prompt_text(name.as_deref(), &path, caption.as_deref());
-                                prompt_pane(&up, &pane_id, &text)?;
+                                if prompt {
+                                    prompt_pane(&up, &pane_id, &text)?;
+                                }
                                 Ok(path)
                             });
                             let (result, error) = match outcome {

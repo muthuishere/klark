@@ -81,7 +81,16 @@
                     <InputFile id="@("up-" + termId)" class="hidden-file" accept="image/*" OnChange="UploadAsync" @ref="fileInput" />
                     <InputFile id="@("cam-" + termId)" class="hidden-file" accept="image/*" capture="environment" OnChange="UploadAsync" />
                     @* Client-side: typing never round-trips to the server; Send takes the text. *@
-                    <textarea rows="1" placeholder="@(uploading ? "Sending image…" : view == "terminal" ? "Type into the terminal" : "Type a message")" @ref="textarea" aria-label="Message"></textarea>
+                    @if (attachments.Count > 0)
+                    {
+                        <div class="attachments">
+                            @foreach (var a in attachments)
+                            {
+                                <span class="attachment" title="@a.Path">@a.Name<button type="button" aria-label="@("Remove " + a.Name)" @onclick="() => attachments.Remove(a)">×</button></span>
+                            }
+                        </div>
+                    }
+                    <textarea rows="1" placeholder="@(uploading ? "Uploading image…" : attachments.Count > 0 ? "Add a message, or send the image" : view == "terminal" ? "Type into the terminal" : "Type a message")" @ref="textarea" aria-label="Message" data-attached="@(attachments.Count > 0 ? "1" : "0")"></textarea>
                     <div class="composer-row">
                         <label for="@("up-" + termId)" class="icon attach" title="Attach an image (paste and drop work too; files expire after @RetentionLabel)">@((MarkupString)Icons.Plus)</label>
                         <label for="@("cam-" + termId)" class="icon attach cam" title="Take a photo">@((MarkupString)Icons.Camera)</label>
@@ -127,6 +136,8 @@
     private List<Asset> offers = new();
     private string? uploadStatus;
     private bool uploadOk, uploading;
+    /// <summary>Images already on the machine, waiting for Send.</summary>
+    private readonly List<(string Name, string Path)> attachments = new();
     private readonly string termId = Guid.NewGuid().ToString("N");
     private string PaneKey => MachineId + "/" + PaneId;
 
@@ -286,6 +297,13 @@
         // Checked here, on the server, not just by hiding the form (STATUS S-06).
         if (machine is null || !Access.CanType(user, MachineId)) return;
         var text = (await JS.InvokeAsync<string>("klarkChat.take", textarea)).TrimEnd();
+        if (attachments.Count > 0)
+        {
+            // Same shape klark used when an image prompted the agent itself.
+            var lines = attachments.Select(a => $"[image from hub] {a.Path}");
+            text = string.Join(" ", text.Length > 0 ? lines.Append(text) : lines);
+            attachments.Clear();
+        }
         if (text.Length == 0) return;
         await machine.SendInputAsync(PaneId, text);
         await machine.SendKeysAsync(PaneId, "enter");
@@ -307,7 +325,7 @@
     {
         if (uploading) return;
         uploading = true;
-        uploadStatus = $"Sending {e.File.Name}…";
+        uploadStatus = $"Uploading {e.File.Name}…";
         uploadOk = true;
         StateHasChanged();
         try
@@ -325,11 +343,11 @@
                 return;
             }
             buffer.Position = 0;
-            var caption = (await JS.InvokeAsync<string>("klarkChat.peek", textarea)).Trim();
-            var r = await AssetSvc.SendToAgentAsync(user, MachineId, PaneId, buffer, e.File.Name, caption, CancellationToken.None);
+            // Upload only: the file lands on the machine, and goes to the agent with the next Send.
+            var r = await AssetSvc.SendToAgentAsync(user, MachineId, PaneId, buffer, e.File.Name, "", CancellationToken.None, prompt: false);
             uploadOk = r.Status == 200;
-            if (uploadOk && caption.Length > 0) await JS.InvokeAsync<string>("klarkChat.take", textarea);
-            uploadStatus = uploadOk ? $"Sent {r.Asset!.Name} → {r.Path}" : $"Not sent: {r.Error}";
+            if (uploadOk && !string.IsNullOrEmpty(r.Path)) attachments.Add((r.Asset!.Name, r.Path));
+            uploadStatus = uploadOk ? null : $"Not uploaded: {r.Error}";
         }
         finally
         {

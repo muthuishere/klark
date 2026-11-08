@@ -37,7 +37,7 @@ When the check passes, the `klark` binary in `PATH` talks to the current session
 | see recent messages | `klark msg log` (`-n 50`, `--json`) |
 | share this pane ("share this", "give me a link") | `klark expose url` |
 | put this machine on a hub | `klark hub connect --url http://host:7470` (owner approves in the browser; owner only; keeps running in the background, `--foreground` to stay in the terminal) |
-| take this machine off the hub | `klark hub stop` (or `klark hub stop <name>`) |
+| take this machine off the hub | `klark hub stop` (one hub at a time: the last one connected is the default) |
 | expose only some agents | `klark expose … --agents reviewer,builder` (or `KLARK_EXPOSE_AGENTS`) |
 | send a file to the person / their phone | `klark offer <path>` |
 | give me a link to a file / files | `klark link <file>...` (prints a hub viewer link per file) |
