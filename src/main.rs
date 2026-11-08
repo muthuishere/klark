@@ -626,6 +626,10 @@ fn main() -> io::Result<()> {
         offer_cmd::run(&args[2..]);
     }
 
+    if args.get(1).map(|s| s.as_str()) == Some("link") {
+        offer_cmd::run_link(&args[2..]);
+    }
+
     // Hidden: answers the hub's get_transcript for `klark expose` (ADR 0011).
     if args.get(1).map(|s| s.as_str()) == Some("transcript") {
         transcript_cmd::run(&args[2..]);
@@ -827,6 +831,7 @@ fn main() -> io::Result<()> {
                 "expose",
                 "hub",
                 "offer",
+                "link",
                 "status",
                 "config",
                 "channel",

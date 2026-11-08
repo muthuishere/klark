@@ -255,3 +255,81 @@ mod tests {
         );
     }
 }
+
+const LINK_USAGE: &str = "usage: klark link <file>... [--pane <pane-id>]
+  Print a klarkhub viewer link for each file: opening it shows the file (code, markdown,
+  images, PDF) with a download button. Nothing is uploaded; the hub fetches the file from
+  this machine when the link is opened (10 MB limit, credential files refused).";
+
+/// The hub page that views `path` on `machine`, fetched through `pane`.
+pub fn view_url(base: &str, machine: &str, pane: &str, path: &str) -> String {
+    format!("{base}/m/{}/f?pane={}&path={}", pct(machine), pct(pane), pct(path))
+}
+
+/// `klark link <file>...`
+pub fn run_link(args: &[String]) -> ! {
+    let mut pane = std::env::var("KLARK_PANE_ID").ok().filter(|s| !s.is_empty());
+    let mut files = Vec::new();
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "-h" | "--help" => {
+                println!("{LINK_USAGE}");
+                std::process::exit(0);
+            }
+            "--pane" => pane = it.next().cloned(),
+            _ => files.push(a.clone()),
+        }
+    }
+    if files.is_empty() {
+        eprintln!("{LINK_USAGE}");
+        std::process::exit(2);
+    }
+    let Some(pane) = pane else {
+        eprintln!("klark link: no pane: run this inside a klark pane or pass --pane <pane-id>");
+        std::process::exit(1);
+    };
+    let Some(hub) = crate::hub_cmd::default_hub() else {
+        eprintln!("klark link: no hub: run `klark hub connect --url http://<hub>:8080` first");
+        std::process::exit(1);
+    };
+    let base = match klark_link::http::hub_http_base(&hub.url) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("klark link: {e}");
+            std::process::exit(1);
+        }
+    };
+    let machine = if hub.machine.is_empty() { crate::hub_cmd::machine_name() } else { hub.machine };
+    let mut failed = false;
+    for f in &files {
+        let abs = match std::fs::canonicalize(f) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("klark link: {f}: {e}");
+                failed = true;
+                continue;
+            }
+        };
+        let size = std::fs::metadata(&abs).map(|m| m.len()).unwrap_or(0);
+        if let Some(r) = refusal(&abs, size, false) {
+            eprintln!("klark link: {r}");
+            failed = true;
+            continue;
+        }
+        let path = abs.display().to_string();
+        println!("{path}\n  {}", view_url(&base, &machine, &pane, &path));
+    }
+    std::process::exit(i32::from(failed));
+}
+
+#[cfg(test)]
+mod link_tests {
+    #[test]
+    fn view_url_encodes_every_part() {
+        assert_eq!(
+            super::view_url("http://hub:8080", "my box", "w1:p2", "/a b/c.mp3"),
+            "http://hub:8080/m/my%20box/f?pane=w1%3Ap2&path=%2Fa%20b%2Fc.mp3"
+        );
+    }
+}

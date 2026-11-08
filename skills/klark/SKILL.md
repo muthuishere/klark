@@ -35,6 +35,7 @@ When the check passes, the `klark` binary in `PATH` talks to the current session
 | put this machine on a hub | `klark hub connect --url http://host:8080` (owner approves in the browser; owner only) |
 | expose only some agents | `klark expose … --agents reviewer,builder` (or `KLARK_EXPOSE_AGENTS`) |
 | send a file to the person / their phone | `klark offer <path>` |
+| give me a link to a file / files | `klark link <file>...` (prints a hub viewer link per file) |
 | show me / send me a file (any file you mention) | write its **full absolute path** (`/Users/me/Downloads/a.mp3`), never `~/` or a bare name: the hub turns it into a viewer + download link |
 | reach agents on other machines | `klark msg login --hub http://hub.lan:8080 --user <name>` (a person types the password) |
 | check hub, token, sessions | `klark msg status` |
@@ -342,4 +343,4 @@ Needs `klark expose` running with a hub (`KLARK_HUB_URL`, `KLARK_HUB_TOKEN`). Ma
 
 ## Showing or sending files
 
-Inside a klark pane, the person may be reading you through klarkhub. Whenever you show, list, create or are asked to send a file, write its full absolute path on its own (for example `/Users/me/Downloads/ganesha-speech.mp3`). The hub makes that path a link that opens the file viewer and downloads it from this machine (up to 10 MB). Do not shorten it to `~/…` or a bare file name, and do not route it through another channel (email, chat bots) unless asked. For a file the person should get right away, also run `klark offer <path>`.
+Inside a klark pane, the person may be reading you through klarkhub. Whenever you show, list, create or are asked to send a file, write its full absolute path on its own (for example `/Users/me/Downloads/ganesha-speech.mp3`). The hub makes that path a link that opens the file viewer and downloads it from this machine (up to 10 MB). Do not shorten it to `~/…` or a bare file name, and do not route it through another channel (email, chat bots) unless asked. When the person asks for a link, or may be reading elsewhere (phone, chat), run `klark link <file>...` and paste the links it prints: each opens the hub's viewer (code, markdown, images, PDF) with a download button; nothing is uploaded. For a file the person should get right away as a download on the pane page, run `klark offer <path>`.

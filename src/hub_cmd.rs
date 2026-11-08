@@ -329,7 +329,7 @@ fn token_rejected(base: &str, token: &str) -> bool {
     )
 }
 
-fn machine_name() -> String {
+pub(crate) fn machine_name() -> String {
     std::env::var("KLARK_MACHINE_NAME")
         .ok()
         .filter(|s| !s.trim().is_empty())

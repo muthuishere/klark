@@ -124,6 +124,7 @@ const COMMAND_WORDS: &[&str] = &[
     "expose",
     "hub",
     "offer",
+    "link",
     "status",
     "config",
     "channel",
