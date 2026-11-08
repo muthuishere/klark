@@ -324,6 +324,21 @@ pub(super) fn apply_client_terminal_input_events(
                 }
 
                 runtime.scroll_reset();
+                if key_event.kind != KeyEventKind::Release {
+                    let plain = key_event
+                        .modifiers
+                        .difference(crossterm::event::KeyModifiers::SHIFT)
+                        .is_empty();
+                    let ch = match key_event.code {
+                        KeyCode::Char(c) if plain => Some(c),
+                        _ => None,
+                    };
+                    runtime.input_draft().note_key(
+                        key_event.code == KeyCode::Enter,
+                        key_event.code == KeyCode::Backspace,
+                        ch,
+                    );
+                }
                 let bytes = runtime.encode_terminal_key(key);
                 if !bytes.is_empty() {
                     runtime
@@ -334,6 +349,7 @@ pub(super) fn apply_client_terminal_input_events(
             }
             crate::raw_input::RawInputEvent::Text(text) => {
                 runtime.scroll_reset();
+                runtime.input_draft().note_text(text.as_str());
                 runtime
                     .try_send_bytes(Bytes::copy_from_slice(text.as_str().as_bytes()))
                     .map_err(|err| format!("targeted pane text input failed: {err}"))?;
@@ -341,6 +357,7 @@ pub(super) fn apply_client_terminal_input_events(
             }
             crate::raw_input::RawInputEvent::Paste(text) => {
                 runtime.scroll_reset();
+                runtime.input_draft().note_text(&text);
                 runtime
                     .try_send_paste(text)
                     .map_err(|err| format!("targeted pane paste failed: {err}"))?;

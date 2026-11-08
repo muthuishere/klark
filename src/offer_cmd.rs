@@ -263,12 +263,19 @@ const LINK_USAGE: &str = "usage: klark link <file>... [--pane <pane-id>]
 
 /// The hub page that views `path` on `machine`, fetched through `pane`.
 pub fn view_url(base: &str, machine: &str, pane: &str, path: &str) -> String {
-    format!("{base}/m/{}/f?pane={}&path={}", pct(machine), pct(pane), pct(path))
+    format!(
+        "{base}/m/{}/f?pane={}&path={}",
+        pct(machine),
+        pct(pane),
+        pct(path)
+    )
 }
 
 /// `klark link <file>...`
 pub fn run_link(args: &[String]) -> ! {
-    let mut pane = std::env::var("KLARK_PANE_ID").ok().filter(|s| !s.is_empty());
+    let mut pane = std::env::var("KLARK_PANE_ID")
+        .ok()
+        .filter(|s| !s.is_empty());
     let mut files = Vec::new();
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -300,7 +307,11 @@ pub fn run_link(args: &[String]) -> ! {
             std::process::exit(1);
         }
     };
-    let machine = if hub.machine.is_empty() { crate::hub_cmd::machine_name() } else { hub.machine };
+    let machine = if hub.machine.is_empty() {
+        crate::hub_cmd::machine_name()
+    } else {
+        hub.machine
+    };
     let mut failed = false;
     for f in &files {
         let abs = match std::fs::canonicalize(f) {

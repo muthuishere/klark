@@ -103,6 +103,10 @@ pub enum ResponseResult {
     },
     AgentPrompted {
         agent: AgentInfo,
+        /// What the person had typed (and not sent) when the prompt arrived. It
+        /// was erased before the prompt was typed; the caller types it back.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        draft: Option<String>,
     },
     AgentList {
         agents: Vec<AgentInfo>,

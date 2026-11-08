@@ -2270,6 +2270,9 @@ mod devin_question_tests {
     #[test]
     fn devin_question_picker_is_blocked() {
         let screen = "● Ran command\n  $ ls -lh ~/Downloads/*.mp3\n  └ Exited with code 0\n── File · Destination ──\n Which MP3 should I send?\n ❯ 1 ganesha-speech.mp3\n     1.5 MB, Aug 12\n · 2 kathir_clean.mp3\n     2.5 MB, Jul 26\n ·   Other (type your own)\n\n↑↓ navigate · ⏎select · e select+type · ↔ switch question · ? help me out · esc cancel\n";
-        assert_eq!(detect_state(Some(Agent::Devin), screen), AgentState::Blocked);
+        assert_eq!(
+            detect_state(Some(Agent::Devin), screen),
+            AgentState::Blocked
+        );
     }
 }

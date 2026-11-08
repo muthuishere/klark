@@ -27,6 +27,7 @@ commands:
   ls [--local] [--json]                  agents in every running session, worktrees included (+ the hub's, unless --local)
   send [--from <addr>] [--json] <to> <text...>
                                          deliver a message as a prompt to another agent
+  send --wait <secs> <to> <text...>      wait until the agent is idle (not working, not on a dialog), then send
   send --all [--json] <text...>          every other agent in this session (worktrees included)
   send --all-sessions [--json] <text...> every other agent in every running session on this machine
   reply <text...>                        answer the last agent that messaged this pane
@@ -597,7 +598,12 @@ fn text_of(words: &[String]) -> R<String> {
 }
 
 fn cmd_send(args: &[String]) -> R<()> {
-    let a = Args::parse(args, &["--from"], &["--json", "--all", "--all-sessions"])?;
+    let a = Args::parse(
+        args,
+        &["--from", "--wait"],
+        &["--json", "--all", "--all-sessions"],
+    )?;
+    let wait = wait_secs(&a)?;
     if a.has("--all") || a.has("--all-sessions") {
         return broadcast(&a, a.has("--all-sessions"));
     }
@@ -607,6 +613,9 @@ fn cmd_send(args: &[String]) -> R<()> {
         .ok_or_else(|| Fail::Usage("send needs <to> <text...>".into()))?;
     let text = text_of(words)?;
     let from = a.value("--from").unwrap_or_else(|| whoami().address);
+    if let Some(secs) = wait {
+        wait_until_idle(to, secs)?;
+    }
     let (to_addr, outcome) = send(to, &from, &text);
     let json = a.has("--json");
     match outcome {
@@ -633,6 +642,50 @@ fn cmd_send(args: &[String]) -> R<()> {
     }
 }
 
+/// `--wait <secs>` (default 600 when given without a number is not supported:
+/// the value is required).
+fn wait_secs(a: &Args) -> R<Option<u64>> {
+    a.value("--wait")
+        .map(|v| {
+            v.parse::<u64>()
+                .map_err(|_| Fail::Usage(format!("--wait {v}: seconds expected")))
+        })
+        .transpose()
+}
+
+/// Hold a local message until its target agent is idle (not working, not
+/// blocked on a dialog), so it neither interrupts a turn nor answers a
+/// question by accident. Remote targets are not waited on.
+fn wait_until_idle(to: &str, secs: u64) -> R<()> {
+    let machine = my_machine();
+    let Ok(addr) = parse_address(to) else {
+        return Ok(());
+    };
+    if addr.machine.as_deref().is_some_and(|m| m != machine) {
+        return Ok(());
+    }
+    let deadline = std::time::Instant::now() + Duration::from_secs(secs);
+    loop {
+        let local = local_agents(&machine);
+        let status = match resolve(&addr, &local, &machine) {
+            Ok(Route::Local { session, agent }) => local
+                .iter()
+                .find(|l| l.session == session && l.pane_id == agent)
+                .map(|l| l.status.clone()),
+            _ => return Ok(()), // let send report the real error
+        };
+        match status.as_deref() {
+            Some("idle") | Some("done") | None => return Ok(()),
+            Some(s) if std::time::Instant::now() >= deadline => {
+                return Err(Fail::Error(format!(
+                    "{to} is still {s} after {secs}s; not sent"
+                )))
+            }
+            _ => std::thread::sleep(Duration::from_millis(500)),
+        }
+    }
+}
+
 /// `send --all` / `send --all-sessions`: the same message to every other
 /// agent in this session (or every running session), worktrees included.
 fn broadcast(a: &Args, every_session: bool) -> R<()> {
@@ -652,11 +705,26 @@ fn broadcast(a: &Args, every_session: bool) -> R<()> {
         }));
     }
     let mut failed = 0;
+    let wait = wait_secs(a)?;
     for t in &targets {
+        if let Some(secs) = wait {
+            if let Err(e) = wait_until_idle(&format!("{}/{}", t.session, t.pane_id), secs) {
+                println!("skipped {}: {e:?}", t.address);
+                failed += 1;
+                continue;
+            }
+        }
         let (to, outcome) = send(&format!("{}/{}", t.session, t.pane_id), &from, &text);
-        let to = if outcome.is_ok() { t.address.clone() } else { to };
+        let to = if outcome.is_ok() {
+            t.address.clone()
+        } else {
+            to
+        };
         if a.has("--json") {
-            println!("{}", json!({"delivered": outcome.is_ok(), "to": to, "from": from, "error": outcome.as_ref().err()}));
+            println!(
+                "{}",
+                json!({"delivered": outcome.is_ok(), "to": to, "from": from, "error": outcome.as_ref().err()})
+            );
         } else {
             match &outcome {
                 Ok(()) => println!("delivered to {to}"),
@@ -666,7 +734,10 @@ fn broadcast(a: &Args, every_session: bool) -> R<()> {
         failed += usize::from(outcome.is_err());
     }
     if failed > 0 {
-        return Err(Fail::Error(format!("{failed} of {} not delivered", targets.len())));
+        return Err(Fail::Error(format!(
+            "{failed} of {} not delivered",
+            targets.len()
+        )));
     }
     Ok(())
 }
@@ -765,11 +836,25 @@ pub fn hub_error(to: &str, raw: &str) -> String {
 /// logs the receipt.
 fn deliver(session: &str, agent: &str, from: &str, text: &str) -> Result<String, String> {
     let socket = session_socket(session);
-    let result = call(
-        &socket,
-        "agent.prompt",
-        json!({"target": agent, "text": format_prompt(from, text)}),
-    )
+    // Someone mid-edit in that agent's input: wait (up to a minute) rather
+    // than mix this message into their half-written text.
+    let typing_deadline = std::time::Instant::now() + Duration::from_secs(60);
+    let result = loop {
+        let r = call(
+            &socket,
+            "agent.prompt",
+            json!({"target": agent, "text": format_prompt(from, text)}),
+        );
+        match &r {
+            Err(e)
+                if e.contains("agent_user_typing")
+                    && std::time::Instant::now() < typing_deadline =>
+            {
+                std::thread::sleep(Duration::from_secs(1));
+            }
+            _ => break r,
+        }
+    }
     .map_err(|e| {
         if e.starts_with("connect ") {
             format!("session {session}: {e} ({SOCKET_TIMEOUT_NOTE})")
@@ -784,6 +869,21 @@ fn deliver(session: &str, agent: &str, from: &str, text: &str) -> Result<String,
             .map(str::to_string)
     });
     let pane = pane.unwrap_or_else(|| agent.to_string());
+    if let Ok(r) = &result {
+        confirm_submitted(&socket, &pane);
+        // The person's unsent draft was lifted out for this message: put it back, unsent.
+        if let Some(draft) = r
+            .get("draft")
+            .and_then(Value::as_str)
+            .filter(|d| !d.is_empty())
+        {
+            let _ = call(
+                &socket,
+                "pane.send_text",
+                json!({"pane_id": pane, "text": draft}),
+            );
+        }
+    }
     let to = received_address(&my_machine(), session, agent, result.as_ref().ok());
     if result.is_ok() {
         if let Err(e) = record_sender(&data_dir(), session, &pane, from) {
@@ -793,6 +893,36 @@ fn deliver(session: &str, agent: &str, from: &str, text: &str) -> Result<String,
     let err = result.as_ref().err().cloned();
     log("received", from, &to, text, err.as_deref());
     result.map(|_| pane)
+}
+
+/// A prompt counts as sent once the agent starts working. Some agents swallow
+/// the Enter that follows a long paste and leave the text sitting in the input
+/// (herdr #4990), so if the agent is still idle after a few seconds, press
+/// Enter once more. Never when it is blocked: Enter would answer a dialog.
+fn confirm_submitted(socket: &Path, pane: &str) {
+    let status = || {
+        call(socket, "agent.list", json!({})).ok().and_then(|r| {
+            r.get("agents")?.as_array()?.iter().find_map(|a| {
+                (a.get("pane_id")?.as_str()? == pane)
+                    .then(|| a.get("agent_status")?.as_str().map(str::to_string))
+                    .flatten()
+            })
+        })
+    };
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while std::time::Instant::now() < deadline {
+        match status().as_deref() {
+            Some("idle") | Some("done") => std::thread::sleep(Duration::from_millis(250)),
+            _ => return, // working, blocked or gone: the prompt was taken (or is not ours to push)
+        }
+    }
+    if matches!(status().as_deref(), Some("idle") | Some("done")) {
+        let _ = call(
+            socket,
+            "pane.send_keys",
+            json!({"pane_id": pane, "keys": ["Enter"]}),
+        );
+    }
 }
 
 /// The receiver's full address for the log: `machine/session/name`, or the

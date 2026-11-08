@@ -334,7 +334,7 @@ fn agent_prompt_success(
 ) -> std::io::Result<String> {
     serde_json::to_string(&SuccessResponse {
         id: request_id,
-        result: ResponseResult::AgentPrompted { agent },
+        result: ResponseResult::AgentPrompted { agent, draft: None },
     })
     .map_err(std::io::Error::other)
 }

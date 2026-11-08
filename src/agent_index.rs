@@ -336,9 +336,16 @@ mod worktree_tests {
         let wt = base.join("repo-feature");
         std::fs::create_dir_all(main.join(".git")).unwrap();
         std::fs::create_dir_all(wt.join("src")).unwrap();
-        std::fs::write(wt.join(".git"), "gitdir: ../repo/.git/worktrees/repo-feature\n").unwrap();
+        std::fs::write(
+            wt.join(".git"),
+            "gitdir: ../repo/.git/worktrees/repo-feature\n",
+        )
+        .unwrap();
         assert_eq!(super::linked_worktree(&main), None);
-        assert_eq!(super::linked_worktree(&wt.join("src")).as_deref(), Some("repo-feature"));
+        assert_eq!(
+            super::linked_worktree(&wt.join("src")).as_deref(),
+            Some("repo-feature")
+        );
         let _ = std::fs::remove_dir_all(&base);
     }
 }

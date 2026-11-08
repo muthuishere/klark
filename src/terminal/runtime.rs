@@ -478,6 +478,10 @@ impl TerminalRuntime {
         self.0.try_send_bytes(bytes)
     }
 
+    pub fn input_draft(&self) -> std::sync::MutexGuard<'_, crate::pane::InputDraft> {
+        self.0.input_draft()
+    }
+
     pub(crate) fn validate_input_submission(&self, bytes: &[u8]) -> std::io::Result<()> {
         self.0.validate_input_submission(bytes)
     }

@@ -9481,6 +9481,13 @@
                 "agent": {
                   "$ref": "#/schemas/success_response/$defs/AgentInfo"
                 },
+                "draft": {
+                  "description": "What the person had typed (and not sent) when the prompt arrived. It\nwas erased before the prompt was typed; the caller types it back.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "type": {
                   "const": "agent_prompted",
                   "type": "string"

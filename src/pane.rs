@@ -1497,7 +1497,55 @@ async fn run_terminal_compression_task(
 /// PTY runtime for a pane. Owns the terminal, I/O channels, and background tasks.
 /// Dropping this aborts async tasks and closes the PTY. An already-running bounded
 /// compression step may finish before releasing its terminal reference.
+/// What the person has typed into the pane since their last Enter, as far as
+/// klark can tell, so an incoming agent prompt can lift the draft out of the
+/// way, submit itself, and put the draft back (herdr #4001).
+#[derive(Debug, Clone, Default)]
+pub struct InputDraft {
+    /// The typed text, when every key since the last Enter was plain text or Backspace.
+    pub text: String,
+    /// False once a key klark can't follow (arrows, history, Ctrl chords) was pressed.
+    pub unknown: bool,
+    /// When the person last typed into this pane.
+    pub last_input: Option<std::time::Instant>,
+}
+
+impl InputDraft {
+    pub fn note_text(&mut self, text: &str) {
+        self.last_input = Some(std::time::Instant::now());
+        for c in text.chars() {
+            match c {
+                '\r' | '\n' => {
+                    self.text.clear();
+                    self.unknown = false;
+                }
+                '\u{7f}' | '\u{8}' => {
+                    self.text.pop();
+                }
+                c if c.is_control() => self.unknown = true,
+                c => self.text.push(c),
+            }
+        }
+    }
+
+    /// A key that is not plain text: Enter starts over, Backspace edits, the rest are unknowable.
+    pub fn note_key(&mut self, enter: bool, backspace: bool, plain_char: Option<char>) {
+        self.last_input = Some(std::time::Instant::now());
+        if enter {
+            self.text.clear();
+            self.unknown = false;
+        } else if backspace {
+            self.text.pop();
+        } else if let Some(c) = plain_char {
+            self.text.push(c);
+        } else {
+            self.unknown = true;
+        }
+    }
+}
+
 pub struct PaneRuntime {
+    input_draft: Arc<Mutex<InputDraft>>,
     pane_id: PaneId,
     terminal: Arc<PaneTerminal>,
     io: PaneRuntimeIo,
@@ -2659,6 +2707,7 @@ impl PaneRuntime {
         );
 
         Ok(Self {
+            input_draft: Arc::default(),
             pane_id,
             terminal,
             io,
@@ -3272,6 +3321,7 @@ impl PaneRuntime {
         };
 
         Ok(Self {
+            input_draft: Arc::default(),
             pane_id,
             terminal,
             io,
@@ -3672,6 +3722,10 @@ impl PaneRuntime {
 
     pub fn try_send_bytes(&self, bytes: Bytes) -> Result<(), mpsc::error::TrySendError<Bytes>> {
         self.io.try_send_bytes(bytes)
+    }
+
+    pub fn input_draft(&self) -> std::sync::MutexGuard<'_, InputDraft> {
+        self.input_draft.lock().unwrap_or_else(|p| p.into_inner())
     }
 
     /// Preflight a complete API command without changing input queue semantics.
@@ -4081,6 +4135,7 @@ impl PaneRuntime {
                 detection_content_seq: Arc::new(AtomicU64::new(0)),
                 full_lifecycle_authority_active: Arc::new(AtomicBool::new(false)),
                 self_reported_agent_active: Arc::new(AtomicBool::new(false)),
+                input_draft: Arc::default(),
                 detect_reset_notify: Arc::new(Notify::new()),
                 pending_release: Arc::new(Mutex::new(None)),
                 preserve_processes_on_drop: true,
@@ -5416,6 +5471,7 @@ mod tests {
         let compression = TerminalCompressionTask::spawn(pane_id, terminal.clone());
         let runtime = PaneRuntime {
             self_reported_agent_active: Arc::new(AtomicBool::new(false)),
+            input_draft: Arc::default(),
             cwd_process_exited: Arc::new(AtomicBool::new(false)),
             persistence_cwd: Mutex::new(None),
             pane_id,
@@ -5456,6 +5512,7 @@ mod tests {
         let compression = TerminalCompressionTask::spawn(pane_id, terminal.clone());
         let runtime = PaneRuntime {
             self_reported_agent_active: Arc::new(AtomicBool::new(false)),
+            input_draft: Arc::default(),
             cwd_process_exited: Arc::new(AtomicBool::new(false)),
             persistence_cwd: Mutex::new(None),
             pane_id,
@@ -6840,5 +6897,33 @@ mod tests {
             rx.recv().await,
             Some(AppEvent::CodexPromptObserved { ready: true, .. })
         ));
+    }
+}
+
+#[cfg(test)]
+mod input_draft_tests {
+    use super::InputDraft;
+
+    #[test]
+    fn plain_typing_and_backspace_are_followed() {
+        let mut d = InputDraft::default();
+        d.note_text("hello wor");
+        d.note_key(false, true, None);
+        d.note_key(false, false, Some('L'));
+        assert_eq!(d.text, "hello woL");
+        assert!(!d.unknown);
+    }
+
+    #[test]
+    fn enter_starts_over_and_arrows_make_it_unknown() {
+        let mut d = InputDraft::default();
+        d.note_text("first\r");
+        assert_eq!(d.text, "");
+        d.note_text("abc");
+        d.note_key(false, false, None); // an arrow key
+        assert!(d.unknown);
+        d.note_key(true, false, None); // Enter
+        assert!(!d.unknown);
+        assert_eq!(d.text, "");
     }
 }

@@ -12,6 +12,18 @@ use super::responses::{encode_error, encode_error_body, encode_success};
 
 const AGENT_PROMPT_SUBMIT_DELAY: Duration = Duration::from_millis(300);
 
+/// A pane counts as being typed in for this long after its last key.
+const USER_TYPING_WINDOW: Duration = Duration::from_secs(5);
+
+/// How long to wait between the text and Enter. A long paste takes agents
+/// longer to take in (Devin renders it as "[Pasted text]"), and an Enter that
+/// lands while the paste is still being read is swallowed, so the prompt sits
+/// unsent. 300 ms, plus 1 ms per 16 bytes, at most 1.5 s.
+fn submit_delay(text_len: usize) -> Duration {
+    let extra = (text_len / 16).min(1200) as u64;
+    AGENT_PROMPT_SUBMIT_DELAY + Duration::from_millis(extra)
+}
+
 // Codex's Windows input reader does not surface bracketed paste. It detects the prompt as a
 // "paste burst" and, while that burst is buffered, rewrites a following Enter into a newline
 // instead of submitting. The burst only flushes after an idle timeout, so any size-based delay is
@@ -100,14 +112,15 @@ impl App {
             String,
             crate::api::schema::AgentInfo,
             std::sync::mpsc::Receiver<std::io::Result<()>>,
+            Option<String>,
         )>();
         let waiter_respond_to = respond_to.clone();
         let spawned = crate::thread_spawn::spawn_named("klark-agent-prompt", move || {
-            let Ok((id, agent, completion)) = handoff_rx.recv() else {
+            let Ok((id, agent, completion, draft)) = handoff_rx.recv() else {
                 return;
             };
             let response = match completion.recv() {
-                Ok(Ok(())) => encode_success(id, ResponseResult::AgentPrompted { agent }),
+                Ok(Ok(())) => encode_success(id, ResponseResult::AgentPrompted { agent, draft }),
                 Ok(Err(err)) if err.kind() == std::io::ErrorKind::TimedOut => {
                     encode_error(id, "timeout", err.to_string())
                 }
@@ -215,6 +228,7 @@ impl App {
             String,
             crate::api::schema::AgentInfo,
             std::sync::mpsc::Receiver<std::io::Result<()>>,
+            Option<String>,
         ),
         String,
     > {
@@ -247,8 +261,40 @@ impl App {
                 return Err(encode_error(id, "agent_prompt_failed", err.to_string()));
             }
         }
+        // Someone may be typing in this pane. Lift their unsent draft out of the
+        // way with Backspaces, so Enter submits only this prompt; the caller gets
+        // the draft back to retype. Mid-edit (arrows, history) within the last
+        // few seconds, the draft can't be known: refuse instead of mixing texts.
+        let draft = {
+            let mut d = runtime.input_draft();
+            let recent = d
+                .last_input
+                .is_some_and(|t| t.elapsed() < USER_TYPING_WINDOW);
+            if d.unknown && recent {
+                return Err(encode_error(
+                    id,
+                    "agent_user_typing",
+                    "someone is editing this agent's input; try again shortly",
+                ));
+            }
+            let taken = (!d.unknown && !d.text.is_empty()).then(|| std::mem::take(&mut d.text));
+            if d.unknown {
+                // Stale and unknowable: assume it was cleared, start tracking afresh.
+                d.unknown = false;
+                d.text.clear();
+            }
+            taken
+        };
         let (text, enter) =
             crate::app::api_helpers::encode_api_submission_parts(runtime, &params.text);
+        let text = match &draft {
+            Some(d) => {
+                let mut erase = vec![0x7f_u8; d.chars().count()];
+                erase.extend_from_slice(&text);
+                erase
+            }
+            None => text,
+        };
         #[cfg(windows)]
         let text = if expected_agent == crate::detect::Agent::Codex {
             let mut text = text;
@@ -261,11 +307,11 @@ impl App {
             .queue_user_input_submission(
                 Bytes::from(text),
                 Bytes::from(enter),
-                AGENT_PROMPT_SUBMIT_DELAY,
+                submit_delay(params.text.len()),
                 submit_deadline,
             )
             .map_err(|err| encode_error(id.clone(), "agent_prompt_failed", err.to_string()))?;
-        Ok((id, agent, completion))
+        Ok((id, agent, completion, draft))
     }
 
     pub(super) fn handle_agent_read(
@@ -592,6 +638,19 @@ mod tests {
         assert!(
             serde_json::from_str::<SuccessResponse>(&after).is_ok(),
             "a live agent must stay reachable by its assigned name: {after}"
+        );
+    }
+
+    #[test]
+    fn submit_delay_grows_with_text_and_is_capped() {
+        assert_eq!(super::submit_delay(10), AGENT_PROMPT_SUBMIT_DELAY);
+        assert_eq!(
+            super::submit_delay(1600),
+            AGENT_PROMPT_SUBMIT_DELAY + Duration::from_millis(100)
+        );
+        assert_eq!(
+            super::submit_delay(10_000_000),
+            AGENT_PROMPT_SUBMIT_DELAY + Duration::from_millis(1200)
         );
     }
 

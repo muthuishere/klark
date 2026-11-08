@@ -29,7 +29,8 @@ When the check passes, the `klark` binary in `PATH` talks to the current session
 | know my own address | `klark msg whoami` → `laptop/work/reviewer` |
 | name myself | `klark msg name reviewer` |
 | message another agent (any session or machine) | `klark msg send work/coder "<text>"` |
-| message every agent in this session (worktrees included) | `klark msg send --all "<text>"` |
+| message an agent only once it is idle (not mid-turn, not on a dialog) | `klark msg send --wait 300 work/coder "<text>"` |
+| message every agent in this session (worktrees included) | `klark msg send --all "<text>"` (add `--wait <secs>` to skip busy ones until idle) |
 | message every agent in every session on this machine | `klark msg send --all-sessions "<text>"` |
 | list every agent, with its worktree | `klark msg ls --local` (`--json`; drop `--local` to include the hub's machines) |
 | answer a message I got | `klark msg reply "<text>"` |
@@ -347,3 +348,11 @@ Needs `klark expose` running with a hub (`KLARK_HUB_URL`, `KLARK_HUB_TOKEN`). Ma
 ## Showing or sending files
 
 Inside a klark pane, the person may be reading you through klarkhub. Whenever you show, list, create or are asked to send a file, write its full absolute path on its own (for example `/Users/me/Downloads/ganesha-speech.mp3`). The hub makes that path a link that opens the file viewer and downloads it from this machine (up to 10 MB). Do not shorten it to `~/…` or a bare file name, and do not route it through another channel (email, chat bots) unless asked. When the person asks for a link, or may be reading elsewhere (phone, chat), run `klark link <file>...` and paste the links it prints: each opens the hub's viewer (code, markdown, images, PDF) with a download button; nothing is uploaded. For a file the person should get right away as a download on the pane page, run `klark offer <path>`.
+
+## How a message is delivered
+
+`klark msg send` types the message into the target agent and presses Enter, and then:
+- If the person was typing in that agent's input, their unsent draft is lifted out first, the message goes in alone, and the draft is typed back without Enter. If they are mid-edit (arrow keys, history), delivery waits up to a minute for them to finish.
+- If the agent is still idle 2 s later (the Enter was swallowed after a long paste), Enter is pressed once more. Never when the agent is showing a dialog.
+- With `--wait <secs>` it waits until the agent is idle before sending, so it never lands mid-turn or answers a permission dialog by accident.
+
