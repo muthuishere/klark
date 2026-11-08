@@ -18,12 +18,14 @@ use serde_json::{json, Value};
 
 const USAGE: &str =
     "usage: klark hub connect [--url http://host[:port]] [--as <name>] [<name>] [--agents a,b]
-                         [--token <machine-token> | --token-stdin] [--no-browser]
+                         [--token <machine-token> | --token-stdin] [--no-browser] [--foreground]
+       klark hub stop [<name>]          (alias: disconnect)
        klark hub ls | use <name> | rm <name> | status [<name>]
        connect --url adds (or refreshes) a hub: approve this machine in the browser and the hub
        issues its token. With a <name>, connects to that saved hub; with nothing, the default.
        Saved in <config dir>/hubs.json (0600). --token / --token-stdin / KLARK_HUB_TOKEN skip the
-       browser (scripts).";
+       browser (scripts). The connection keeps running in the background (log: <config dir>/hub-<name>.log);
+       --foreground keeps it in this terminal. `stop` ends it.";
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -183,6 +185,8 @@ pub struct ConnectOptions {
     pub token_stdin: bool,
     pub no_browser: bool,
     pub agents: Vec<String>,
+    /// Stay attached to this terminal instead of running in the background.
+    pub foreground: bool,
 }
 
 pub fn parse_connect(args: &[String]) -> Result<ConnectOptions, String> {
@@ -192,6 +196,7 @@ pub fn parse_connect(args: &[String]) -> Result<ConnectOptions, String> {
         match arg.as_str() {
             "--token-stdin" => o.token_stdin = true,
             "--no-browser" => o.no_browser = true,
+            "--foreground" | "-f" => o.foreground = true,
             "--url" | "--hub" | "--as" | "--token" | "--agents" | "--agent" => {
                 let v = it.next().cloned().ok_or(format!("{arg} needs a value"))?;
                 match arg.as_str() {
@@ -353,6 +358,7 @@ pub fn run(args: &[String]) -> ! {
     let result = match args.first().map(String::as_str) {
         Some("connect") => parse_connect(rest).map(connect),
         Some("ls") if rest.is_empty() => Ok(ls()),
+        Some("disconnect" | "stop") if rest.len() <= 1 => Ok(disconnect(rest.first().map(String::as_str))),
         Some("use") => {
             one_name(rest).map(|n| edit(|h| h.use_default(&n).map(|_| format!("default hub: {n}"))))
         }
@@ -466,9 +472,84 @@ fn connect(o: ConnectOptions) {
             path.display()
         );
     }
+    if !o.foreground {
+        background(&name, &o.agents);
+        return;
+    }
     match expose_args(&hub, &o.agents) {
         Ok(args) => crate::expose_cmd::run(&args),
         Err(e) => fail(e),
+    }
+}
+
+fn pid_path(name: &str) -> std::path::PathBuf {
+    Hubs::path().with_file_name(format!("hub-{name}.pid"))
+}
+
+/// Stop the background connection to `name`, if one is running. True when one was stopped.
+fn stop_background(name: &str) -> bool {
+    let path = pid_path(name);
+    let Some(pid) = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| s.trim().parse::<i32>().ok())
+    else {
+        return false;
+    };
+    let _ = std::fs::remove_file(&path);
+    // Only a klark process: the pid may have been reused since.
+    let ours = Command::new("ps")
+        .args(["-o", "command=", "-p", &pid.to_string()])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).contains("klark hub connect"))
+        .unwrap_or(false);
+    ours && Command::new("kill")
+        .arg(pid.to_string())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
+/// Run the connection detached from this terminal: closing the tab or Ctrl-C no longer
+/// drops the machine off the hub. The child reads the saved token, so none is on its argv.
+fn background(name: &str, agents: &[String]) {
+    stop_background(name);
+    let log_path = Hubs::path().with_file_name(format!("hub-{name}.log"));
+    let log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .unwrap_or_else(|e| fail(format!("{}: {e}", log_path.display())));
+    let exe = std::env::current_exe().unwrap_or_else(|e| fail(e.to_string()));
+    let mut cmd = Command::new(exe);
+    cmd.args(["hub", "connect", name, "--foreground", "--no-browser"]);
+    for a in agents {
+        cmd.args(["--agents", a]);
+    }
+    cmd.stdin(Stdio::null())
+        .stdout(log.try_clone().unwrap_or_else(|e| fail(e.to_string())))
+        .stderr(log);
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+    let child = cmd.spawn().unwrap_or_else(|e| fail(e.to_string()));
+    let _ = std::fs::write(pid_path(name), child.id().to_string());
+    eprintln!(
+        "klark hub: connected in the background (pid {}, log {}); stop with `klark hub stop {name}`",
+        child.id(),
+        log_path.display()
+    );
+}
+
+fn disconnect(name: Option<&str>) {
+    let hubs = Hubs::load();
+    let Some((name, _)) = hubs.get(name) else {
+        fail("no such hub (see `klark hub ls`)".to_string());
+    };
+    if stop_background(&name) {
+        println!("klark hub: disconnected from {name}");
+    } else {
+        println!("klark hub: no background connection to {name}");
     }
 }
 

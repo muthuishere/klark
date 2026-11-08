@@ -65,6 +65,7 @@ Prebuilt Linux binaries come with each tagged release.
    ```bash
    klark hub connect --url http://<host>:7470   # approve this machine in the browser
    klark hub connect                            # later: reconnect to the default hub
+   klark hub stop                               # take this machine off the hub
    klark hub ls | use <name> | rm <name> | status
    ```
 

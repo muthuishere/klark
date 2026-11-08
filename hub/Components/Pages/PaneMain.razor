@@ -74,7 +74,7 @@
             <div class="toast @(uploadOk ? "" : "bad")" @onclick="() => uploadStatus = null">@uploadStatus</div>
         }
 
-        @if (!offline && !readOnly)
+        @if (!offline && !readOnly && machine is not null)
         {
             <div class="composer-wrap">
                 <div class="composer">
@@ -96,7 +96,12 @@
                 </div>
             </div>
         }
-        else if (readOnly && !offline)
+        else if (offline || machine is null)
+        {
+            @* Nothing can reach the agent: say so instead of a box that silently drops the text. *@
+            <div class="composer-wrap"><div class="composer ro muted">Machine @(offline ? "offline" : "disconnected"): run <code>klark hub connect</code> on it to send messages</div></div>
+        }
+        else if (readOnly)
         {
             <div class="composer-wrap"><div class="composer ro muted">Read-only</div></div>
         }
