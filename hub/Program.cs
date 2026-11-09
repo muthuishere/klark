@@ -41,6 +41,7 @@ builder.Services.PostConfigure<HubOptions>(o =>
     if (string.IsNullOrWhiteSpace(o.Auth.Mode))
         o.Auth.Mode = string.IsNullOrWhiteSpace(builder.Configuration["Hub:Auth:Ldap:Host"]) ? "MockLdap" : "Ldap";
 });
+builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<HubOptions>>().Value.Brand);
 builder.Services.AddSingleton<HubAccounts>();
 builder.Services.AddSingleton<MachineConnect>();
 // Behind a Kubernetes ingress or other proxy: honour X-Forwarded-Proto/Host/For, but only when

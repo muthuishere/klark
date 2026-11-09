@@ -260,3 +260,13 @@ JSON messages `{"type": ...}`. Machines send them gzip-compressed in binary fram
 | machine → hub | hub → machine |
 |---|---|
 | `hello` (protocol 1, 2 or 3), `tree` / `tree_unchanged` (only when asked), binary output frames, `closed`, `result`, `pong`; v3: `pane_size {pane_id, cols, rows}` while subscribed | `get_tree`, `subscribe`, `unsubscribe`, `input`, `keys`, `call`, `ping`; v2+: `list_agents`, `deliver`; v3: `fetch_asset {id, sha256, name, mime, size, pane_id, caption}`, `get_transcript {id, pane_id, after?}` |
+
+## Your own name, tagline and logo
+
+The hub calls itself klark by default. Set `Hub:Brand` in `appsettings.json`, or the matching environment variables (Docker), to show your own name, tagline and logo:
+
+| setting | env var | example |
+|---|---|---|
+| `Hub:Brand:Name` | `Hub__Brand__Name` | `acme` (corner, tab titles: "acme hub") |
+| `Hub:Brand:Tagline` | `Hub__Brand__Tagline` | `by Jane Doe` (small line under the name) |
+| `Hub:Brand:Logo` | `Hub__Brand__Logo` | `https://…/logo.svg`, or a file under `wwwroot` (also the tab icon) |

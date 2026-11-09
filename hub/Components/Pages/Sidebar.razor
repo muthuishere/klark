@@ -13,7 +13,7 @@
 
 <aside class="side" aria-label="Agents">
     <div class="side-head">
-        <a class="brand" href="/">klark</a>
+        <a class="brand" href="/">@if (!string.IsNullOrWhiteSpace(Brand.Logo)) {<img class="logo" src="@Brand.Logo" alt="" />}<span class="brand-text">@Brand.Name@if (!string.IsNullOrWhiteSpace(Brand.Tagline)) {<small class="tagline">@Brand.Tagline</small>}</span></a>
         <button type="button" class="icon side-x" onclick="return klarkSide.toggle()" aria-label="Close sidebar" title="Close sidebar">@((MarkupString)Icons.Sidebar)</button>
     </div>
     <div class="side-search">

@@ -3,13 +3,14 @@
 <head>
     <meta charset="utf-8" />
     <base href="/" />
-    <title>klark hub</title>
+    <title>@Brand.Title</title>
+    @if (!string.IsNullOrWhiteSpace(Brand.Logo)) {<link rel="icon" href="@Brand.Logo" />}
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#faf9f5" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#262624" media="(prefers-color-scheme: dark)" />
     <meta name="color-scheme" content="light dark" />
     <link rel="stylesheet" href="@Assets["app.css"]" />
-    <script>try{var t=localStorage.getItem("klark:theme");document.documentElement.dataset.theme=t||"paper";if(localStorage.getItem("klark:side")==="closed")document.documentElement.classList.add("side-closed")}catch(e){}</script>
+    <script>try{localStorage.setItem("klark:brand",@((MarkupString)System.Text.Json.JsonSerializer.Serialize(Brand.Name)));var t=localStorage.getItem("klark:theme");document.documentElement.dataset.theme=t||"paper";if(localStorage.getItem("klark:side")==="closed")document.documentElement.classList.add("side-closed")}catch(e){}</script>
     <HeadOutlet />
 </head>
 <body>

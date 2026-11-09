@@ -3,7 +3,7 @@
 @inject HubAccess Access
 
 <header class="topbar">
-    <a class="brand" href="/">klark</a>
+    <a class="brand" href="/">@if (!string.IsNullOrWhiteSpace(Brand.Logo)) {<img class="logo" src="@Brand.Logo" alt="" />}<span class="brand-text">@Brand.Name@if (!string.IsNullOrWhiteSpace(Brand.Tagline)) {<small class="tagline">@Brand.Tagline</small>}</span></a>
     <AuthorizeView>
         <Authorized>
             <details class="menu">

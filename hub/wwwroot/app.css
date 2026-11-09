@@ -384,3 +384,8 @@ a.banner { animation: banner-away .4s ease 5s forwards; }
 .attachment { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 4px 4px 4px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bubble); font-size: .8rem; overflow-wrap: anywhere; }
 .attachment button { border: 0; background: none; color: var(--muted); cursor: pointer; font: inherit; min-width: 24px; min-height: 24px; border-radius: 6px; }
 .attachment button:hover { background: var(--hover); color: var(--fg); }
+
+.brand .tagline { display: block; font-size: .68rem; font-weight: 450; color: var(--muted, #888); letter-spacing: 0; margin-top: 1px; }
+.brand { display: inline-flex; align-items: center; gap: .5rem; }
+.brand .logo { height: 1.6rem; width: auto; max-width: 2.4rem; border-radius: 4px; }
+.brand .brand-text { display: block; }

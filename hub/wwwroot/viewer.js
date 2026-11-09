@@ -22,7 +22,7 @@ $("back").addEventListener("click", (e) => {
 function crumbs(p) {
   const parts = p.split("/").filter(Boolean);
   $("crumbs").innerHTML = parts.map((s, i) => (i === parts.length - 1 ? `<b>${esc(s)}</b>` : `<span>${esc(s)}</span><span> / </span>`)).join("");
-  document.title = (parts[parts.length - 1] || "File") + " · klark";
+  document.title = (parts[parts.length - 1] || "File") + " · " + (function(){try{return localStorage.getItem("klark:brand")||"klark"}catch(e){return "klark"}})();
 }
 crumbs(path);
 

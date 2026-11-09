@@ -9,6 +9,9 @@ public sealed class HubOptions
     /// <summary>Where hub.db and machines/*.db live. Mount a volume here in Docker.</summary>
     public string DataDir { get; set; } = "data";
 
+    /// <summary>The name and tagline this hub shows (Hub:Brand, or Hub__Brand__Name / Hub__Brand__Tagline).</summary>
+    public BrandOptions Brand { get; set; } = new();
+
     /// <summary>Cap on each machine's SQLite file (ADR 0001, D7).</summary>
     public long MaxBytesPerMachine { get; set; } = 10 * 1024 * 1024;
 
@@ -200,4 +203,18 @@ public sealed class MockLdapEntry
     public string Password { get; set; } = "";
     public string DisplayName { get; set; } = "";
     public List<string> Groups { get; set; } = new();
+}
+
+/// <summary>
+/// What the hub calls itself: the name in the corner and in tab titles, and an optional
+/// tagline under it (e.g. Name "acme", Tagline "by Jane"). Defaults to plain klark.
+/// </summary>
+public sealed class BrandOptions
+{
+    public string Name { get; set; } = "klark";
+    public string Tagline { get; set; } = "";
+    /// <summary>Logo image URL (https://… or a path under wwwroot, e.g. "brand/logo.svg"); also the tab icon. Empty: none.</summary>
+    public string Logo { get; set; } = "";
+    /// <summary>The tab title of hub pages: "{Name} hub".</summary>
+    public string Title => $"{Name} hub";
 }
