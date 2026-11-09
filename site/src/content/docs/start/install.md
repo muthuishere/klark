@@ -1,28 +1,46 @@
 ---
 title: Install
-description: Build klark from source and put it on your PATH.
+description: Download klark from the GitHub release, or build it from source.
 ---
 
-klark is one Rust binary. There are no published release binaries for klark yet,
-so you build it from source.
+klark is one binary. Download it from the
+[latest release](https://github.com/muthuishere/klark/releases/latest), or build it from source.
 
-## Requirements
+## Download
+
+| platform | file |
+|---|---|
+| macOS, Apple Silicon | `klark-macos-aarch64` |
+| Linux x86_64 | `klark-linux-x86_64` |
+| Linux arm64 | `klark-linux-aarch64` |
+
+Windows and Intel Macs have no download yet; build from source.
+
+```sh
+# pick the file for your machine from the table
+f=klark-macos-aarch64
+curl -fLO https://github.com/muthuishere/klark/releases/latest/download/$f
+curl -fLO https://github.com/muthuishere/klark/releases/latest/download/$f.sha256
+shasum -a 256 -c $f.sha256
+install -m 0755 $f ~/.local/bin/klark
+klark --version
+```
+
+On macOS the binary is not signed. If macOS refuses to open it, clear the download flag:
+`xattr -d com.apple.quarantine ~/.local/bin/klark`.
+
+## Build from source
+
+Requirements:
 
 - Rust (stable) and Cargo.
 - **Zig 0.16**, for the vendored `libghostty-vt` terminal engine.
 - macOS or Linux. Windows code exists (ConPTY) but has not been run as klark.
 
-## Build
-
 ```sh
 git clone https://github.com/muthuishere/klark
 cd klark
 cargo build --release
-```
-
-The binary is `target/release/klark`. Copy it somewhere on your `PATH`:
-
-```sh
 install -m 0755 target/release/klark ~/.local/bin/klark
 klark --version
 ```
@@ -54,9 +72,9 @@ klark --help       # every command
 | saved hubs | `~/.config/klark/hubs.json` (mode 0600) |
 | default config | `klark --default-config` prints it |
 
-Moving from herdr: on first run klark moves `~/.config/herdr` to
-`~/.config/klark`. Environment variables are now `KLARK_*`, for example
-`KLARK_SOCKET_PATH`.
+Coming from herdr: klark never touches `~/.config/herdr`, so herdr keeps running
+alongside it. klark's own settings live in `~/.config/klark`, and its environment
+variables are `KLARK_*`, for example `KLARK_SOCKET_PATH`.
 
 ## The hub is separate
 
