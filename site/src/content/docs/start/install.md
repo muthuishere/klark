@@ -11,10 +11,13 @@ klark is one binary. Download it from the
 | platform | file |
 |---|---|
 | macOS, Apple Silicon | `klark-macos-aarch64` |
+| macOS, Intel | `klark-macos-x86_64` |
 | Linux x86_64 | `klark-linux-x86_64` |
 | Linux arm64 | `klark-linux-aarch64` |
+| Windows x64 (also runs on Windows on ARM) | `klark-windows-x86_64.exe` |
 
-Windows and Intel Macs have no download yet; build from source.
+The Windows build is new: it starts and runs on Windows 11, but klark's Windows
+support has had little real use. Please report problems.
 
 ```sh
 # pick the file for your machine from the table
@@ -25,6 +28,8 @@ shasum -a 256 -c $f.sha256
 install -m 0755 $f ~/.local/bin/klark
 klark --version
 ```
+
+On Windows, download `klark-windows-x86_64.exe` from the release page and rename it `klark.exe`.
 
 On macOS the binary is not signed. If macOS refuses to open it, clear the download flag:
 `xattr -d com.apple.quarantine ~/.local/bin/klark`.
