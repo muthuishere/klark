@@ -530,7 +530,7 @@ impl Palette {
             accent: Color::Rgb(37, 99, 235),
             panel_bg: Color::Rgb(243, 241, 236),
             sidebar_bg: Color::Reset,
-            active_row_bg: Color::Rgb(230, 238, 248),
+            active_row_bg: Color::Rgb(218, 230, 245),
             selection_bg: Color::Rgb(207, 221, 245),
             surface0: Color::Rgb(226, 222, 213),
             surface1: Color::Rgb(207, 202, 192),

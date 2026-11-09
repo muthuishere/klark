@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+## [0.9.5.3] - 2026-11-09
+
+### Added
+- `klark msg send --all` messages every other agent in this session, and `--all-sessions` every other agent on the machine. `klark msg ls` includes agents in git worktrees. All options: [docs/messaging.md](docs/messaging.md).
+- `klark msg send --wait <secs>` waits until the agent is idle before sending, and fails if it is still busy when the time runs out.
+- Hub themes: Paper (the default), Teal, Indigo, Forest, Dusk, Term and Term dark. Pick one from the account menu; the choice is saved per browser. The same five new themes are in the klark TUI, with a theme item in the klark menu.
+- Hub branding: `Hub:Brand:Name`, `Hub:Brand:Tagline` and `Hub:Brand:Logo` (or `Hub__Brand__*` in Docker) set the hub's name, tagline under the name, and logo/tab icon.
+- `klark hub connect` runs in the background (log in `hub-<name>.log`; `--foreground` to stay attached). `klark hub stop` ends it.
+
+### Changed
+- An image picked in the hub is uploaded to the machine and shown as an attachment. It goes to the agent with your next message, or on its own if you send with no text. It used to be sent the moment you picked it.
+- The hub you connect to becomes the default, and klark keeps one hub connection at a time: connecting to one stops the background connection to any other.
+- The hub's message box is disabled, with a note, while the machine is offline or disconnected.
+
+### Fixed
+- A `klark msg` message never mixes into what the person is typing. Their draft is lifted, the message is sent on its own, and the draft is put back unsent. Long messages wait longer before Enter, and a prompt that didn't submit is entered again.
+- Copy works on code blocks in the hub.
+- The hub's default-password banner hides after 5 seconds.
+
 ## [0.9.5] - 2026-10-14
 
 This is a hotfix release for v0.9.4. See the v0.9.4 notes for the full feature release: https://github.com/herdrdev/herdr/releases/tag/v0.9.4

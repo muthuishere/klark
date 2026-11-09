@@ -21,7 +21,7 @@ Docs: **https://muthuishere.github.io/klark/**
   uses that name.
 - **Agent-aware.** Every agent pane shows working, blocked or idle. Agents can be
   named (`klark msg name reviewer`) and read (`klark transcript`).
-- **Agents message agents.** `klark msg send reviewer "please review PR 12"`
+- **Agents message agents.** `klark msg send reviewer "please review PR 12"` (all options: [docs/messaging.md](docs/messaging.md))
   reaches an agent in any session on this machine, or on any other machine
   connected to the same hub (`machine/session/agent`).
 - **klarkhub, the web hub (default port 7470).** One self-hosted server (Docker or Kubernetes, plain

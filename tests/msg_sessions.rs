@@ -214,7 +214,7 @@ fn msg_send_crosses_sessions_and_lands_as_agent_prompt() {
         "pane.send_keys",
         json!({"pane_id": pane, "keys": ["Enter"]}),
     );
-    let deadline = Instant::now() + Duration::from_secs(15);
+    let deadline = Instant::now() + Duration::from_secs(45);
     loop {
         let list = call(&work, "agent.list", json!({}));
         let found = list["result"]["agents"]
@@ -262,7 +262,7 @@ fn msg_send_crosses_sessions_and_lands_as_agent_prompt() {
     // `cat` echoes what it was prompted with.
     wait_for(
         "the prompt to appear in the pane",
-        Duration::from_secs(10),
+        Duration::from_secs(30),
         || {
             let read = call(
                 &work,
@@ -321,7 +321,7 @@ fn msg_send_crosses_sessions_and_lands_as_agent_prompt() {
     assert!(!mine.status.success(), "{}", text(&mine));
     wait_for(
         "the broadcast to appear in the pane",
-        Duration::from_secs(10),
+        Duration::from_secs(30),
         || {
             let read = call(
                 &work,
