@@ -191,6 +191,26 @@ public class ScreenTransformerTests
         Assert.Empty(feeds.Search("websocket", _ => false));
         Assert.Equal("Here is how they compare:", TranscriptFeeds.Preview(f));
     }
+
+    [Fact]
+    public void Agy_CodeKeepsItsIndentationInFencedBlocks()
+    {
+        var turns = ScreenTransformers.Agy(Fixture("agy-code.screen.txt"));
+        Assert.Equal(2, turns.Count);
+        var reply = turns[1].Text;
+        Assert.Contains("```python\ndef is_prime(n: int) -> bool:\n    \"\"\"Return True if n is a prime number, else False.\"\"\"\n    if n < 2:\n        return False\n    for i in range(2, int(n**0.5) + 1):\n        if n % i == 0:\n            return False\n    return True\n```", reply);
+        Assert.Contains("```\nnumbers = [10, 15, 29, 44, 97, 88, 31, 100]", reply.Replace("```python", "```"));
+        Assert.Contains("    # Output: 97".TrimStart(), reply);
+        Assert.Contains("### 2. Find the Largest Prime in a Given List", reply);
+        Assert.Contains("This function tests divisibility", reply);
+        Assert.DoesNotContain("for shortcuts", reply);
+        Assert.DoesNotContain("Gemini 3.8", reply);
+        // The heading and sentences stay outside any fence.
+        var outside = reply.Split("```").Where((_, n) => n % 2 == 0).ToList();
+        Assert.Contains(outside, seg => seg.Contains("### 2. Find the Largest Prime"));
+        Assert.Contains(outside, seg => seg.Contains("This function tests divisibility"));
+        Assert.DoesNotContain(outside, seg => seg.Contains("print("));
+    }
 }
 
 public class DevinQuestionTests

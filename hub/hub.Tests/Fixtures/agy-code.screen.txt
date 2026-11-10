@@ -1,0 +1,25 @@
+> Write a short python function is_prime(n) with a docstring and one for loop, then one sentence.
+
+    def is_prime(n: int) -> bool:
+        """Return True if n is a prime number, else False."""
+        if n < 2:
+            return False
+        for i in range(2, int(n**0.5) + 1):
+            if n % i == 0:
+                return False
+        return True
+  This function tests divisibility up to the square root of n to quickly determine if the number is prime.
+
+  ──────
+  ### 2. Find the Largest Prime in a Given List
+  If you have an array/list of numbers:
+    numbers = [10, 15, 29, 44, 97, 88, 31, 100]
+    largest_prime = max((x for x in numbers if is_prime(x)), default=None)
+    print("Largest prime in list:", largest_prime)
+    # Output: 97
+  ──────
+
+──────────────────────────────────────────────────────────────────────────────
+>
+──────────────────────────────────────────────────────────────────────────────
+? for shortcuts                                              Gemini 3.8 Flash (Low)

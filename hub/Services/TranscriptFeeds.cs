@@ -337,6 +337,7 @@ public sealed class TranscriptFeeds
         foreach (var t in turns)
         {
             var plain = t.Kind == "output" ? TranscriptClean.StripAnsi(t.Text) : t.Text;
+            if (t.Role == "user" && t.Kind == "text") plain = HubNote.Strip(plain);
             var head = t.Kind == "tool_use" ? $"{t.Tool}({t.Summary})" : plain.Split('\n')[0];
             var baseId = $"s:{t.Kind}:{(uint)StableHash(head):x8}";
             seen[baseId] = seen.TryGetValue(baseId, out var n) ? n + 1 : 0;
@@ -568,6 +569,7 @@ public sealed class TranscriptFeeds
         if (kind is "text" or "thinking")
         {
             text = TranscriptClean.CleanStructured(text);
+            if (role == "user") text = HubNote.Strip(text);
             if (text.Length == 0) return null;
         }
         else if (kind == "tool_result" && text is not null)

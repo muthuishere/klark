@@ -112,7 +112,7 @@ public static partial class ScreenTransformers
         {
             while (buf.Count > 0 && buf[^1].Length == 0) buf.RemoveAt(buf.Count - 1);
             while (buf.Count > 0 && buf[0].Length == 0) buf.RemoveAt(0);
-            if (buf.Count > 0) turns.Add(new ScreenTurn("assistant", "text", string.Join('\n', buf)));
+            if (buf.Count > 0) turns.Add(new ScreenTurn("assistant", "text", AgyMarkdown(buf)));
             buf.Clear();
         }
         foreach (var line in cleaned.Split('\n'))
@@ -130,6 +130,59 @@ public static partial class ScreenTransformers
         Flush();
         return turns;
     }
+
+    [GeneratedRegex(@"^([-*+]|\d+[.)])\s+\S")] private static partial Regex ListMarker();
+    [GeneratedRegex(@"^\s*(def \w|class \w+.*:\s*$|import \w|from \w+ import )")] private static partial Regex PythonLine();
+    [GeneratedRegex(@"^\s*(function |const |let |var |export |=>)")] private static partial Regex JsLine();
+
+    /// <summary>
+    /// Agy prints markdown mostly as written ("### heading", "**bold**"), but its fenced code
+    /// arrives as lines indented two columns past the reply's own margin, with the code's own
+    /// indentation kept. Code runs go back into fenced blocks (the extra two columns removed,
+    /// nothing else). Its "──────" rules are already dropped as chrome. Input lines have the
+    /// reply margin already removed.
+    /// </summary>
+    internal static string AgyMarkdown(List<string> lines)
+    {
+        var o = new List<string>();
+        var inList = false;
+        for (var i = 0; i < lines.Count; i++)
+        {
+            var line = lines[i];
+            if (line.Length == 0) { o.Add(""); continue; }
+            var marker = ListMarker().IsMatch(line.TrimStart());
+            if (!IsAgyCode(line, inList, marker))
+            {
+                o.Add(line);
+                if (line[0] != ' ' || marker) inList = marker;
+                continue;
+            }
+            var run = new List<string>();
+            var j = i;
+            while (j < lines.Count)
+            {
+                var l = lines[j];
+                if (l.Length > 0 && IsAgyCode(l, inList, ListMarker().IsMatch(l.TrimStart()))) { run.Add(l[2..]); j++; continue; }
+                if (l.Length == 0 && j + 1 < lines.Count && lines[j + 1].Length > 0 && IsAgyCode(lines[j + 1], inList, ListMarker().IsMatch(lines[j + 1].TrimStart()))) { run.Add(""); j++; continue; }
+                break;
+            }
+            var lang = run.Any(l => PythonLine().IsMatch(l)) ? "python" : run.Any(l => JsLine().IsMatch(l)) ? "javascript" : "";
+            var fence = run.Any(l => l.Contains("```")) ? "````" : "```";
+            if (o.Count > 0 && o[^1].Length > 0) o.Add("");
+            o.Add(fence + lang);
+            o.AddRange(run);
+            o.Add(fence);
+            o.Add("");
+            i = j - 1;
+            inList = false;
+        }
+        return string.Join('\n', o).Trim('\n');
+    }
+
+    // Indented two columns or more is code, except a nested list item, and except prose
+    // continuing a list item (it must look like code to count while a list is open).
+    private static bool IsAgyCode(string line, bool inList, bool marker) =>
+        line.StartsWith("  ") && !(inList && marker) && (!inList || IsCodeLike(line));
 
     // ---- box-drawn tables -------------------------------------------------------------
 

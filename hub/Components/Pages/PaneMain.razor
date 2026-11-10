@@ -7,6 +7,7 @@
 @inject HubStore Store
 @inject HubAccess Access
 @inject AssetService AssetSvc
+@inject Microsoft.Extensions.Options.IOptions<HubOptions> HubOpts
 @inject TranscriptFeeds Feeds
 @inject AuthenticationStateProvider Auth
 @inject NavigationManager Nav
@@ -313,7 +314,7 @@
             await Feeds.SendLocalCommandAsync(machine, MachineId, PaneId, text.Trim());
             return;
         }
-        await machine.SendInputAsync(PaneId, text);
+        await machine.SendInputAsync(PaneId, HubNote.Append(text, HubOpts.Value.AgentNote));
         await machine.SendKeysAsync(PaneId, "enter");
     }
 

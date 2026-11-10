@@ -28,11 +28,11 @@
         var calls = Calls(Row.Items);
         if (calls.Count == 1)
         {
-            @Call(calls[0])
+            @Call(calls[0], Row.Key)
         }
         else
         {
-            <details class="tools" data-key="@("g:" + Row.Key)">
+            <details class="tools" data-id="@Row.Key" data-key="@("g:" + Row.Key)">
                 <summary><span class="ico">⋯</span><span class="t">@ToolCount(calls)</span>@StateMark(calls)</summary>
                 <div class="tool-list">
                     @foreach (var call in calls)
@@ -157,7 +157,7 @@
         Verb(tool).Noun == "file" && arg.Length > 0 && FileLinks.Refusal(arg, null) is null || arg.StartsWith('/')
             ? FileLinks.Href(MachineId, PaneId, arg, null) : null;
 
-    private RenderFragment Call(ToolCall c) => @<details class="tool @(c.Result?.Ok == false ? "failed" : "")" data-key="@("t:" + c.Key)">
+    private RenderFragment Call(ToolCall c, string? rowId = null) => @<details class="tool @(c.Result?.Ok == false ? "failed" : "")" data-id="@rowId" data-key="@("t:" + c.Key)">
         @if (c.Kind == "thinking")
         {
             <summary><span class="ico">✦</span><span class="t">Thought</span></summary>

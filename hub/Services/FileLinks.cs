@@ -128,11 +128,23 @@ public static partial class FileLinks
         if (path.StartsWith("~/")) return null;
         if (!path.StartsWith('/')) return null;
         if (segments.Contains("..")) return $"{path} is not a plain path; refusing";
-        var root = (cwd ?? "").TrimEnd('/');
-        if (root.Length > 0 && (path == root || path.StartsWith(root + "/"))) return null;
+        // macOS: /tmp, /var and /etc are links into /private; an agent may say either. The
+        // machine resolves links before it hands anything over, so this only avoids a false refusal.
+        var root = Unprivate((cwd ?? "").TrimEnd('/'));
+        if (root.Length > 0 && (Unprivate(path) is var plain) && (plain == root || plain.StartsWith(root + "/"))) return null;
         var home = HomeOf().Match(root);
         if (home.Success && path.StartsWith(home.Value + "/")) return null;
         return $"{path} is outside the pane's folder and home; refusing";
+    }
+
+    private static string Unprivate(string p)
+    {
+        foreach (var d in new[] { "tmp", "var", "etc" })
+        {
+            var pre = "/private/" + d;
+            if (p == pre || p.StartsWith(pre + "/")) return p[8..];
+        }
+        return p;
     }
 
     public static string Size(long b) => b >= 1 << 20 ? $"{b / 1048576.0:0.#} MB" : b >= 1024 ? $"{b / 1024.0:0} KB" : $"{b} B";

@@ -12,6 +12,12 @@ public sealed class HubOptions
     /// <summary>The name and tagline this hub shows (Hub:Brand, or Hub__Brand__Name / Hub__Brand__Tagline).</summary>
     public BrandOptions Brand { get; set; } = new();
 
+    /// <summary>
+    /// Instruction added to messages sent from the hub so agents give absolute file paths (see HubNote).
+    /// Hub:AgentNote / Hub__AgentNote; empty turns it off.
+    /// </summary>
+    public string AgentNote { get; set; } = HubNote.DefaultBody;
+
     /// <summary>Cap on each machine's SQLite file (ADR 0001, D7).</summary>
     public long MaxBytesPerMachine { get; set; } = 10 * 1024 * 1024;
 

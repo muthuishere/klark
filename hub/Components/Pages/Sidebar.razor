@@ -44,6 +44,7 @@
                             <span class="ent-time">@Ago(r.Feed?.LastActivity)</span>
                             <span class="ent-sub">
                                 @if (r.Pane.AgentStatus == "blocked") { <b class="needs">needs you · </b> }
+                                @if (r.Pane.Agent.Length > 0) { <b class="kind">@r.Pane.Agent.ToLowerInvariant()</b><text> · </text> }
                                 @(r.Preview.Length > 0 ? r.Preview : $"{r.Machine.Name} · {r.Machine.Tree.WorkspaceLabel(r.Pane.WorkspaceId)}")
                             </span>
                         </a>

@@ -85,8 +85,22 @@ window.klarkChat = (() => {
     });
   }
 
-  function attach(key, scroller, pill) {
-    const v = { key, scroller, pill, stuck: true, open: new Set(), matches: [], at: -1 };
+  // Row heights measured while drawn, per pane, kept after leaving so coming back lays out exactly.
+  const hcaches = new Map();
+  const heightsFor = (key) => {
+    let m = hcaches.get(key);
+    if (m) hcaches.delete(key); else m = new Map();
+    hcaches.set(key, m);
+    if (hcaches.size > 6) hcaches.delete(hcaches.keys().next().value);
+    return m;
+  };
+  // Long chats draw only the rows near the viewport (ADR 0011, D): Blazor renders rows [lo, hi) and two
+  // empty pads standing for the rest, sized here from measured row heights (guesses until drawn).
+  const WINDOW_MIN = 150; // chats up to this many rows are always drawn whole (ChatWindow.Always)
+
+  function attach(key, scroller, pill, dn) {
+    const v = { key, scroller, pill, dn, stuck: true, open: new Set(), matches: [], at: -1, keys: [], est: [], idx: new Map(), hm: heightsFor(key), off: null, anchor: null, req: null, hold: false };
+    const col = scroller.querySelector(".chat-col");
     try { JSON.parse(klarkState.get("open:" + key) || "[]").forEach((k) => v.open.add(k)); } catch { }
     const saved = klarkState.get("chatscroll:" + key, "s");
     v.restoring = !!(saved && saved !== "latest");
@@ -94,17 +108,126 @@ window.klarkChat = (() => {
     const nearBottom = () => scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80;
     const toBottom = () => { scroller.scrollTop = scroller.scrollHeight; };
     const showPill = () => pill.classList.toggle("show", !v.stuck);
+    // ---- windowing -------------------------------------------------------
+    const gap = () => parseFloat(getComputedStyle(col).rowGap) || 0;
+    const rowEls = () => col.querySelectorAll(":scope > [data-id]");
+    const win = () => [Number(col.dataset.lo || 0), Number(col.dataset.hi || 0)];
+    const hOf = (i) => v.hm.get(v.keys[i]) ?? v.est[i] ?? 100;
+    const absTop = (el) => el.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+    const elFor = (k) => { for (const e of rowEls()) if (e.dataset.id === k) return e; return null; };
+    function offsets() {
+      if (v.off) return v.off;
+      const g = gap(), n = v.keys.length, o = new Float64Array(n + 1);
+      for (let i = 0; i < n; i++) o[i + 1] = o[i] + hOf(i) + g;
+      return (v.off = o);
+    }
+    function applyPads() {
+      const n = v.keys.length, [lo, hi] = win();
+      if (!n || hi > n) return;
+      const o = offsets(), g = gap();
+      const top = col.querySelector(":scope > [data-pad=top]"), bot = col.querySelector(":scope > [data-pad=bottom]");
+      if (top) top.style.height = Math.max(0, o[lo] - g) + "px";
+      if (bot) bot.style.height = Math.max(0, o[n] - o[hi] - g) + "px";
+    }
+    function firstVisible() {
+      const top = scroller.getBoundingClientRect().top;
+      for (const el of rowEls()) {
+        const r = el.getBoundingClientRect();
+        if (r.bottom > top + 1) return { el, top: r.top - top };
+      }
+      return null;
+    }
+    // The row at the top of the view stays where it is while rows above it are measured, drawn or dropped.
+    function recordAnchor() {
+      const a = firstVisible();
+      v.anchor = a ? { key: a.el.dataset.id, abs: absTop(a.el) } : null;
+    }
+    function correct() {
+      if (v.restoring) return;
+      if (v.stuck) { toBottom(); v.anchor = null; return; }
+      const el = v.anchor && elFor(v.anchor.key);
+      if (!el) return recordAnchor();
+      const now = absTop(el), d = now - v.anchor.abs;
+      if (Math.abs(d) > 0.5) scroller.scrollTop += d;
+      v.anchor.abs = now;
+    }
+    // Ask Blazor for another window when the rows around the view are not all drawn,
+    // or when far more than needed are.
+    function want() {
+      const n = v.keys.length, [lo, hi] = win(), els = rowEls();
+      if (n <= WINDOW_MIN || v.restoring || v.hold || !v.dn || !els.length) return;
+      if (v.req) {
+        if (v.req === lo + "-" + hi || performance.now() - v.reqAt > 1500) v.req = null; else return;
+      }
+      const i0 = v.idx.get(els[0].dataset.id);
+      if (i0 === undefined) return;
+      const o = offsets(), base = absTop(els[0]) - o[i0];
+      const vt = scroller.scrollTop, vb = vt + scroller.clientHeight, ch = Math.max(scroller.clientHeight, 900);
+      const at = (y) => { let a = 0, b = n - 1; while (a < b) { const m = (a + b + 1) >> 1; if (base + o[m] <= y) a = m; else b = m - 1; } return a; };
+      const grow = (lo > 0 && lo > at(vt - 0.75 * ch)) || (hi < n && hi < at(vb + 0.75 * ch) + 1);
+      const far = lo < at(vt - 3 * ch) || hi > at(vb + 3 * ch) + 1;
+      if (!grow && !far) return;
+      const nl = at(vt - 1.5 * ch), nh = v.stuck ? n : at(vb + 1.5 * ch) + 1;
+      if (nl === lo && nh === hi) return;
+      request(nl, nh);
+    }
+    function request(nl, nh) {
+      v.req = nl + "-" + nh;
+      v.reqAt = performance.now();
+      v.dn.invokeMethodAsync("SetWindow", nl, nh).catch(() => { v.req = null; });
+      // A window that arrives after the reader stopped (or never arrives) must not leave the view empty.
+      clearTimeout(v.rt);
+      v.rt = setTimeout(() => { v.req = null; want(); }, 1600);
+    }
+    function relayout() {
+      if (!v.keys.length) return;
+      applyPads();
+      correct();
+      want();
+    }
+    v.relayout = relayout;
+    v.request = request;
+    v.recordAnchor = recordAnchor;
+    // Rows report their real height once drawn and whenever it changes (code highlighting, a folded tool opened).
+    v.ro = new ResizeObserver((entries) => {
+      let changed = false;
+      for (const e of entries) {
+        const k = e.target.dataset.id;
+        if (!k) continue;
+        const h = e.borderBoxSize?.[0]?.blockSize ?? e.contentRect.height;
+        if (Math.abs((v.hm.get(k) ?? -1) - h) > 0.5) { v.hm.set(k, h); changed = true; }
+      }
+      if (changed) { v.off = null; relayout(); }
+    });
+    const watchRows = (nodes, on) => nodes.forEach((n) => { if (n.nodeType === 1 && n.dataset?.id) on ? v.ro.observe(n) : v.ro.unobserve(n); });
+    v.cmo = new MutationObserver((muts) => {
+      for (const m of muts) { watchRows(m.removedNodes, false); watchRows(m.addedNodes, true); }
+      relayout();
+    });
+    v.cmo.observe(col, { childList: true });
+    watchRows(rowEls(), true);
+    v.setRows = (keys, est) => {
+      v.keys = keys; v.est = est; v.off = null;
+      v.idx = new Map(keys.map((k, i) => [k, i]));
+      relayout();
+    };
+    // ---------------------------------------------------------------------
     let frame = 0;
     v.save = () => {
       frame = 0;
       // A detached or still-restoring scroller says nothing about where the reader was.
       if (!scroller.isConnected || v.restoring || scroller.clientHeight === 0) return;
       klarkState.set("chatscroll:" + key, v.stuck ? "latest" : String(Math.round(scroller.scrollTop)), "s");
+      // The first row in view and where it sat: restores exactly even when row heights were guesses.
+      const a = !v.stuck && firstVisible();
+      klarkState.set("chatanchor:" + key, a ? a.el.dataset.id + "\t" + Math.round(a.top) : "", "s");
     };
     v.onScroll = () => {
       if (v.restoring) return;
       v.stuck = nearBottom();
       showPill();
+      recordAnchor();
+      want();
       if (!frame) frame = requestAnimationFrame(v.save);
     };
     v.onHide = () => { if (document.visibilityState === "hidden") v.save(); };
@@ -113,7 +236,7 @@ window.klarkChat = (() => {
     v.stopRestore = () => { v.restoring = false; };
     ["wheel", "touchstart", "keydown"].forEach((e) => scroller.addEventListener(e, v.stopRestore, { passive: true }));
     scroller.addEventListener("scroll", v.onScroll, { passive: true });
-    v.onPill = () => { v.stuck = true; toBottom(); showPill(); };
+    v.onPill = () => { v.stuck = true; v.hold = false; toBottom(); showPill(); want(); };
     pill.addEventListener("click", v.onPill);
 
     const restoreOpen = (root) => root.querySelectorAll("details[data-key]").forEach((d) => {
@@ -159,14 +282,27 @@ window.klarkChat = (() => {
       // Wait until the rows that were there are drawn again (a reload paints them a moment later).
       v.stuck = false;
       const y = Number(saved), t0 = performance.now();
+      const [ak, ao] = (klarkState.get("chatanchor:" + key, "s") || "").split("\t");
+      const done = () => { v.restoring = false; v.stuck = nearBottom(); showPill(); recordAnchor(); want(); };
       const step = () => {
         if (!v.restoring || !scroller.isConnected) return;
-        if (scroller.scrollHeight - scroller.clientHeight >= y || performance.now() - t0 > 3000) {
-          scroller.scrollTop = y;
-          v.restoring = false;
-          v.stuck = nearBottom();
-          showPill();
-        } else requestAnimationFrame(step);
+        const late = performance.now() - t0 > 3000;
+        if (ak && !late && (!v.keys.length || v.idx.has(ak))) {
+          // By the row that was first in view: the rows around it are drawn first, then it is put back where it sat.
+          if (!v.keys.length) return void requestAnimationFrame(step);
+          const i = v.idx.get(ak);
+          const [lo, hi] = win();
+          if (i < lo || i >= hi) {
+            if (!v.req || performance.now() - v.reqAt > 1500) request(Math.max(0, i - 20), Math.min(v.keys.length, i + 40));
+            return void requestAnimationFrame(step);
+          }
+          const el = elFor(ak);
+          if (!el) return void requestAnimationFrame(step);
+          scroller.scrollTop += el.getBoundingClientRect().top - scroller.getBoundingClientRect().top - Number(ao || 0);
+          return done();
+        }
+        if (scroller.scrollHeight - scroller.clientHeight >= y || late) { scroller.scrollTop = y; done(); }
+        else requestAnimationFrame(step);
       };
       step();
     } else {
@@ -181,6 +317,9 @@ window.klarkChat = (() => {
     const v = views.get(key);
     if (!v) return;
     v.mo.disconnect();
+    v.cmo.disconnect();
+    clearTimeout(v.rt);
+    v.ro.disconnect();
     v.restoring = false;
     document.removeEventListener("visibilitychange", v.onHide);
     window.removeEventListener("pagehide", v.save);
@@ -248,13 +387,20 @@ window.klarkChat = (() => {
     const el = v.scroller.querySelector(`[data-id="${CSS.escape(id)}"]`);
     if (!el) return false;
     v.restoring = false;
+    v.hold = false;
     v.stuck = false;
     el.scrollIntoView({ block: "center" });
+    v.recordAnchor();
     el.classList.add("hit");
     setTimeout(() => el.classList.remove("hit"), 2400);
     v.pill.classList.add("show");
     return true;
   }
+
+  // Blazor sends every row's key and height guess whenever the rows change.
+  function rows(key, keys, est) { views.get(key)?.setRows(keys, est); }
+  // The window is about to move to a search hit: do not pull it back until the hit is shown.
+  function pin(key) { const v = views.get(key); if (v) { v.hold = true; v.restoring = false; } }
 
   // The composer is client-side: typing never round-trips; Send takes the text.
   function take(textarea) {
@@ -360,7 +506,7 @@ window.klarkChat = (() => {
   }
 
   const current = (key) => { const v = views.get(key); return v ? v.at + 1 : 0; };
-  return { attach, detach, search, step, current, composer, uploads, reveal, take, peek, highlight, focus: (el) => el?.focus() };
+  return { attach, detach, rows, pin, search, step, current, composer, uploads, reveal, take, peek, highlight, focus: (el) => el?.focus() };
 })();
 
 // Navigation that never leaves the app (ADR 0011, E). The header arrow goes back

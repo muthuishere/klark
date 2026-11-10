@@ -3,10 +3,15 @@
 ## Unreleased
 
 ### Added
+- Hub: long chats stay fast. Only the messages near the screen are in the page; older ones load as you scroll up, without the view jumping, and scrolling back to the newest drops them again. Find-in-page now searches the messages on screen only.
+- Hub: messages you send from the hub carry a short note asking the agent to give file paths as absolute paths, so the hub can link them to a preview. The hub chat hides the note; the terminal shows it. Change it with `Hub:AgentNote` (`Hub__AgentNote`); empty turns it off. Slash commands never get it.
+- Hub: each agent in the list shows its name (`claude`, `devin`, `codex`, `agy`) before the machine and folder.
 - Hub: type `/` in the message box of a Claude Code or Devin pane (and Codex, agy, Gemini, OpenCode, Cursor, Copilot, Grok) for a command list; pick with Up/Down and Tab or Enter, or tap. Lists come from each agent's own docs; agents without a documented list get no popup.
 - Hub: a slash command's answer shows in the chat. Claude's `/context`, `/mcp` and `/model` output appears as a code block under the command. For Devin and other agents, the hub captures what the command printed on screen.
 
 ### Fixed
+- Hub: opening a file under `/tmp`, `/var` or `/etc` from a pane whose folder is `/private/tmp` (macOS) no longer fails with "outside the pane's folder".
+- Hub: agy replies show code as highlighted code blocks with its indentation kept.
 - Hub: Codex panes no longer show the empty prompt box and footer as a message from you, nor the start-up banner, greeting or "Model changed" note.
 - Hub: agy panes no longer show the logo banner or the account email, and its reply is no longer merged into your message.
 
