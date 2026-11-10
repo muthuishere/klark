@@ -10,7 +10,7 @@
 #   KLARK_VERSION=v0.9.5.5   install that release (default: the latest)
 #   INSTALL_DIR=/usr/local/bin   where to put it (default: ~/.local/bin)
 #
-# Windows: use install.ps1 (https://muthuishere.github.io/klark/start/install/).
+# Windows: use install.cmd (https://muthuishere.github.io/klark/start/install/).
 set -eu
 
 REPO="muthuishere/klark"
@@ -22,7 +22,7 @@ os=$(uname -s)
 case "$os" in
   Darwin) os=macos ;;
   Linux) os=linux ;;
-  *) die "unsupported system '$os'. On Windows run install.ps1 (see https://muthuishere.github.io/klark/start/install/)." ;;
+  *) die "unsupported system '$os'. On Windows use install.cmd (see https://muthuishere.github.io/klark/start/install/)." ;;
 esac
 
 arch=$(uname -m)

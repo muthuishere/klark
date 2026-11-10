@@ -17,29 +17,36 @@ curl -fsSL https://muthuishere.github.io/klark/install.sh | sh
 wget -qO- https://muthuishere.github.io/klark/install.sh | sh
 ```
 
-Windows, in PowerShell:
+Windows, in Command Prompt (`curl.exe` ships with Windows 10 and later):
+
+```bat
+curl -fsSL https://muthuishere.github.io/klark/install.cmd -o "%TEMP%\klark-install.cmd" && "%TEMP%\klark-install.cmd"
+```
+
+In PowerShell, run the same thing through `cmd`:
 
 ```powershell
-irm https://muthuishere.github.io/klark/install.ps1 | iex
+cmd /c "curl.exe -fsSL https://muthuishere.github.io/klark/install.cmd -o %TEMP%\klark-install.cmd && %TEMP%\klark-install.cmd"
 ```
 
 Each script picks the build for your machine from the
 [latest GitHub release](https://github.com/muthuishere/klark/releases/latest), checks its
 sha256, installs it without admin or root and tells you if the folder is not on your PATH. The
-Windows script adds it to your user PATH.
+Windows script adds it to your user PATH (not the machine PATH) and needs no admin.
 
-Options (set them before the command):
+Options, set before the command:
 
 | setting | meaning | default |
 |---|---|---|
-| `KLARK_VERSION=v0.9.5.4` (PowerShell: `$env:KLARK_VERSION = "v0.9.5.4"`) | install that release | the latest |
-| `INSTALL_DIR=/usr/local/bin` (PowerShell: `$env:INSTALL_DIR = "C:\tools"`) | where to put klark | `~/.local/bin`; on Windows `%LOCALAPPDATA%\klark\bin` |
+| `KLARK_VERSION=v0.9.5.4` | install that release | the latest |
+| `INSTALL_DIR=/usr/local/bin` | where to put klark | `~/.local/bin`; on Windows `%LOCALAPPDATA%\klark\bin` |
 
-For example: `curl -fsSL https://muthuishere.github.io/klark/install.sh | KLARK_VERSION=v0.9.5.4 sh`.
+macOS and Linux: `curl -fsSL https://muthuishere.github.io/klark/install.sh | KLARK_VERSION=v0.9.5.4 sh`.
+Windows: run `set KLARK_VERSION=v0.9.5.4` (and `set INSTALL_DIR=C:\tools` if you want) on their own lines first, then the command above.
 
 Prefer to read a script before you run it? It is plain text:
 [install.sh](https://muthuishere.github.io/klark/install.sh) and
-[install.ps1](https://muthuishere.github.io/klark/install.ps1). Then see the
+[install.cmd](https://muthuishere.github.io/klark/install.cmd). Then see the
 [Quick start](/start/quickstart/) for your first session.
 
 ## Download from the latest GitHub release

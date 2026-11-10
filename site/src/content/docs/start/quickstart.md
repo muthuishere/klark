@@ -19,13 +19,13 @@ or with wget:
 wget -qO- https://muthuishere.github.io/klark/install.sh | sh
 ```
 
-Windows (PowerShell):
+Windows (Command Prompt):
 
-```powershell
-irm https://muthuishere.github.io/klark/install.ps1 | iex
+```bat
+curl -fsSL https://muthuishere.github.io/klark/install.cmd -o "%TEMP%\klark-install.cmd" && "%TEMP%\klark-install.cmd"
 ```
 
-The script downloads the right build from the latest GitHub release, checks its
+The scripts download the right build from the latest GitHub release, checks its
 checksum, installs it for your user (no admin, no root) and puts it on your PATH. More
 options, and a manual download, are on the [Install](/start/install/) page.
 

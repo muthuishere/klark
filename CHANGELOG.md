@@ -5,7 +5,7 @@
 ## [0.9.5.5] - 2026-11-10
 
 ### Added
-- One-line install: `curl -fsSL https://muthuishere.github.io/klark/install.sh | sh` (or `wget -qO- … | sh`) on macOS and Linux, and `irm https://muthuishere.github.io/klark/install.ps1 | iex` on Windows. They pick the right build from the latest release, check its sha256, install without admin or root and fix up PATH. The docs have a new Quick start page.
+- One-line install: `curl -fsSL https://muthuishere.github.io/klark/install.sh | sh` (or `wget -qO- … | sh`) on macOS and Linux, and `install.cmd` on Windows (one `curl` line in Command Prompt; see the Install page). They pick the right build from the latest release, check its sha256, install without admin or root and fix up PATH. The docs have a new Quick start page.
 - `klark server` installs and keeps up to date the klark skill for your agents. It writes `skills/klark/SKILL.md` under `~/.claude` (Claude Code) and `~/.agents` only when those folders already exist, replaces only a klark skill file, and leaves every other skill alone. What it installed is recorded in `~/.config/klark/versions.txt`; the skill is rewritten only when the klark version changes.
 
 ### Changed
