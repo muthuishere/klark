@@ -455,9 +455,40 @@ pane_history = false
 // Bundled at build time so the printed skill always matches this binary's release.
 const SKILL: &str = include_str!("../skills/klark/SKILL.md");
 
+/// Read `key=value` lines from klark's versions file. Missing file means empty.
+fn read_versions(path: &std::path::Path) -> std::collections::BTreeMap<String, String> {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Default::default();
+    };
+    text.lines()
+        .filter_map(|line| line.split_once('='))
+        .map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
+        .collect()
+}
+
+/// Turn a klark version into comparable numbers: `0.9.5`, `0.9.5+4` and
+/// `0.9.5-preview.7` become `[0, 9, 5, 0]`, `[0, 9, 5, 4]`, `[0, 9, 5, 0]`.
+/// The `+` build number counts as the fourth part; the `-` channel suffix is dropped.
+fn version_parts(version: &str) -> [u64; 4] {
+    let base = version.split('-').next().unwrap_or("").replace('+', ".");
+    let mut parts = [0u64; 4];
+    for (slot, part) in parts.iter_mut().zip(base.split('.')) {
+        *slot = part.trim().parse().unwrap_or(0);
+    }
+    parts
+}
+
+/// Compare two klark versions after conversion: Less means `a` is older.
+fn compare_versions(a: &str, b: &str) -> std::cmp::Ordering {
+    version_parts(a).cmp(&version_parts(b))
+}
+
 /// Keep the klark skill installed for the agents present on this machine
-/// (Claude Code, Devin). Writes only where the agent's folder exists, and
-/// never replaces a SKILL.md that is not klark's own (`name: klark`).
+/// (Claude Code and the shared ~/.agents folder), and record what was installed
+/// in `<config dir>/versions.txt`. Each agent folder is written only if it
+/// exists. The skill is (re)written when SKILL.md is missing or differs from the
+/// bundled text, or when the recorded version differs from this binary. It never
+/// replaces a SKILL.md that is not klark's own (`name: klark`).
 fn install_skill() {
     if std::env::var_os("KLARK_NO_SKILL_INSTALL").is_some() {
         return;
@@ -465,20 +496,55 @@ fn install_skill() {
     let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) else {
         return;
     };
-    for root in [home.join(".claude"), home.join(".config/devin")] {
+    install_skill_in(
+        &home,
+        &config::config_dir().join("versions.txt"),
+        env!("KLARK_RELEASE_VERSION"),
+    );
+}
+
+/// `install_skill` with the home folder, versions file and version passed in.
+fn install_skill_in(home: &std::path::Path, versions_path: &std::path::Path, version: &str) {
+    let mut versions = read_versions(versions_path);
+    // Where the last run left off. Upgrade steps (config migrations) go here, keyed
+    // on `previous` being older than `version`; none exist yet.
+    let previous = versions.get("klark").cloned();
+    let _direction = previous
+        .as_deref()
+        .map(|p| compare_versions(p, version));
+    for (key, root) in [
+        ("skill.claude", home.join(".claude")),
+        ("skill.agents", home.join(".agents")),
+    ] {
         if !root.is_dir() {
             continue;
         }
-        let file = root.join("skills/klark/SKILL.md");
-        match std::fs::read_to_string(&file) {
-            Ok(old) if old == SKILL || !old.contains("\nname: klark\n") => continue,
-            _ => {}
+        let dir = root.join("skills/klark");
+        let file = dir.join("SKILL.md");
+        let existing = std::fs::read_to_string(&file).ok();
+        if let Some(old) = &existing {
+            if !old.contains("\nname: klark\n") {
+                continue;
+            }
         }
-        if let Some(dir) = file.parent() {
-            let _ = std::fs::create_dir_all(dir);
+        let current = existing.as_deref() == Some(SKILL)
+            && versions
+                .get(key)
+                .is_some_and(|recorded| compare_versions(recorded, version).is_eq());
+        if current {
+            continue;
         }
-        let _ = std::fs::write(&file, SKILL);
+        let _ = std::fs::create_dir_all(&dir);
+        if std::fs::write(&file, SKILL).is_ok() {
+            versions.insert(key.to_string(), version.to_string());
+        }
     }
+    versions.insert("klark".to_string(), version.to_string());
+    if let Some(parent) = versions_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let text: String = versions.iter().map(|(k, v)| format!("{k}={v}\n")).collect();
+    let _ = std::fs::write(versions_path, text);
 }
 
 fn should_block_nested(config: &config::Config) -> bool {
@@ -951,5 +1017,140 @@ mod tests {
             args_as_utf8(args).unwrap_err(),
             "argument 2 is not valid UTF-8"
         );
+    }
+
+    mod skill_install_tests {
+        use super::*;
+        use std::path::{Path, PathBuf};
+
+        const V: &str = "0.9.5+4";
+
+        fn scratch(name: &str) -> PathBuf {
+            let dir = std::env::temp_dir().join(format!(
+                "klark-skill-test-{}-{name}",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            dir
+        }
+
+        fn skill_file(home: &Path, agent: &str) -> PathBuf {
+            home.join(agent).join("skills/klark/SKILL.md")
+        }
+
+        #[test]
+        fn version_parts_reads_build_number_as_fourth_part() {
+            assert_eq!(version_parts("0.9.5"), [0, 9, 5, 0]);
+            assert_eq!(version_parts("0.9.5+4"), [0, 9, 5, 4]);
+            assert_eq!(version_parts("0.9.5-preview.7"), [0, 9, 5, 0]);
+            assert_eq!(version_parts("0.0.0-dev"), [0, 0, 0, 0]);
+        }
+
+        #[test]
+        fn compare_versions_orders_by_number_not_text() {
+            use std::cmp::Ordering::*;
+            assert_eq!(compare_versions("0.9.5+4", "0.9.5+3"), Greater);
+            assert_eq!(compare_versions("0.9.5+10", "0.9.5+9"), Greater);
+            assert_eq!(compare_versions("0.9.5", "0.9.5+0"), Equal);
+            assert_eq!(compare_versions("0.9.4+9", "0.9.5+1"), Less);
+        }
+
+        #[test]
+        fn read_versions_parses_key_value_lines() {
+            let dir = scratch("read");
+            let path = dir.join("versions.txt");
+            std::fs::write(&path, "klark=0.9.5+4\nskill.claude = 0.9.5+4\n\nbad\n").unwrap();
+            let v = read_versions(&path);
+            assert_eq!(v.get("klark").map(String::as_str), Some("0.9.5+4"));
+            assert_eq!(v.get("skill.claude").map(String::as_str), Some("0.9.5+4"));
+            assert_eq!(v.len(), 2);
+            assert!(read_versions(&dir.join("missing.txt")).is_empty());
+        }
+
+        #[test]
+        fn installs_into_existing_agent_folders_and_records_version() {
+            let home = scratch("install");
+            std::fs::create_dir_all(home.join(".claude")).unwrap();
+            std::fs::create_dir_all(home.join(".agents")).unwrap();
+            let versions = home.join("config/versions.txt");
+
+            install_skill_in(&home, &versions, V);
+
+            assert_eq!(std::fs::read_to_string(skill_file(&home, ".claude")).unwrap(), SKILL);
+            assert_eq!(std::fs::read_to_string(skill_file(&home, ".agents")).unwrap(), SKILL);
+            let recorded = read_versions(&versions);
+            assert_eq!(recorded.get("klark").map(String::as_str), Some(V));
+            assert_eq!(recorded.get("skill.claude").map(String::as_str), Some(V));
+            assert_eq!(recorded.get("skill.agents").map(String::as_str), Some(V));
+        }
+
+        #[test]
+        fn skips_agent_folders_that_do_not_exist() {
+            let home = scratch("absent");
+            let versions = home.join("config/versions.txt");
+            install_skill_in(&home, &versions, V);
+            assert!(!home.join(".claude").exists());
+            assert!(!home.join(".agents").exists());
+            assert!(read_versions(&versions).get("skill.claude").is_none());
+        }
+
+        #[test]
+        fn leaves_up_to_date_skill_alone() {
+            let home = scratch("current");
+            std::fs::create_dir_all(home.join(".claude")).unwrap();
+            let versions = home.join("config/versions.txt");
+            install_skill_in(&home, &versions, V);
+
+            // Same text and same recorded version: the file must not be rewritten.
+            let file = skill_file(&home, ".claude");
+            let before = std::fs::metadata(&file).unwrap().modified().unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(1100));
+            install_skill_in(&home, &versions, V);
+            let after = std::fs::metadata(&file).unwrap().modified().unwrap();
+            assert_eq!(before, after);
+        }
+
+        #[test]
+        fn replaces_skill_when_recorded_version_is_older() {
+            let home = scratch("upgrade");
+            std::fs::create_dir_all(home.join(".claude")).unwrap();
+            let versions = home.join("config/versions.txt");
+            install_skill_in(&home, &versions, "0.9.5+3");
+            let file = skill_file(&home, ".claude");
+            std::fs::write(&file, "---\nname: klark\n---\nold klark skill\n").unwrap();
+
+            install_skill_in(&home, &versions, V);
+
+            assert_eq!(std::fs::read_to_string(&file).unwrap(), SKILL);
+            assert_eq!(read_versions(&versions).get("klark").map(String::as_str), Some(V));
+        }
+
+        #[test]
+        fn never_overwrites_a_skill_that_is_not_klarks() {
+            let home = scratch("foreign");
+            std::fs::create_dir_all(home.join(".agents")).unwrap();
+            let file = skill_file(&home, ".agents");
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            let theirs = "---\nname: other-tool\n---\nmine\n";
+            std::fs::write(&file, theirs).unwrap();
+
+            install_skill_in(&home, &home.join("config/versions.txt"), V);
+
+            assert_eq!(std::fs::read_to_string(&file).unwrap(), theirs);
+        }
+
+        #[test]
+        fn installs_when_skill_is_missing_even_with_a_record() {
+            let home = scratch("missing");
+            std::fs::create_dir_all(home.join(".claude")).unwrap();
+            let versions = home.join("config/versions.txt");
+            std::fs::create_dir_all(versions.parent().unwrap()).unwrap();
+            std::fs::write(&versions, "klark=0.9.5+4\nskill.claude=0.9.5+4\n").unwrap();
+
+            install_skill_in(&home, &versions, V);
+
+            assert_eq!(std::fs::read_to_string(skill_file(&home, ".claude")).unwrap(), SKILL);
+        }
     }
 }

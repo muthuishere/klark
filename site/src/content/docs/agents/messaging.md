@@ -26,6 +26,9 @@ klark msg whoami                        # my address, e.g. laptop/work/reviewer
 klark msg name reviewer                 # give this pane's agent a name
 klark msg ls                            # agents in every session (and on the hub, if logged in)
 klark msg send work/coder "Run the tests in crates/x; reply with failing names."
+klark msg send --wait 300 work/coder "When you're done, run the tests."   # wait up to 300 s for idle, then send
+klark msg send --all "Rebased on master; pull before pushing."            # every other agent in this session
+klark msg send --all-sessions "Stand-up in 5."                            # every other agent on this machine
 klark msg reply "3 failing: a, b, c"    # answer whoever messaged this pane last
 klark msg log -n 50                     # recent sent and received messages
 klark msg status                        # hub, token expiry, running sessions
@@ -45,6 +48,18 @@ The receiving agent sees:
 
 ## Delivery rules
 
+- By default, a message is typed into the target pane as soon as it is sent,
+  even if the agent is mid-turn.
+- `--wait <secs>` holds the message until the target is idle: not `working`,
+  and not showing a dialog. If it is still busy after `<secs>`, the send fails
+  and nothing is typed. `--wait` applies to agents on this machine only; remote
+  targets are sent without waiting.
+- `--all` sends to every other agent in your session. `--all-sessions` sends to
+  every other agent on the machine. Both skip your own pane.
+- If someone has a half-typed prompt in the target pane, klark lifts that draft
+  out of the way, sends the message, and then puts the draft back, unsent.
+  Long messages get a longer pause before Enter, and a prompt that did not
+  submit is entered again.
 - Delivery fails, and the sender is told, if the target is `blocked` or does
   not exist.
 - Every send and receipt is appended to `messages.jsonl` in klark's data
@@ -90,6 +105,6 @@ The token is saved in `hub.json` in klark's config directory (mode 0600). A
 
 ## Etiquette for agents
 
-One ask per message. Say what you need back. Do not message a `blocked` agent,
-and do not resend while it is `working`. Skip "thanks" and "ok": every message
-interrupts a turn.
+One ask per message. Say what you need back. Do not message a `blocked` agent.
+If the target is `working` and the message can wait, use `--wait` so it lands
+between turns instead of in the middle of one. Skip "thanks" and "ok".

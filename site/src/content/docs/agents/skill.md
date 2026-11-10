@@ -14,10 +14,22 @@ running inside a klark pane to:
 
 The same file is compiled into the binary, so it always matches your klark.
 
-## Install it for Claude Code
+## Installed automatically
+
+klark installs the skill when `klark server` starts. It writes to:
+
+- `~/.claude/skills/klark/SKILL.md` (Claude Code)
+- `~/.agents/skills/klark/SKILL.md` (the shared agents folder)
+
+It writes only where that folder already exists. It installs when `SKILL.md` is
+missing or out of date. Each install is recorded in `versions.txt` in klark's
+config directory (`~/.config/klark/versions.txt`), so you can see which klark
+version installed the skill. It never replaces a `SKILL.md` that is not
+klark's own. Set `KLARK_NO_SKILL_INSTALL=1` to turn this off.
+
+To install it by hand, or to see the exact file this binary ships:
 
 ```sh
-mkdir -p ~/.claude/skills/klark
 klark --skill > ~/.claude/skills/klark/SKILL.md
 ```
 
