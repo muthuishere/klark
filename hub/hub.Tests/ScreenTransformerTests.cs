@@ -13,7 +13,11 @@ public class ScreenTransformerTests
     [InlineData("", "claude-code.screen.txt", ScreenKind.Claude)]
     [InlineData("devin", "devin.screen.txt", ScreenKind.Devin)]
     [InlineData("", "devin.screen.txt", ScreenKind.Devin)]
-    [InlineData("codex", "codex.screen.txt", ScreenKind.Devin)]
+    [InlineData("codex", "codex.screen.txt", ScreenKind.Codex)]
+    [InlineData("", "codex-idle.screen.txt", ScreenKind.Codex)]
+    [InlineData("agy", "agy.screen.txt", ScreenKind.Agy)]
+    [InlineData("Antigravity", "agy.screen.txt", ScreenKind.Agy)]
+    [InlineData("", "agy.screen.txt", ScreenKind.Agy)]
     [InlineData("", "generic-shell.screen.txt", ScreenKind.Generic)]
     [InlineData("aider", "generic-agent.screen.txt", ScreenKind.Generic)]
     public void PicksTheTransformerByAgentThenByScreen(string agent, string fixture, ScreenKind want) =>
@@ -61,6 +65,36 @@ public class ScreenTransformerTests
         Assert.Equal(("tool_use", "Bash", "go test ./..."), (turns[4].Kind, turns[4].Tool, turns[4].Summary));
         Assert.Equal("The endpoint is in place and tests pass.", turns[^1].Text);
         Assert.DoesNotContain(turns, t => t.Text.Contains("context left") || t.Text.Contains("Ctrl+C") || t.Text.Contains("Working"));
+    }
+
+    [Fact]
+    public void Codex_IdleScreenDropsPlaceholderFooterAndPreamble()
+    {
+        var turns = ScreenTransformers.Codex(Fixture("codex-idle.screen.txt"));
+        Assert.Equal(new[] { ("user", "hi"), ("assistant", "Hi! What can I help you with?") }, turns.Select(t => (t.Role, t.Text)));
+        foreach (var gone in new[] { "Ask Codex to do anything", "for agents", "Model changed", "loose ends", "permissions", "/private/tmp", "Worked for" })
+            Assert.DoesNotContain(turns, t => t.Text.Contains(gone));
+    }
+
+    [Fact]
+    public void Codex_PlaceholderWordsSentAsAPromptStayAUserTurn()
+    {
+        var turns = ScreenTransformers.Codex("› Explain this codebase\n\n• It is a hub.\n\n› Ask Codex to do anything\n");
+        Assert.Equal(new[] { ("user", "Explain this codebase"), ("assistant", "It is a hub.") }, turns.Select(t => (t.Role, t.Text)));
+    }
+
+    [Fact]
+    public void Agy_ReplyIsItsOwnTurnAndTheBannerIsGone()
+    {
+        var turns = ScreenTransformers.Agy(Fixture("agy.screen.txt"));
+        Assert.Equal(new[]
+        {
+            ("user", "/model"), ("assistant", "Model set to Gemini 3.8 Flash (Low)"),
+            ("user", "hi"), ("assistant", "Hello! How can I help you today?"),
+        }, turns.Select(t => (t.Role, t.Text)));
+        Assert.All(turns, t => Assert.Equal("text", t.Kind));
+        foreach (var gone in new[] { "Antigravity", "@", "▄", "▀", "for shortcuts", "─" })
+            Assert.DoesNotContain(turns, t => t.Text.Contains(gone));
     }
 
     [Fact]

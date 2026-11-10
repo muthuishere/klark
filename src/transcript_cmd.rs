@@ -94,6 +94,35 @@ pub fn claude_items(line: &str, offset: u64) -> Vec<Value> {
         return vec![];
     };
     let ty = v.get("type").and_then(Value::as_str).unwrap_or("");
+    // Newer Claude Code logs a slash command and its output (/context, /mcp ...) as
+    // `system` entries with subtype `local_command`: the command-name tags, then the
+    // local-command-stdout tags. Pass them on as text; the hub shows the command as the
+    // person's line and the output as the answer.
+    if ty == "system" && v.get("subtype").and_then(Value::as_str) == Some("local_command") {
+        let Some(text) = v
+            .get("content")
+            .and_then(Value::as_str)
+            .filter(|t| !t.trim().is_empty())
+        else {
+            return vec![];
+        };
+        let uuid = v
+            .get("uuid")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("L{offset}"));
+        let mut item = json!({
+            "id": uuid,
+            "cursor": offset.to_string(),
+            "role": "user",
+            "kind": "text",
+            "text": text,
+        });
+        if let Some(ts) = v.get("timestamp") {
+            item["ts"] = ts.clone();
+        }
+        return vec![item];
+    }
     if !matches!(ty, "user" | "assistant") || v.get("isMeta").and_then(Value::as_bool) == Some(true)
     {
         return vec![];
@@ -533,6 +562,25 @@ mod tests {
 {"type":"user","uuid":"u3","timestamp":"2026-11-06T10:00:02Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":[{"type":"text","text":"BIGRESULT"}],"is_error":false}]}}
 {"type":"assistant","uuid":"a2","timestamp":"2026-11-06T10:00:03Z","message":{"role":"assistant","content":[{"type":"text","text":"Done."}]}}
 "#;
+
+    #[test]
+    fn slash_command_entries_logged_as_system_local_command_are_kept() {
+        let cmd = r#"{"type":"system","subtype":"local_command","uuid":"s1","timestamp":"2026-11-10T00:00:00Z","content":"<command-name>/context</command-name>\n<command-message>context</command-message>","isMeta":false}"#;
+        let out = r#"{"type":"system","subtype":"local_command","uuid":"s2","content":"<local-command-stdout>Context Usage</local-command-stdout>"}"#;
+        let empty = r#"{"type":"system","subtype":"local_command","uuid":"s3","content":"  "}"#;
+        let other = r#"{"type":"system","subtype":"informational","uuid":"s4","content":"hi"}"#;
+        let a = claude_items(cmd, 0);
+        assert_eq!(a.len(), 1);
+        assert_eq!(a[0]["id"], "s1");
+        assert_eq!(a[0]["role"], "user");
+        assert!(a[0]["text"].as_str().unwrap().contains("<command-name>/context"));
+        assert_eq!(a[0]["ts"], "2026-11-10T00:00:00Z");
+        let b = claude_items(out, 10);
+        assert_eq!(b[0]["id"], "s2");
+        assert!(b[0]["text"].as_str().unwrap().contains("<local-command-stdout>"));
+        assert!(claude_items(empty, 20).is_empty());
+        assert!(claude_items(other, 30).is_empty());
+    }
 
     fn fixture(tag: &str, body: &str) -> PathBuf {
         let p = std::env::temp_dir().join(format!(

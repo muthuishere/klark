@@ -77,6 +77,7 @@
         @if (!offline && !readOnly && machine is not null)
         {
             <div class="composer-wrap">
+                <div class="slash-pop" role="listbox" id="@("slash-" + termId)" aria-label="Commands" hidden></div>
                 <div class="composer">
                     <InputFile id="@("up-" + termId)" class="hidden-file" accept="image/*" OnChange="UploadAsync" @ref="fileInput" />
                     <InputFile id="@("cam-" + termId)" class="hidden-file" accept="image/*" capture="environment" OnChange="UploadAsync" />
@@ -90,7 +91,7 @@
                             }
                         </div>
                     }
-                    <textarea rows="1" placeholder="@(uploading ? "Uploading image…" : attachments.Count > 0 ? "Add a message, or send the image" : view == "terminal" ? "Type into the terminal" : "Type a message")" @ref="textarea" aria-label="Message" data-attached="@(attachments.Count > 0 ? "1" : "0")"></textarea>
+                    <textarea rows="1" placeholder="@(uploading ? "Uploading image…" : attachments.Count > 0 ? "Add a message, or send the image" : view == "terminal" ? "Type into the terminal" : "Type a message")" @ref="textarea" aria-label="Message" aria-autocomplete="list" aria-controls="@("slash-" + termId)" data-attached="@(attachments.Count > 0 ? "1" : "0")"></textarea>
                     <div class="composer-row">
                         <label for="@("up-" + termId)" class="icon attach" title="Attach an image (paste and drop work too; files expire after @RetentionLabel)">@((MarkupString)Icons.Plus)</label>
                         <label for="@("cam-" + termId)" class="icon attach cam" title="Take a photo">@((MarkupString)Icons.Camera)</label>
@@ -243,7 +244,7 @@
             if (searchOpen) StateHasChanged();
             if (!offline && !readOnly)
             {
-                await JS.InvokeVoidAsync("klarkChat.composer", PaneKey, textarea, sendButton);
+                await JS.InvokeVoidAsync("klarkChat.composer", PaneKey, textarea, sendButton, SlashCommands.For(pane?.Agent));
                 await JS.InvokeVoidAsync("klarkChat.uploads", root, fileInput?.Element);
             }
         }
@@ -297,7 +298,8 @@
         // Checked here, on the server, not just by hiding the form (STATUS S-06).
         if (machine is null || !Access.CanType(user, MachineId)) return;
         var text = (await JS.InvokeAsync<string>("klarkChat.take", textarea)).TrimEnd();
-        if (attachments.Count > 0)
+        var hadAttachments = attachments.Count > 0;
+        if (hadAttachments)
         {
             // Same shape klark used when an image prompted the agent itself.
             var lines = attachments.Select(a => $"[image from hub] {a.Path}");
@@ -305,6 +307,12 @@
             attachments.Clear();
         }
         if (text.Length == 0) return;
+        // A local command (/context) of an agent whose log does not record them: chat its output from the screen.
+        if (pane is not null && Sidebar.IsAgent(pane) && Sidebar.AgentKey(pane.Agent) != "claude" && !hadAttachments && CommandOutput.IsSlashCommand(text))
+        {
+            await Feeds.SendLocalCommandAsync(machine, MachineId, PaneId, text.Trim());
+            return;
+        }
         await machine.SendInputAsync(PaneId, text);
         await machine.SendKeysAsync(PaneId, "enter");
     }

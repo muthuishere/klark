@@ -5,7 +5,7 @@ using static KlarkHub.Services.TranscriptClean;
 namespace KlarkHub.Services;
 
 /// <summary>Which screen transformer read a pane (ADR 0011, F).</summary>
-public enum ScreenKind { Claude, Devin, Generic }
+public enum ScreenKind { Claude, Devin, Codex, Agy, Generic }
 
 /// <summary>
 /// Turn an agent's SCREEN into chat turns when no structured log exists (ADR 0011, F).
@@ -26,9 +26,13 @@ public static partial class ScreenTransformers
     {
         var a = (agent ?? "").ToLowerInvariant();
         if (a.Contains("claude")) return ScreenKind.Claude;
-        if (a.Contains("devin") || a.Contains("codex")) return ScreenKind.Devin;
+        if (a.Contains("codex")) return ScreenKind.Codex;
+        if (a.Contains("devin")) return ScreenKind.Devin;
+        if (a == "agy" || a.Contains("antigravity")) return ScreenKind.Agy;
         // No agent named: judge by the screen's own markers.
         var plain = StripAnsi(raw);
+        if (CodexBanner().IsMatch(plain)) return ScreenKind.Codex;
+        if (AgyBanner().IsMatch(plain)) return ScreenKind.Agy;
         if (plain.Contains('⏺') || plain.Contains('⎿')) return ScreenKind.Claude;
         if (DevinAgentLine().IsMatch(plain) && DevinResultLine().IsMatch(plain)) return ScreenKind.Devin;
         return ScreenKind.Generic;
@@ -37,16 +41,95 @@ public static partial class ScreenTransformers
     [GeneratedRegex(@"^• \S", RegexOptions.Multiline)] private static partial Regex DevinAgentLine();
     [GeneratedRegex(@"^\s{1,6}└ ", RegexOptions.Multiline)] private static partial Regex DevinResultLine();
 
+    [GeneratedRegex(@"^\s*>_\s*OpenAI Codex", RegexOptions.Multiline)] private static partial Regex CodexBanner();
+    [GeneratedRegex(@"Antigravity CLI \d", RegexOptions.Multiline)] private static partial Regex AgyBanner();
+
     public static List<ScreenTurn> Transform(string? agent, string raw) => Pick(agent, raw) switch
     {
         ScreenKind.Claude => Claude(raw),
         ScreenKind.Devin => Devin(raw),
+        ScreenKind.Codex => Codex(raw),
+        ScreenKind.Agy => Agy(raw),
         _ => Generic(raw),
     };
 
     public static List<ScreenTurn> Claude(string raw) => Turns(BoxTables(Clean(raw)), ">❯", "⏺●", "⎿");
 
     public static List<ScreenTurn> Devin(string raw) => Turns(BoxTables(Clean(raw)), "›>", "•", "└");
+
+    // ---- codex ------------------------------------------------------------------------
+
+    // The idle composer's rotating placeholder, exactly as Codex words them.
+    [GeneratedRegex(@"^\s*› (Ask Codex to do anything|Write tests for @filename|Explain this codebase|Summarize recent commits|Implement \{feature\}|Find and fix a bug in @filename|Improve documentation in @filename|Use /skills to list available skills|Run /review on my current changes)\s*$")] private static partial Regex CodexPlaceholder();
+    // "GPT-6-Luna low · /private/tmp · thread title" and "← for agents · ? for shortcuts".
+    [GeneratedRegex(@"^\s*\S.*\s·\s(~|/)\S*(\s·\s.*)?$|^\s*←?\s*for agents\b")] private static partial Regex CodexFooter();
+    // Timing chrome, like Claude's "Sautéed for 1m 6s · done": "Worked for 3s • 11:40 AM".
+    [GeneratedRegex(@"^\s*Worked for (\d+h\s*)?(\d+m\s*)?\d+s\b(\s*•.*)?$")] private static partial Regex CodexWorked();
+    [GeneratedRegex(@"^[›•] ")] private static partial Regex CodexTurnLine();
+
+    /// <summary>
+    /// Codex: Devin's markers, minus the idle composer placeholder, the footer, the timing
+    /// line and (only while its banner is on screen) the greeting/notes before the first turn.
+    /// </summary>
+    public static List<ScreenTurn> Codex(string raw)
+    {
+        var lines = StripAnsi(raw).Replace("\r\n", "\n").Split('\n').ToList();
+        if (lines.Any(l => CodexBanner().IsMatch(l)))
+        {
+            var first = lines.FindIndex(l => CodexTurnLine().IsMatch(l));
+            lines = first < 0 ? [] : lines.Skip(first).ToList();
+        }
+        lines = lines.Where(l => !CodexFooter().IsMatch(l) && !CodexWorked().IsMatch(l)).ToList();
+        // The placeholder only counts as chrome when it is the last thing on screen.
+        var last = lines.FindLastIndex(l => l.Trim().Length > 0);
+        if (last >= 0 && CodexPlaceholder().IsMatch(lines[last])) lines.RemoveAt(last);
+        return Devin(string.Join('\n', lines));
+    }
+
+    // ---- agy (Antigravity CLI) -----------------------------------------------------------
+
+    [GeneratedRegex(@"^>\s(\S.*)$")] private static partial Regex AgyPrompt();
+    [GeneratedRegex(@"^\s*[▄▀][▄▀ ]*(\s{3,}\S.*)?$")] private static partial Regex AgyLogo();
+    [GeneratedRegex(@"^\s*\S+@\S+\s+\(Antigravity[^)]*\)")] private static partial Regex AgyAccount();
+
+    /// <summary>
+    /// Agy: "> text" is the person; everything after it up to the next prompt is the agent's
+    /// reply (it has no marker), "⎿" results are plain reply text. The logo, the account
+    /// line, rules, the empty composer and the footer are dropped.
+    /// </summary>
+    public static List<ScreenTurn> Agy(string raw)
+    {
+        var lines = StripAnsi(raw).Replace("\r\n", "\n").Split('\n').ToList();
+        if (lines.Any(l => AgyBanner().IsMatch(l)))
+        {
+            var first = lines.FindIndex(l => AgyPrompt().IsMatch(l));
+            lines = first < 0 ? [] : lines.Skip(first).ToList();
+        }
+        var cleaned = Clean(string.Join('\n', lines.Where(l => !AgyLogo().IsMatch(l) && !AgyAccount().IsMatch(l))));
+        var turns = new List<ScreenTurn>();
+        var buf = new List<string>();
+        void Flush()
+        {
+            while (buf.Count > 0 && buf[^1].Length == 0) buf.RemoveAt(buf.Count - 1);
+            while (buf.Count > 0 && buf[0].Length == 0) buf.RemoveAt(0);
+            if (buf.Count > 0) turns.Add(new ScreenTurn("assistant", "text", string.Join('\n', buf)));
+            buf.Clear();
+        }
+        foreach (var line in cleaned.Split('\n'))
+        {
+            if (AgyPrompt().Match(line) is { Success: true } ask)
+            {
+                Flush();
+                turns.Add(new ScreenTurn("user", "text", ask.Groups[1].Value.Trim()));
+                continue;
+            }
+            var t = line.TrimStart();
+            if (t.StartsWith("⎿ ")) { buf.Add(t[2..].Trim()); continue; }
+            buf.Add(line.StartsWith("  ") ? line[2..] : line);
+        }
+        Flush();
+        return turns;
+    }
 
     // ---- box-drawn tables -------------------------------------------------------------
 

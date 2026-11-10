@@ -61,6 +61,8 @@ public static partial class TranscriptClean
         new(@"^\s*(cwd|directory):\s+[~/]\S*\s*$", Opt),
         new(@"/model to change", Opt),
         new(@"^\s*To get started, describe a task", Opt),
+        // Codex's note after /model: "Model changed to gpt-6-luna low".
+        new(@"^\s*Model changed to\s", Opt),
     ];
 
     /// <summary>Lines inside a box that mean the box is a banner, not a dialog.</summary>

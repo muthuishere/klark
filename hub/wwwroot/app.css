@@ -291,7 +291,16 @@ pre.out { margin: 0; padding: 10px 14px; background: var(--out-bg); color: var(-
 /* composer: one large rounded box, like Claude's */
 .toast { max-width: 900px; margin: 0 auto 6px; width: calc(100% - 48px); padding: 8px 12px; border-radius: 10px; background: var(--card); border: 1px solid var(--line); font-size: .85rem; overflow-wrap: anywhere; cursor: pointer; }
 .toast.bad { border-color: var(--blocked); color: var(--blocked); }
-.composer-wrap { padding: 4px 24px calc(14px + env(safe-area-inset-bottom)); flex: none; }
+.composer-wrap { padding: 4px 24px calc(14px + env(safe-area-inset-bottom)); flex: none; position: relative; }
+/* slash-command popup: sits above the whole composer, so it never covers Send */
+.slash-pop { position: absolute; left: 24px; right: 24px; bottom: calc(100% - 4px); max-width: 852px; margin: 0 auto; max-height: min(260px, 40vh); overflow-y: auto;
+  background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 6px 24px rgba(0,0,0,.18); padding: 4px; z-index: 20; }
+.slash-pop[hidden] { display: none; }
+.slash-pop [role=option] { display: flex; gap: 12px; align-items: baseline; padding: 8px 10px; border-radius: 10px; cursor: pointer; min-height: 20px; }
+.slash-pop [role=option][aria-selected=true], .slash-pop [role=option]:hover { background: var(--hover); }
+.slash-name { font: 600 .9rem ui-monospace, SFMono-Regular, Menlo, monospace; flex: none; }
+.slash-desc { color: var(--muted); font-size: .85rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 860px) { .slash-pop { left: 12px; right: 12px; } .slash-pop [role=option] { padding: 11px 10px; } }
 .composer { max-width: 852px; margin: 0 auto; display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 22px; background: var(--card);
   box-shadow: 0 2px 12px rgba(0,0,0,.06); padding: 12px 10px 8px 16px; }
 .composer:focus-within { border-color: color-mix(in srgb, var(--fg) 25%, var(--line)); }

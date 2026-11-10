@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Added
+- Hub: type `/` in the message box of a Claude Code or Devin pane (and Codex, agy, Gemini, OpenCode, Cursor, Copilot, Grok) for a command list; pick with Up/Down and Tab or Enter, or tap. Lists come from each agent's own docs; agents without a documented list get no popup.
+- Hub: a slash command's answer shows in the chat. Claude's `/context`, `/mcp` and `/model` output appears as a code block under the command. For Devin and other agents, the hub captures what the command printed on screen.
+
+### Fixed
+- Hub: Codex panes no longer show the empty prompt box and footer as a message from you, nor the start-up banner, greeting or "Model changed" note.
+- Hub: agy panes no longer show the logo banner or the account email, and its reply is no longer merged into your message.
+
 ## [0.9.5.3] - 2026-11-09
 
 ### Added

@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Text.Json.Nodes;
 
 namespace KlarkHub.Services;
@@ -41,6 +42,10 @@ public sealed class TranscriptFeed
     internal readonly List<Action> Viewers = new();
     internal bool Polling;
     internal bool NoStructured;
+    /// <summary>Local command items (ids "cmd-n") kept in memory; merged into <see cref="Items"/> by time.</summary>
+    internal readonly List<ChatItem> Ephemeral = new();
+    internal readonly Dictionary<string, DateTimeOffset> FirstSeen = new();
+    internal int CommandSeq;
 }
 
 /// <summary>
@@ -313,8 +318,8 @@ public sealed class TranscriptFeeds
         feed.ScreenText = raw;
         feed.Cursor = null;
         var items = ScreenItems(ScreenTransformers.Transform(agent, raw), feed.MachineId, feed.PaneId);
-        if (!items.Select(i => i.Id).SequenceEqual(feed.Items.Select(i => i.Id)) || items.Count == 0) feed.LastActivity = DateTimeOffset.UtcNow;
-        feed.Items = items;
+        if (!items.Select(i => i.Id).SequenceEqual(Real(feed).Select(i => i.Id)) || items.Count == 0) feed.LastActivity = DateTimeOffset.UtcNow;
+        feed.Items = Merge(feed, items);
         feed.Version++;
     }
 
@@ -392,7 +397,7 @@ public sealed class TranscriptFeeds
         var replace = feed.Source != "jsonl";
         if (!replace && items.Count == 0 && cursor == feed.Cursor) return;
 
-        var list = replace ? new List<ChatItem>() : feed.Items.ToList();
+        var list = replace ? new List<ChatItem>() : Real(feed);
         var seen = list.Select(i => i.Id).ToHashSet();
         var n = list.Count;
         foreach (var o in items)
@@ -406,12 +411,121 @@ public sealed class TranscriptFeeds
         feed.Source = "jsonl";
         feed.Reader = source;
         feed.Cursor = cursor;
-        if (replace || list.Count != feed.Items.Count)
+        if (replace || list.Count != Real(feed).Count)
         {
             feed.LastActivity = list.LastOrDefault()?.Ts ?? DateTimeOffset.UtcNow;
-            feed.Items = list;
+            feed.Items = Merge(feed, list);
             feed.Version++;
         }
+    }
+
+    private static List<ChatItem> Real(TranscriptFeed feed)
+    {
+        lock (feed.Ephemeral) return feed.Items.Where(i => !feed.Ephemeral.Any(e => e.Id == i.Id)).ToList();
+    }
+
+    /// <summary>
+    /// The real items with the feed's local command items placed by time: a command goes after
+    /// every real item seen at or before it. A real item without a timestamp counts as seen when
+    /// it first arrived here.
+    /// </summary>
+    internal static List<ChatItem> Merge(TranscriptFeed feed, List<ChatItem> real)
+    {
+        lock (feed.Ephemeral)
+        {
+            if (feed.Ephemeral.Count == 0) return real;
+            var now = DateTimeOffset.UtcNow;
+            var result = new List<ChatItem>(real);
+            foreach (var e in feed.Ephemeral.OrderBy(e => e.Ts))
+            {
+                var at = result.Count;
+                for (var i = 0; i < result.Count; i++)
+                {
+                    if (result[i].Id.StartsWith("cmd-", StringComparison.Ordinal)) continue;
+                    var t = result[i].Ts;
+                    if (t is null)
+                    {
+                        if (!feed.FirstSeen.TryGetValue(result[i].Id, out var f)) feed.FirstSeen[result[i].Id] = f = now;
+                        t = f;
+                    }
+                    if (t > e.Ts) { at = i; break; }
+                }
+                // Keep the command's own items in order (user, then assistant).
+                while (at < result.Count && result[at].Id.StartsWith("cmd-", StringComparison.Ordinal) && result[at].Ts <= e.Ts) at++;
+                result.Insert(at, e);
+            }
+            return result;
+        }
+    }
+
+    /// <summary>Show a local command and (when there is any) its output in the pane's chat for every viewer.</summary>
+    internal void AddCommandItems(TranscriptFeed feed, string command, string? output, DateTimeOffset ts, int seq)
+    {
+        lock (feed.Ephemeral)
+        {
+            // Called twice per command (the command, then its output): an id is added once.
+            if (!feed.Ephemeral.Any(e => e.Id == $"cmd-{seq}"))
+                feed.Ephemeral.Add(new ChatItem($"cmd-{seq}", "user", "text", command, null, null, "", null, ts, null));
+            if (!string.IsNullOrEmpty(output) && !feed.Ephemeral.Any(e => e.Id == $"cmd-{seq}-out"))
+            {
+                var fence = output.Contains("```") ? "````" : "```";
+                var text = $"{fence}text\n{Cap(output)}\n{fence}";
+                feed.Ephemeral.Add(new ChatItem($"cmd-{seq}-out", "assistant", "text", text, null, null, "", null, ts.AddMilliseconds(1),
+                    Link(ChatMarkdown.Render(text), feed.MachineId, feed.PaneId)));
+            }
+            while (feed.Ephemeral.Count > 40) feed.Ephemeral.RemoveAt(0);
+            feed.Items = Merge(feed, Real(feed));
+            feed.Version++;
+        }
+        Notify(feed);
+    }
+
+    /// <summary>
+    /// Send a slash command to a non-Claude agent pane and chat what it printed: the user's command
+    /// at once, then its output read off the screen once that stops changing.
+    /// </summary>
+    public async Task SendLocalCommandAsync(MachineConnection machine, string machineId, string paneId, string command)
+    {
+        var feed = Get(machineId, paneId);
+        var before = await ReadVisibleAsync(machine, paneId);
+        var ts = DateTimeOffset.UtcNow;
+        int seq;
+        lock (feed.Ephemeral) seq = ++feed.CommandSeq;
+        await machine.SendInputAsync(paneId, command);
+        await machine.SendKeysAsync(paneId, "enter");
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                string? after = null, last = null;
+                var stableSince = DateTime.UtcNow;
+                var deadline = DateTime.UtcNow.AddSeconds(6);
+                while (DateTime.UtcNow < deadline)
+                {
+                    await Task.Delay(250);
+                    var now = await ReadVisibleAsync(machine, paneId);
+                    if (now != last) { last = now; stableSince = DateTime.UtcNow; continue; }
+                    after = now;
+                    // Stable, but only once it differs from the start: the command may not have drawn yet.
+                    if (DateTime.UtcNow - stableSince >= TimeSpan.FromMilliseconds(700) && CommandOutput.Extract(before, now, command).Length > 0) break;
+                }
+                after ??= last ?? "";
+                AddCommandItems(feed, command, CommandOutput.Extract(before, after, command), ts, seq);
+            }
+            catch (Exception e)
+            {
+                _log.LogWarning(e, "reading the output of {Command} on {Pane} failed", command, paneId);
+                AddCommandItems(feed, command, null, ts, seq);
+            }
+        });
+        // The command shows at once, before its output.
+        AddCommandItems(feed, command, null, ts, seq);
+    }
+
+    private static async Task<string> ReadVisibleAsync(MachineConnection machine, string paneId)
+    {
+        var r = await machine.CallAsync("pane.read", new { pane_id = paneId, source = "visible", format = "text", strip_ansi = true }, CallTimeout);
+        return r?["read"]?["text"]?.GetValue<string>() ?? "";
     }
 
     internal static ChatItem? ToItem(JsonObject o, int index)
@@ -441,6 +555,16 @@ public sealed class TranscriptFeeds
             JsonValue jv when jv.TryGetValue<string>(out var s) => s,
             _ => input.ToJsonString(new JsonSerializerOptions { WriteIndented = true }),
         };
+        // A slash command's own output (/context, /status, /mcp ...): Claude logs it as a "user"
+        // item wrapped in <local-command-stdout>. It is the answer to the command above it, so it
+        // is shown as the agent's, in a code block (its columns and grids stay aligned).
+        if (role == "user" && kind == "text" && LocalCommandOutput(text) is { } commandOut)
+        {
+            if (commandOut.Length == 0) return null;
+            role = "assistant";
+            var fence = commandOut.Contains("```") ? "````" : "```";
+            text = $"{fence}text\n{Cap(commandOut)}\n{fence}";
+        }
         if (kind is "text" or "thinking")
         {
             text = TranscriptClean.CleanStructured(text);
@@ -459,7 +583,17 @@ public sealed class TranscriptFeeds
         return new ChatItem(id, role, kind, text, tool, inputText, Summarize(tool, input), ok, ts, md, Str(o["tool_use_id"]));
     }
 
-    private static string? Cap(string? s) =>
+    private static readonly Regex LocalOut = new(@"<local-command-(?:stdout|stderr)>(.*?)</local-command-(?:stdout|stderr)>", RegexOptions.Singleline | RegexOptions.Compiled);
+
+    /// <summary>The text inside local-command-stdout/stderr tags (ANSI removed), or null when there are none.</summary>
+    internal static string? LocalCommandOutput(string? text)
+    {
+        if (string.IsNullOrEmpty(text) || !text.Contains("<local-command-", StringComparison.Ordinal)) return null;
+        var parts = LocalOut.Matches(text).Select(m => TranscriptClean.StripAnsi(m.Groups[1].Value).Trim()).Where(t => t.Length > 0);
+        return string.Join("\n", parts);
+    }
+
+    internal static string? Cap(string? s) =>
         s is { Length: > MaxToolText } ? s[..MaxToolText] + $"\n… ({s.Length - MaxToolText} more characters)" : s;
 
     private static readonly string[] SummaryKeys = ["command", "file_path", "path", "pattern", "url", "query", "description", "prompt", "notebook_path"];

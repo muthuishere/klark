@@ -266,7 +266,7 @@ window.klarkChat = (() => {
   const peek = (textarea) => textarea?.value ?? "";
 
   // Composer: Enter sends, Shift+Enter is a newline, and the draft is kept per pane.
-  function composer(key, textarea, send) {
+  function composer(key, textarea, send, commands) {
     const draftKey = "draft:" + key;
     const draft = klarkState.get(draftKey);
     if (draft && !textarea.value) {
@@ -274,8 +274,61 @@ window.klarkChat = (() => {
       textarea.dispatchEvent(new Event("input", { bubbles: true }));
     }
     const grow = () => { textarea.style.height = "auto"; textarea.style.height = Math.min(textarea.scrollHeight, 160) + "px"; };
-    textarea.addEventListener("input", () => { klarkState.set(draftKey, textarea.value); grow(); });
+    // Slash-command popup: shown while the text is "/word" with no space yet.
+    const pop = textarea.closest(".composer-wrap")?.querySelector(".slash-pop");
+    const cmds = Array.isArray(commands) ? commands : [];
+    let rows = [], sel = 0;
+    const popOpen = () => !!pop && !pop.hidden && rows.length > 0;
+    const popClose = () => {
+      if (!pop) return;
+      pop.hidden = true; rows = [];
+      textarea.removeAttribute("aria-activedescendant"); textarea.setAttribute("aria-expanded", "false");
+    };
+    const paint = () => {
+      pop.replaceChildren(...rows.map((c, i) => {
+        const el = document.createElement("div");
+        el.id = pop.id + "-" + i; el.setAttribute("role", "option");
+        el.setAttribute("aria-selected", i === sel ? "true" : "false");
+        const n = document.createElement("span"); n.className = "slash-name"; n.textContent = c.name;
+        const d = document.createElement("span"); d.className = "slash-desc"; d.textContent = c.description;
+        el.append(n, d);
+        el.addEventListener("mousedown", (e) => e.preventDefault()); // keep the caret in the box
+        el.addEventListener("click", () => pick(i));
+        return el;
+      }));
+      textarea.setAttribute("aria-activedescendant", pop.id + "-" + sel);
+      pop.children[sel]?.scrollIntoView({ block: "nearest" });
+    };
+    const refresh = () => {
+      const v = textarea.value;
+      if (!pop || !cmds.length || !/^\/[^\s]*$/.test(v)) return popClose();
+      const q = v.toLowerCase();
+      const pre = cmds.filter((c) => c.name.startsWith(q));
+      const sub = cmds.filter((c) => !c.name.startsWith(q) && c.name.includes(q.slice(1)));
+      rows = [...pre, ...sub];
+      if (!rows.length || (rows.length === 1 && rows[0].name === v)) return popClose();
+      sel = 0; pop.hidden = false; textarea.setAttribute("aria-expanded", "true"); paint();
+    };
+    const pick = (i) => {
+      const c = rows[i];
+      if (!c) return;
+      textarea.value = c.name + " ";
+      popClose();
+      textarea.focus();
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    };
+    if (pop) { textarea.setAttribute("role", "combobox"); textarea.setAttribute("aria-expanded", "false"); }
+    textarea.addEventListener("input", () => { klarkState.set(draftKey, textarea.value); grow(); refresh(); });
+    textarea.addEventListener("blur", () => setTimeout(popClose, 150));
     textarea.addEventListener("keydown", (e) => {
+      if (popOpen() && !e.isComposing) {
+        if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+          e.preventDefault();
+          sel = (sel + (e.key === "ArrowDown" ? 1 : rows.length - 1)) % rows.length; paint(); return;
+        }
+        if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) { e.preventDefault(); pick(sel); return; }
+        if (e.key === "Escape") { e.preventDefault(); popClose(); return; }
+      }
       if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
         e.preventDefault();
         if (textarea.value.trim() || textarea.dataset.attached === "1") { klarkState.set(draftKey, ""); send.click(); setTimeout(grow, 50); }
@@ -283,6 +336,7 @@ window.klarkChat = (() => {
     });
     send.addEventListener("click", () => { setTimeout(() => { if (!textarea.value) klarkState.set(draftKey, ""); grow(); }, 50); });
     grow();
+    refresh();
   }
 
   // Paste or drop an image anywhere on the pane page: hand it to the InputFile.

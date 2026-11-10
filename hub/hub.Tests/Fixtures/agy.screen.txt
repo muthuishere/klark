@@ -1,0 +1,18 @@
+      ▄▀▀▄        Antigravity CLI 1.5.3
+     ▀▀▀▀▀▀       user@example.com (Antigravity Starter Quota)
+    ▀▀▀▀▀▀▀▀      Gemini 3.8 Flash (Low)
+   ▄▀▀    ▀▀▄     /tmp
+  ▄▀▀      ▀▀▄
+
+> /model
+  ⎿  Model set to Gemini 3.8 Flash (Low)
+
+────────────────────────────────────────────────────────────
+> hi
+
+  Hello! How can I help you today?
+
+──────────────────────────────────────────────────────────────────────────────
+>
+──────────────────────────────────────────────────────────────────────────────
+? for shortcuts                                              Gemini 3.8 Flash (Low)

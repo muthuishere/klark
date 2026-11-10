@@ -180,13 +180,16 @@ public class TranscriptCleanTests
     [InlineData("""{"role":"system","kind":"text","text":"hook ran"}""")]
     [InlineData("""{"role":"user","kind":"meta","text":"x"}""")]
     [InlineData("""{"role":"user","kind":"text","text":"x","meta":true}""")]
-    [InlineData("""{"role":"user","kind":"text","text":"<local-command-stdout>ok</local-command-stdout>"}""")]
     [InlineData("""{"role":"user","kind":"text","text":"<system-reminder>r</system-reminder>"}""")]
     [InlineData("""{"role":"assistant","kind":"text","text":"   "}""")]
     [InlineData("""{"role":"assistant","kind":"text"}""")]
     [InlineData("""{"role":"assistant","kind":"thinking","text":""}""")]
     public void StructuredItems_NeverShowSystemMetaOrEmpty(string json) =>
         Assert.Null(TranscriptFeeds.ToItem((JsonObject)JsonNode.Parse(json)!, 0));
+
+    [Fact]
+    public void CodexModelChangeNote_IsChrome() =>
+        Assert.Equal("› hi", TranscriptClean.Clean("Model changed to gpt-6-luna low\n\n› hi"));
 
     [Fact]
     public void StructuredItems_KeepRealTurnsAndTools()
