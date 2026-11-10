@@ -254,7 +254,7 @@ klark agent wait work/coder --timeout 900000
 klark agent read work/coder --lines 30
 ```
 
-Etiquette: one ask per message, say what you need back and in what form, include paths/branch/PR the other agent cannot see. Check `klark msg ls` first: don't message a `blocked` agent (it waits on a person) and don't resend while it is `working`. No "thanks"/"ok" messages; every message interrupts a turn.
+Etiquette: one ask per message, say what you need back and in what form, include paths/branch/PR the other agent cannot see. Check `klark msg ls` first: don't message a `blocked` agent (it waits on a person). If the target is `working` and the message can wait, use `--wait <secs>` so it lands between turns instead of mid-turn. Remote targets are not waited on. No "thanks"/"ok" messages.
 
 ## Linking to a hub (`klark hub`)
 
