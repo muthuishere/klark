@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## [0.9.5.5] - 2026-11-10
+
+### Added
+- `klark server` installs and keeps up to date the klark skill for your agents. It writes `skills/klark/SKILL.md` under `~/.claude` (Claude Code) and `~/.agents` only when those folders already exist, replaces only a klark skill file, and leaves every other skill alone. What it installed is recorded in `~/.config/klark/versions.txt`; the skill is rewritten only when the klark version changes.
+
+### Changed
+- The release version now comes from the git tag (`v0.9.5.5` is `0.9.5+5`) instead of being typed into the build, and is what `versions.txt` records.
+- Docs: the skill and messaging pages describe the auto-install and the messaging options.
+
 ## [0.9.5.4] - 2026-11-10
 
 ### Added
