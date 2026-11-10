@@ -3,8 +3,44 @@ title: Install
 description: Download klark from the GitHub release, or build it from source.
 ---
 
-klark is one binary. Download it from the
-[latest GitHub release](https://github.com/muthuishere/klark/releases/latest), or build it from source.
+klark is one binary. The quickest way to get it is one line.
+
+## One line
+
+macOS and Linux, with curl or wget:
+
+```sh
+curl -fsSL https://muthuishere.github.io/klark/install.sh | sh
+```
+
+```sh
+wget -qO- https://muthuishere.github.io/klark/install.sh | sh
+```
+
+Windows, in PowerShell:
+
+```powershell
+irm https://muthuishere.github.io/klark/install.ps1 | iex
+```
+
+Each script picks the build for your machine from the
+[latest GitHub release](https://github.com/muthuishere/klark/releases/latest), checks its
+sha256, installs it without admin or root and tells you if the folder is not on your PATH. The
+Windows script adds it to your user PATH.
+
+Options (set them before the command):
+
+| setting | meaning | default |
+|---|---|---|
+| `KLARK_VERSION=v0.9.5.4` (PowerShell: `$env:KLARK_VERSION = "v0.9.5.4"`) | install that release | the latest |
+| `INSTALL_DIR=/usr/local/bin` (PowerShell: `$env:INSTALL_DIR = "C:\tools"`) | where to put klark | `~/.local/bin`; on Windows `%LOCALAPPDATA%\klark\bin` |
+
+For example: `curl -fsSL https://muthuishere.github.io/klark/install.sh | KLARK_VERSION=v0.9.5.4 sh`.
+
+Prefer to read a script before you run it? It is plain text:
+[install.sh](https://muthuishere.github.io/klark/install.sh) and
+[install.ps1](https://muthuishere.github.io/klark/install.ps1). Then see the
+[Quick start](/start/quickstart/) for your first session.
 
 ## Download from the latest GitHub release
 

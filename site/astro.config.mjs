@@ -43,6 +43,7 @@ export default defineConfig({
 				{
 					label: 'Getting started',
 					items: [
+						{ slug: 'start/quickstart' },
 						{ slug: 'start/install' },
 						{ slug: 'start/sessions' },
 						{ slug: 'start/panes-and-tabs' },
