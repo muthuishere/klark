@@ -15,27 +15,38 @@ klark hub connect --url http://hub.lan:7470
 
 It prints a code such as `ABCD-EFGH` and a link, and opens your browser
 (`--no-browser` to skip that). Open the link while signed in to the hub, check
-the code matches, and press **Approve**. The machine receives its token, saves
-it, and starts exposing its sessions in the same process.
+the code matches, and press **Approve**. The machine receives its token and saves it.
 
-Codes expire after 10 minutes. Any signed-in user may approve. They are recorded
-as the machine's owner, and only they or an admin can re-key a machine of that
-name.
+Then the connection **runs in the background**, detached from your terminal. Closing the
+tab does not drop the machine off the hub. It logs to `~/.config/klark/hub-<name>.log`.
+Add `--foreground` to keep it in the terminal instead (`ctrl+c` ends it).
 
-Leave the command running: it is the link. Stop it with `ctrl+c`.
+- **The hub becomes the default hub.** The first hub you save is the default; `klark msg` and
+  `klark offer` use it.
+- **One hub connection at a time.** Connecting to a hub ends any other background connection.
+- Codes expire after 10 minutes. Any signed-in user may approve. They are recorded
+  as the machine's owner, and only they or an admin can re-key a machine of that name.
+
+```sh
+klark hub stop        # end the connection (alias: disconnect)
+klark hub ls          # saved hubs; tokens are never printed
+klark hub status      # URL, reachable?, machine name, is a link running?
+```
+
+To check it worked, open the hub: the machine's agents appear in the sidebar.
 
 ## Saved hubs
 
 Hubs are saved in `~/.config/klark/hubs.json` (mode 0600). The name defaults to
-the URL's host; `--as <name>` picks another. The first hub saved is the default.
+the URL's host; `--as <name>` picks another.
 
 ```sh
 klark hub connect                     # reconnect to the default hub with the saved token
 klark hub connect lab                 # a saved hub by name
 klark hub connect lab --agents reviewer,builder   # expose only some agents
-klark hub ls                          # saved hubs; tokens are never printed
+klark hub ls                          # saved hubs
 klark hub use lab                     # make "lab" the default
-klark hub status [lab]                # URL, reachable?, machine name, is a link running?
+klark hub status [lab]
 klark hub rm lab
 ```
 

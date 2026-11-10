@@ -4,21 +4,45 @@ description: Every pane opens as a chat. Claude, Devin, Codex, other agents, and
 ---
 
 import { Image } from 'astro:assets';
-import claude from '../../../assets/screens/chat-claude-1440.png';
-import claude390 from '../../../assets/screens/chat-claude-390.png';
-import devin from '../../../assets/screens/chat-devin-1920.png';
-import devin390 from '../../../assets/screens/chat-devin-390.png';
+import claude from '../../../assets/hub/desktop-claude.webp';
+import claude390 from '../../../assets/hub/phone-claude.webp';
+import devin from '../../../assets/hub/desktop-devin.webp';
+import devin390 from '../../../assets/hub/phone-devin.webp';
+import agy from '../../../assets/hub/desktop-agy.webp';
+import agy390 from '../../../assets/hub/phone-agy.webp';
+import slash from '../../../assets/hub/slash-autocomplete.webp';
+import preview from '../../../assets/hub/file-preview.webp';
 import shell from '../../../assets/screens/shell-blocks-1920.png';
 import shell390 from '../../../assets/screens/shell-blocks-390.png';
 
 Opening a pane shows a **chat**, on every screen size. The live terminal opens
 only from its toggle.
 
+## What the chat gives you
+
+- **Agent names in the list.** Each row in the sidebar shows the agent's name (what you gave it with
+  `klark msg name`, else its title) with the agent kind and a preview of the latest message under it.
+- **`/` autocomplete.** Type `/` in the composer and a popup lists the agent's slash commands.
+  Claude Code and Devin get it with their full built-in command lists; Codex, agy (Antigravity), Gemini,
+  OpenCode, Cursor, Copilot and Grok get lists too. Other agents and plain shells get no popup.
+- **Slash-command answers in the chat.** `/context`, `/model`, `/status` and the like show what the
+  agent printed, as a block in the chat, so you do not need the terminal.
+- **File paths as links.** An absolute path in an answer opens a [preview](/app/files/). The hub asks the
+  agent to name files by absolute path (the [agent note](/reference/hub-config/#the-agent-note)).
+- **Phone view.** The same chat, one column, with a camera button for sending a photo to the agent.
+- **[Themes](/app/tour/#themes).** Paper is the default.
+- **Long chats stay fast.** Only the newest rows are drawn; **Show earlier** adds more.
+
+<figure class="shot">
+	<Image src={slash} alt="The composer with /co typed: a popup lists /compact, /config, /context and /cost, each with a one-line description, above a /context answer shown in the chat." />
+	<figcaption>Type <code>/</code> and the agent's commands complete. The answer to <code>/context</code> is in the chat.</figcaption>
+</figure>
+
 ## Claude Code
 
 <div class="shots">
-	<Image src={claude} alt="A Claude Code session as a chat: prose, a table, folded tool rows." />
-	<Image src={claude390} alt="The same chat on a phone." />
+	<Image src={claude} alt="A Claude Code chat on a desktop: the agent list on the left with names, and a reply in which /tmp/hubtest/claude-notes.txt appears as a clickable file link." />
+	<Image class="phone" src={claude390} alt="The same Claude Code chat on a phone, with the file link and the message box." />
 </div>
 
 - Your prompts and the agent's turns are separate blocks.
@@ -36,8 +60,15 @@ Devin and Codex get the same chat with their own accent. Any other agent gets a
 generic chat built from its cleaned screen.
 
 <div class="shots">
-	<Image src={devin} alt="A Devin session as a chat." />
-	<Image src={devin390} alt="The Devin chat on a phone." />
+	<Image src={devin} alt="A Devin chat: folded tool rows such as 'write · Ran 1 command · thought', a bash code block with a Copy button, and file links." />
+	<Image class="phone" src={devin390} alt="The Devin chat on a phone." />
+</div>
+
+An agy (Antigravity) chat, with a highlighted Python code block:
+
+<div class="shots">
+	<Image src={agy} alt="An agy chat with a Python code block that has a language label, syntax colours and a Copy button." />
+	<Image class="phone" src={agy390} alt="The agy chat on a phone; the code block scrolls sideways." />
 </div>
 
 ### Where the chat comes from
@@ -63,11 +94,21 @@ like Warp's blocks.
 	<Image src={shell390} alt="Command blocks on a phone." />
 </div>
 
+## File paths and the preview
+
+When the agent writes an absolute path such as `/tmp/hubtest/claude-notes.txt`, the chat turns it into a
+link. A click opens the file in the viewer, with line numbers, find, wrap, raw, copy and download.
+
+<figure class="shot">
+	<Image src={preview} alt="The file viewer showing claude-notes.txt: four numbered lines, a Find in file box, Wrap, Raw, Copy and Download buttons." />
+	<figcaption>The preview of a file the agent just wrote. More in <a href="../files/">File links and the viewer</a>.</figcaption>
+</figure>
+
 ## The composer
 
 One box at the bottom: type, attach (**+**), send.
 
-- **Enter** sends, **Shift+Enter** is a new line.
+- **Enter** sends, **Shift+Enter** is a new line. **`/`** opens the command popup (arrow keys move, Tab or Enter pick, Esc closes).
 - Typing never calls the server. Send delivers the text in one call.
 - Read-only users (`Hub:Auth:ReadOnlyGroups`) see the chat but cannot type.
 

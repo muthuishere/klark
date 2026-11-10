@@ -4,9 +4,9 @@ description: Download klark from the GitHub release, or build it from source.
 ---
 
 klark is one binary. Download it from the
-[latest release](https://github.com/muthuishere/klark/releases/latest), or build it from source.
+[latest GitHub release](https://github.com/muthuishere/klark/releases/latest), or build it from source.
 
-## Download
+## Download from the latest GitHub release
 
 | platform | file |
 |---|---|
@@ -54,19 +54,29 @@ A debug build (`cargo build`) works too. It keeps its config and sockets in
 `~/.config/klark-dev` instead of `~/.config/klark`, so it never touches the
 sessions of a release build.
 
-## Run it
+## Start klark in a terminal
 
 ```sh
 klark
 ```
 
 This starts the background server if it is not running, and attaches to the
-default session. Detach with `ctrl+b q`. The panes keep running.
+default session. Start an agent (`claude`, `devin`, `codex`, ...) in a pane.
+**Detach with `ctrl+b q`**: the panes keep running, and `klark` attaches again.
 
 ```sh
-klark status       # client and server status
+klark status       # local client and running server status
+klark server       # run the server in the foreground, no UI (for a service or a headless box)
+klark server stop  # stop the running server
 klark --help       # every command
 ```
+
+`klark -s` gives each project folder its own session: see [Sessions](/start/sessions/).
+
+## Next: the hub, if you want a browser view
+
+klark works fully in a terminal. To watch and answer your agents from a browser
+or a phone, [run the hub](/hub/run/) and [connect this machine](/hub/machines/).
 
 ## Where things live
 

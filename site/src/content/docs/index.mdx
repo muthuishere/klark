@@ -4,9 +4,6 @@ description: A terminal workspace for coding agents, and a self-hosted web hub t
 template: splash
 hero:
   tagline: A terminal workspace for coding agents, with a self-hosted web hub where your team watches and answers every agent on every machine.
-  image:
-    file: ../../assets/screens/chat-claude-1440.png
-    alt: The klark hub showing a Claude Code session as a chat, with the agent list in the sidebar.
   actions:
     - text: Get started
       link: start/install/
@@ -17,6 +14,17 @@ hero:
 ---
 
 import { Card, CardGrid, Steps } from '@astrojs/starlight/components';
+import { Image } from 'astro:assets';
+import deskClaude from '../../assets/hub/desktop-claude.webp';
+import phoneClaude from '../../assets/hub/phone-claude.webp';
+import phoneDevin from '../../assets/hub/phone-devin.webp';
+import phoneAgy from '../../assets/hub/phone-agy.webp';
+import slash from '../../assets/hub/slash-autocomplete.webp';
+
+<figure class="shot">
+	<Image src={deskClaude} alt="The klark hub on a desktop, in the Paper theme. The sidebar lists four agents by name; the main area is a Claude Code chat where a file path is a clickable link." />
+	<figcaption>The hub: every agent by name on the left, the selected agent's chat on the right, file paths as links.</figcaption>
+</figure>
 
 ## What it does
 
@@ -38,29 +46,57 @@ import { Card, CardGrid, Steps } from '@astrojs/starlight/components';
 	</Card>
 </CardGrid>
 
+## On your phone, too
+
+The hub is one column on a small screen: pick an agent, read its chat, answer it.
+
+<div class="phones">
+	<figure>
+		<Image class="phone" src={phoneClaude} alt="Claude Code chat on a phone with a clickable file path." />
+		<figcaption>Claude Code: file paths are links.</figcaption>
+	</figure>
+	<figure>
+		<Image class="phone" src={phoneDevin} alt="Devin chat on a phone with folded tool rows and file links." />
+		<figcaption>Devin: tool calls fold into one line.</figcaption>
+	</figure>
+	<figure>
+		<Image class="phone" src={phoneAgy} alt="agy chat on a phone with a syntax-highlighted Python code block." />
+		<figcaption>agy: code blocks with a Copy button.</figcaption>
+	</figure>
+</div>
+
+Type `/` to complete an agent's slash commands, and the answer lands in the chat:
+
+<figure class="shot">
+	<Image src={slash} alt="The message box with /co typed and a popup listing /compact, /config, /context and /cost." />
+	<figcaption>Slash-command autocomplete for Claude Code and Devin, with command lists for Codex, agy, Gemini, OpenCode, Cursor, Copilot and Grok.</figcaption>
+</figure>
+
 ## 60-second quickstart
 
-You need Rust, Zig 0.16 and Docker.
+You need klark and Docker (or the .NET 10 SDK to run the hub from source).
 
 <Steps>
 
-1. Build klark and start a session named after the current folder.
+1. Get klark: [download a binary from the latest GitHub release](/start/install/), or build it (Rust and Zig 0.16).
 
    ```sh
    cargo build --release
    ./target/release/klark -s
    ```
 
-   Detach with `ctrl+b q`. Run `klark -s` again in the same folder to come back.
+   `klark` starts the background server and attaches; `-s` names the session after the current folder.
+   Detach with `ctrl+b q` and the panes keep running. `klark status` shows what is running.
 
-2. Start a hub.
+2. Start a hub, with Docker.
 
    ```sh
-   docker build -t klarkhub hub
-   docker run -d --name klarkhub -p 7470:7470 -v klarkhub-data:/data klarkhub
+   docker run -d --name klarkhub -p 7470:7470 -v klarkhub-data:/data \
+     ghcr.io/muthuishere/klarkhub:latest
    ```
 
    Open `http://localhost:7470` and sign in as `admin` / `adminadmin`. Change the password when the banner asks.
+   From source instead: `cd hub && dotnet run` (listens on `http://localhost:7470`). See [Run the hub](/hub/run/).
 
 3. Link this machine.
 
@@ -68,7 +104,8 @@ You need Rust, Zig 0.16 and Docker.
    klark hub connect --url http://localhost:7470
    ```
 
-   Open the link it prints, check the code, and press Approve. Your agents now show up in the hub.
+   Open the link it prints, check the code, and press Approve. The link then runs in the background and this hub
+   becomes your default. `klark hub stop` ends it; `klark hub ls` lists saved hubs. Your agents now show up in the hub.
 
 </Steps>
 

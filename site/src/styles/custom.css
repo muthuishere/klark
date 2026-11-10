@@ -1,31 +1,125 @@
-/* Calm, readable defaults on top of Starlight's own light/dark themes. */
+/*
+ * The docs wear the hub's "Paper" theme (hub/wwwroot/app.css, :root[data-theme="paper"]) in light mode:
+ * warm off-white page, dark ink, monospace type, blue accent. Dark mode uses the hub's "dusk" theme,
+ * its warm dark sibling. Starlight picks light or dark from the toggle, else prefers-color-scheme,
+ * and sets data-theme on <html>: the bare :root block is dark, [data-theme='light'] is Paper.
+ *
+ * Contrast (WCAG), checked with a script:
+ *   light  text #343A42 on #FBFAF7 11.0:1 · muted #5F6670 5.6:1 · link #2563EB 4.95:1 (on #F3F1EC 4.6:1) · white on accent button 5.2:1
+ *   dark   text #ECE3DC on #1A1614 14.2:1 · muted #A8998E 6.5:1 · link #8AB4F8 8.5:1 · button text 8.1:1
+ */
 :root {
-	--sl-content-width: 48rem;
-	--sl-font: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-	--sl-font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+	--sl-content-width: 50rem;
+	--sl-font: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+	--sl-font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+	--sl-text-base: 0.9375rem; /* 15px: the hub sets 14px; monospace reads larger */
+	--sl-text-code: 0.8125rem;
+	--sl-line-height: 1.7;
+
+	/* Dark: the hub's "dusk" theme */
+	--sl-color-white: #f7f1ec;
+	--sl-color-gray-1: #ece3dc; /* --fg */
+	--sl-color-gray-2: #ece3dc; /* body text */
+	--sl-color-gray-3: #a8998e; /* --muted */
+	--sl-color-gray-4: #7a6c62; /* --hl-com */
+	--sl-color-gray-5: #352c26; /* --line */
+	--sl-color-gray-6: #221d1a; /* --card */
+	--sl-color-gray-7: #2e2620; /* --hover */
+	--sl-color-black: #1a1614; /* --bg */
+
+	--sl-color-accent-low: #0f1b35;
+	--sl-color-accent: #5a8de6;
+	--sl-color-accent-high: #8ab4f8; /* --link */
+
+	--sl-color-bg: #1a1614;
+	--sl-color-bg-nav: #1a1614;
+	--sl-color-bg-sidebar: #141110; /* --side */
+	--sl-color-bg-inline-code: #2e2620;
+	--sl-color-hairline-light: #352c26;
+	--sl-color-hairline: #352c26;
+	--sl-color-hairline-shade: #2e2620;
+	--sl-color-text: #ece3dc;
+	--sl-color-text-accent: #8ab4f8;
+	--sl-color-text-invert: #0f1b35;
+	--sl-color-bg-accent: #8ab4f8;
+
+	/* code blocks: --code-bg and --code-head */
+	--ec-codeBg: #120f0e;
+	--ec-brdCol: #352c26;
+	--ec-frm-edBg: #120f0e;
+	--ec-frm-trmTtbBg: #1e1917;
 }
 
-/* Accent: a quiet indigo in both themes. */
-:root {
-	--sl-color-accent-low: #1e1b4b;
-	--sl-color-accent: #6366f1;
-	--sl-color-accent-high: #c7d2fe;
-}
+/* Light: the hub's "paper" theme */
 :root[data-theme='light'] {
-	--sl-color-accent-low: #e0e7ff;
-	--sl-color-accent: #4f46e5;
-	--sl-color-accent-high: #312e81;
+	--sl-color-white: #1e2329; /* --fg */
+	--sl-color-gray-1: #1e2329;
+	--sl-color-gray-2: #343a42; /* body text */
+	--sl-color-gray-3: #5f6670; /* --muted */
+	--sl-color-gray-4: #8a8f98; /* --hl-com */
+	--sl-color-gray-5: #e2ded5; /* --line */
+	--sl-color-gray-6: #f3f1ec; /* --side */
+	--sl-color-gray-7: #ece9e2; /* --hover */
+	--sl-color-black: #fbfaf7; /* --bg */
+
+	--sl-color-accent-low: #dbe6fb;
+	--sl-color-accent: #2563eb; /* --accent / --link */
+	--sl-color-accent-high: #1d4fc4;
+
+	--sl-color-bg: #fbfaf7;
+	--sl-color-bg-nav: #fbfaf7;
+	--sl-color-bg-sidebar: #f3f1ec;
+	--sl-color-bg-inline-code: #f3f1ec;
+	--sl-color-hairline-light: #e2ded5;
+	--sl-color-hairline: #e2ded5;
+	--sl-color-hairline-shade: #ece9e2;
+	--sl-color-text: #343a42;
+	--sl-color-text-accent: #2563eb;
+	--sl-color-text-invert: #ffffff;
+	--sl-color-bg-accent: #2563eb;
+
+	--ec-codeBg: #f6f4ef; /* --code-bg */
+	--ec-brdCol: #e2ded5;
+	--ec-frm-edBg: #f6f4ef;
+	--ec-frm-trmTtbBg: #ece9e2; /* --code-head */
 }
 
-.sl-markdown-content img {
-	border-radius: 0.5rem;
+body {
+	font-weight: 400;
+}
+h1, h2, h3, h4, h5, h6, .site-title {
+	font-weight: 650;
+	letter-spacing: -0.01em;
+}
+/* the sidebar sits one shade off the page, like the hub's list */
+:root[data-theme='light'] .sidebar-pane {
+	border-inline-end: 1px solid var(--sl-color-hairline);
+}
+
+/* link underline stays visible: colour alone is not the only cue */
+.sl-markdown-content a:not(.sl-link-button):not(:where(.not-content *)) {
+	text-underline-offset: 0.2em;
+}
+
+/* tables: Starlight already scrolls them sideways; just keep the borders in the theme's hairline */
+.sl-markdown-content :is(th, td) {
+	border-color: var(--sl-color-hairline);
+}
+.sl-markdown-content th {
+	background: var(--sl-color-gray-6);
+}
+
+.sl-markdown-content img,
+.shot img,
+.shots img {
+	border-radius: 0.6rem;
 	border: 1px solid var(--sl-color-gray-5);
 }
 
 .hero img {
 	border-radius: 0.75rem;
 	border: 1px solid var(--sl-color-gray-5);
-	box-shadow: 0 20px 50px -20px rgb(0 0 0 / 0.45);
+	box-shadow: 0 20px 50px -24px rgb(30 35 41 / 0.35);
 }
 
 /* Screenshot pairs: desktop + phone side by side, stacked on narrow screens. */
@@ -39,4 +133,69 @@
 	.shots {
 		grid-template-columns: 1fr;
 	}
+}
+
+/* Figures with a one-line caption. */
+figure.shot {
+	margin: 1.5rem 0;
+}
+figure.shot figcaption {
+	margin-top: 0.5rem;
+	font-size: var(--sl-text-xs);
+	color: var(--sl-color-gray-3);
+}
+
+/* Phone gallery: three phone screens in a row, one column on a small phone. */
+.phones {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 1rem;
+	align-items: start;
+	margin: 1.5rem 0;
+}
+.phones figure {
+	margin: 0;
+}
+.phones img {
+	width: 100%;
+	height: auto;
+}
+.phones figcaption {
+	margin-top: 0.5rem;
+	font-size: var(--sl-text-xs);
+	color: var(--sl-color-gray-3);
+}
+@media (max-width: 40rem) {
+	.phones {
+		grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+	}
+}
+
+/* Phone screenshots are cropped to the device frame: round the corners to match it, no extra border. */
+.sl-markdown-content img.phone,
+.shots img.phone,
+.phones img.phone {
+	border: 0;
+	border-radius: 7.2% / 3.6%;
+	width: 100%;
+	height: auto;
+}
+
+/* Monospace tables: identifiers stay whole and the table scrolls sideways (Starlight's default);
+   the last column, usually prose, keeps a readable width instead of being squeezed. */
+.sl-markdown-content :is(td, th) {
+	vertical-align: top;
+}
+.sl-markdown-content th {
+	white-space: nowrap;
+}
+.sl-markdown-content td code {
+	white-space: nowrap;
+}
+.sl-markdown-content td:last-child:not(:first-child) {
+	min-width: 22rem;
+}
+.sl-markdown-content table {
+	font-size: var(--sl-text-sm);
+	line-height: 1.5;
 }

@@ -635,5 +635,12 @@ window.klarkSide = (() => {
     klarkState.set("theme", name);
     document.querySelectorAll("[data-theme-pick]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.themePick === name)));
   }
+  // The page frame is re-rendered by in-page navigation (picking another agent), which drops
+  // the attribute theme() set; put the saved theme back whenever that happens.
+  const saved = () => { try { return localStorage.getItem("klark:theme") || "paper"; } catch { return "paper"; } };
+  new MutationObserver(() => {
+    const want = saved();
+    if (THEMES.includes(want) && document.documentElement.dataset.theme !== want) document.documentElement.dataset.theme = want;
+  }).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
   return { toggle, close, track, theme, narrow };
 })();

@@ -1601,7 +1601,12 @@ mod tests {
         let path = temp_config_path("update-ready-refreshes-release-notes");
         std::env::set_var(crate::config::CONFIG_PATH_ENV_VAR, &path);
         let mut app = test_app();
-        assert!(app.state.latest_release_notes.is_none());
+        // No saved notes: what's new falls back to klark's own bundled notes, never a preview.
+        assert!(app
+            .state
+            .latest_release_notes
+            .as_ref()
+            .is_none_or(|notes| !notes.preview));
 
         crate::release_notes::save_pending("99.99.99", "### Changed\n- One").unwrap();
         app.handle_internal_event(AppEvent::UpdateReady {

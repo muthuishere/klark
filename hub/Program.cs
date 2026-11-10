@@ -26,6 +26,9 @@ if (args.Length == 2 && args[0] == "hash-token")
 }
 
 var builder = WebApplication.CreateBuilder(args);
+// No ASPNETCORE_URLS / --urls: listen where klark expects the hub (7470), on this machine only.
+// The Docker image sets its own URL (all interfaces).
+if (string.IsNullOrEmpty(builder.Configuration["urls"])) builder.WebHost.UseUrls("http://localhost:7470");
 // Environment settings use the KLARK_ prefix: KLARK_HUB__AUTH__MODE=Ldap is Hub:Auth:Mode.
 // Command-line arguments are added again so they still win over the environment.
 builder.Configuration.AddEnvironmentVariables("KLARK_");

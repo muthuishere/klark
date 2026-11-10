@@ -70,8 +70,41 @@ fn load_stored_from_path(path: &Path) -> Option<StoredReleaseNotes> {
     serde_json::from_str(&content).ok()
 }
 
+/// klark's own release notes, compiled in: the newest dated section of CHANGELOG.md.
+const BUNDLED_CHANGELOG: &str = include_str!("../CHANGELOG.md");
+
+/// What's new: the notes an update saved, else klark's own newest notes. Without the
+/// fallback a fresh install (or one carrying notes from before the fork) had nothing of klark's to show.
 pub fn load_latest() -> Option<ReleaseNotes> {
     load_latest_from_path(&pending_path(), &crate::build_info::version())
+        .or_else(|| bundled_latest(BUNDLED_CHANGELOG))
+}
+
+fn bundled_latest(changelog: &str) -> Option<ReleaseNotes> {
+    let mut version: Option<String> = None;
+    let mut lines = Vec::new();
+    for line in changelog.lines() {
+        if let Some(rest) = line.strip_prefix("## [") {
+            if version.is_some() {
+                break;
+            }
+            let v = rest.split(']').next().unwrap_or("");
+            if !v.eq_ignore_ascii_case("unreleased") && !v.is_empty() {
+                version = Some(v.to_string());
+            }
+            continue;
+        }
+        if version.is_some() {
+            lines.push(line);
+        }
+    }
+    let version = version?;
+    let body = normalize_body(&lines.join("\n"));
+    (!body.is_empty()).then_some(ReleaseNotes {
+        version,
+        body,
+        preview: false,
+    })
 }
 
 fn load_latest_from_path(path: &Path, current_version: &str) -> Option<ReleaseNotes> {
@@ -173,6 +206,22 @@ pub fn normalize_body(body: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bundled_notes_are_the_newest_dated_section_not_unreleased() {
+        let log = "# Changelog\n\n## Unreleased\n\n## [0.9.5.4] - 2026-11-10\n\n### Added\n- Ours\n\n## [0.9.5.3] - 2026-11-09\n\n### Added\n- Older\n";
+        let notes = bundled_latest(log).unwrap();
+        assert_eq!(notes.version, "0.9.5.4");
+        assert!(notes.body.contains("Ours") && !notes.body.contains("Older"));
+        assert!(!notes.preview);
+    }
+
+    #[test]
+    fn the_shipped_changelog_has_klark_notes_on_top() {
+        let notes = bundled_latest(BUNDLED_CHANGELOG).unwrap();
+        assert!(!notes.body.contains("herdrdev/herdr"), "{}", notes.body);
+        assert!(notes.version.starts_with("0.9.5."), "{}", notes.version);
+    }
 
     #[test]
     fn extracts_version_section() {

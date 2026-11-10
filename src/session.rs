@@ -61,12 +61,20 @@ pub fn configure_from_args(args: &[String]) -> Result<Vec<String>, String> {
             cleaned.extend_from_slice(&args[index..]);
             break;
         }
+        // `--session` alone is `-s` alone: a session named after the current folder (create or
+        // attach). `--session <name>` is that session; a following flag or klark command
+        // (`klark --session pane list`) is not taken as the name.
         if arg == "--session" {
-            let Some(value) = args.get(index + 1) else {
-                return Err("missing value for --session".to_string());
-            };
-            requested_session = Some(value.clone());
-            index += 2;
+            match args.get(index + 1) {
+                Some(next) if !next.starts_with('-') && !is_command_word(next) => {
+                    requested_session = Some(next.clone());
+                    index += 2;
+                }
+                _ => {
+                    requested_session = Some(folder_session_name()?);
+                    index += 1;
+                }
+            }
             continue;
         }
         if let Some(value) = arg.strip_prefix("--session=") {
@@ -875,6 +883,43 @@ mod tests {
         assert_eq!(std::env::var(SESSION_ENV_VAR).as_deref(), Ok("work"));
         assert!(explicit_session_requested());
         assert_eq!(cleaned, vec!["klark", "workspace", "list"]);
+        std::env::remove_var(SESSION_ENV_VAR);
+        clear_explicit_session_for_test();
+    }
+
+    #[test]
+    fn configure_from_args_session_without_a_name_uses_the_current_folder() {
+        let _guard = env_lock().lock().unwrap();
+        std::env::remove_var(SESSION_ENV_VAR);
+        clear_explicit_session_for_test();
+        let folder = folder_session_name().unwrap();
+
+        let cleaned = configure_from_args(&["klark".to_string(), "--session".to_string()]).unwrap();
+
+        assert_eq!(std::env::var(SESSION_ENV_VAR).as_deref(), Ok(folder.as_str()));
+        assert!(explicit_session_requested());
+        assert_eq!(cleaned, vec!["klark"]);
+        std::env::remove_var(SESSION_ENV_VAR);
+        clear_explicit_session_for_test();
+    }
+
+    #[test]
+    fn configure_from_args_session_before_a_command_or_flag_uses_the_current_folder() {
+        let _guard = env_lock().lock().unwrap();
+        let folder = folder_session_name().unwrap();
+        for args in [
+            vec!["klark", "--session", "pane", "list"],
+            vec!["klark", "--session", "--no-update-check"],
+        ] {
+            std::env::remove_var(SESSION_ENV_VAR);
+            clear_explicit_session_for_test();
+            let args: Vec<String> = args.into_iter().map(String::from).collect();
+
+            let cleaned = configure_from_args(&args).unwrap();
+
+            assert_eq!(std::env::var(SESSION_ENV_VAR).as_deref(), Ok(folder.as_str()));
+            assert_eq!(cleaned[1..], args[2..]);
+        }
         std::env::remove_var(SESSION_ENV_VAR);
         clear_explicit_session_for_test();
     }

@@ -8,6 +8,7 @@ import code from '../../../assets/screens/viewer-code-line42-1920.png';
 import code390 from '../../../assets/screens/viewer-code-390.png';
 import md from '../../../assets/screens/viewer-markdown-1920.png';
 import img from '../../../assets/screens/viewer-image-1920.png';
+import fresh from '../../../assets/hub/file-preview.webp';
 
 ## File links
 
@@ -22,6 +23,17 @@ Text inside code blocks is left alone.
 A click opens the viewer in the same tab; Back returns to the same spot in the
 chat. Cmd/Ctrl-click or middle-click opens a new tab. Anyone who can see the
 machine can open the link.
+
+## Where the paths come from
+
+Messages you send from the hub carry a one-line [agent note](/reference/hub-config/#the-agent-note) that asks
+the agent to state the absolute path of every file it creates or changes. That is what makes the links appear.
+The note is hidden in the chat. Slash commands never get it.
+
+<figure class="shot">
+	<Image src={fresh} alt="The viewer open on /tmp/hubtest/claude-notes.txt, 319 bytes and 4 lines, with Find in file, Wrap, Raw, Copy and Download." />
+	<figcaption>A file the agent created, opened from its link in the chat.</figcaption>
+</figure>
 
 ## The viewer
 

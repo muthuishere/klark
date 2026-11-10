@@ -1,6 +1,6 @@
 //! Self-update mechanism.
 //!
-//! Checks the hosted klark.dev update manifest for newer versions.
+//! Checks the update manifest published with the GitHub releases for newer versions.
 //! Manual `klark update` downloads and installs the binary.
 //! Background checks only surface availability and release notes.
 //! Uses `curl` as a subprocess for HTTP — no additional Rust HTTP dependencies.
@@ -22,8 +22,8 @@ use std::time::{Duration, Instant};
 use interprocess::local_socket::traits::Stream as _;
 use serde::{Deserialize, Deserializer};
 
-const STABLE_UPDATE_MANIFEST_URL: &str = "https://klark.dev/latest.json";
-const PREVIEW_UPDATE_MANIFEST_URL: &str = "https://klark.dev/preview.json";
+const STABLE_UPDATE_MANIFEST_URL: &str = "https://github.com/muthuishere/klark/releases/latest/download/latest.json";
+const PREVIEW_UPDATE_MANIFEST_URL: &str = "https://github.com/muthuishere/klark/releases/latest/download/preview.json";
 const HOMEBREW_FORMULA_API_URL: &str = "https://formulae.brew.sh/api/formula/klark.json";
 const KLARK_UPDATE_COMMAND: &str = "klark update";
 const HOMEBREW_UPDATE_COMMAND: &str = "brew update && brew upgrade klark";

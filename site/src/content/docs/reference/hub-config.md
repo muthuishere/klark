@@ -56,6 +56,31 @@ All under `Hub:Auth:Ldap:` (env `KLARK_HUB__AUTH__LDAP__…`).
 
 What each one does: [LDAP and Active Directory](/hub/ldap/).
 
+## Branding
+
+The hub calls itself klark by default. These show your own name, tagline and logo
+(`Hub:Brand` in `appsettings.json`, or the variables; in Docker the unprefixed `Hub__Brand__Name`
+form is what `hub/README.md` shows, and `KLARK_HUB__BRAND__NAME` works too).
+
+| setting | env | default | meaning |
+|---|---|---|---|
+| `Hub:Brand:Name` | `Hub__Brand__Name` | `klark` | name in the corner; tab titles read "`<name>` hub" |
+| `Hub:Brand:Tagline` | `Hub__Brand__Tagline` | empty | a small line under the name, for example `by Jane Doe` |
+| `Hub:Brand:Logo` | `Hub__Brand__Logo` | empty | an `https://` URL or a file under `wwwroot`; also the tab icon |
+
+## The agent note
+
+When you send a message from the hub, it adds one short line so the agent names every file it
+creates or changes by absolute path. The hub turns those paths into links that open a preview.
+The agent sees the note (it is part of the prompt, and the terminal shows it); the hub's chat hides it.
+
+| setting | env | default |
+|---|---|---|
+| `Hub:AgentNote` | `Hub__AgentNote` | `when you create or change a file, state its absolute path so it can be opened from the hub.` |
+
+The note goes on as `(klark hub: <note>)` at the end of your text. An empty value turns it off.
+**Slash commands never get it**, so `/model` and `/context` reach the agent unchanged.
+
 ## Tokens
 
 | setting | env | default | meaning |

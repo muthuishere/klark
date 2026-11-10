@@ -31,6 +31,17 @@ klark msg log -n 50                     # recent sent and received messages
 klark msg status                        # hub, token expiry, running sessions
 ```
 
+More ways to send:
+
+```sh
+klark msg send --wait 300 reviewer "when you're done, run the tests"   # waits up to 300 s for it to be idle, then sends
+klark msg send --all "rebased on master, pull before pushing"          # every other agent in this session
+klark msg send --all-sessions "stand-up in 5"                          # every other agent on this machine
+```
+
+`--wait <secs>` sends only once the agent is idle: not working and not showing a dialog.
+If it is still busy after that long, the send fails.
+
 Options go before the address. Everything after the address is the message,
 word for word: `klark msg send --json work/coder <text...>`.
 
@@ -45,6 +56,9 @@ The receiving agent sees:
 
 ## Delivery rules
 
+- **Your typing is safe.** If a person has a half-typed prompt in the target pane, klark lifts that
+  draft, sends the message on its own, then puts the draft back, unsent.
+- Long messages get a longer pause before Enter, and a prompt that did not submit is entered again.
 - Delivery fails, and the sender is told, if the target is `blocked` or does
   not exist.
 - Every send and receipt is appended to `messages.jsonl` in klark's data

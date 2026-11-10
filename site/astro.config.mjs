@@ -18,6 +18,14 @@ export default defineConfig({
 	integrations: [
 		starlight({
 			title: 'klark',
+			// Open in the light Paper theme (the hub's default) unless the visitor chose one.
+			head: [
+				{
+					tag: 'script',
+					content:
+						"try{if(localStorage.getItem('starlight-theme')===null)localStorage.setItem('starlight-theme','light')}catch(e){}",
+				},
+			],
 			description:
 				'A terminal workspace for coding agents, and a self-hosted web hub to watch and answer them.',
 			// Fails the build on a broken internal link or anchor. Relative links are allowed

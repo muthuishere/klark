@@ -132,10 +132,10 @@ const DEFAULT_CONFIG: &str = r##"# klark configuration
 # so existing preview installs stay there until explicitly switched.
 # channel = "stable"
 
-# Check klark.dev for new Klark versions in the background.
+# Check the klark GitHub releases for new Klark versions in the background.
 # version_check = true
 
-# Check klark.dev for remote agent-detection manifest updates in the background.
+# Check the klark GitHub repository for remote agent-detection manifest updates in the background.
 # manifest_check = true
 
 [keys]
@@ -666,7 +666,7 @@ fn main() -> io::Result<()> {
         println!("klark — terminal workspace manager for AI coding agents");
         println!();
         println!("Usage: klark [options]");
-        println!("       klark --session <name> [options]");
+        println!("       klark --session [name] [options]");
         println!("       klark --machine <label-or-id> <command>");
         println!("       klark --remote <ssh-target> [--session <name>]");
         println!("       klark session attach <name>");
@@ -763,7 +763,7 @@ fn main() -> io::Result<()> {
         println!("  {:<32} Run as headless server", "klark server");
         println!();
         println!("Options:");
-        println!("  --session <name>    Use or create a named persistent session");
+        println!("  --session [name]    Use or create a named persistent session; no name = named after this folder");
         println!("  -s [name|folder]    Create or attach; no value = named after this folder, a folder = named after it and started there");
         println!("  --machine <label-or-id>  Run an API command on a saved SSH machine");
         println!("  --remote <target>   Attach through SSH to a remote Klark server");

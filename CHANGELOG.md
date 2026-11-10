@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## [0.9.5.4] - 2026-11-10
+
 ### Added
 - Hub: long chats stay fast. Only the messages near the screen are in the page; older ones load as you scroll up, without the view jumping, and scrolling back to the newest drops them again. Find-in-page now searches the messages on screen only.
 - Hub: messages you send from the hub carry a short note asking the agent to give file paths as absolute paths, so the hub can link them to a preview. The hub chat hides the note; the terminal shows it. Change it with `Hub:AgentNote` (`Hub__AgentNote`); empty turns it off. Slash commands never get it.
@@ -10,6 +12,9 @@
 - Hub: a slash command's answer shows in the chat. Claude's `/context`, `/mcp` and `/model` output appears as a code block under the command. For Devin and other agents, the hub captures what the command printed on screen.
 
 ### Fixed
+- `klark --session` with no name now creates or attaches a session named after the current folder, the same as `klark -s`. It used to fail with "missing value for --session".
+- "What's new" in the terminal shows klark's own release notes (carried inside the binary). It used to show notes left over from herdr.
+- Hub: the theme you pick now stays when you switch to another agent. It used to fall back to the default.
 - Hub: opening a file under `/tmp`, `/var` or `/etc` from a pane whose folder is `/private/tmp` (macOS) no longer fails with "outside the pane's folder".
 - Hub: agy replies show code as highlighted code blocks with its indentation kept.
 - Hub: Codex panes no longer show the empty prompt box and footer as a message from you, nor the start-up banner, greeting or "Model changed" note.

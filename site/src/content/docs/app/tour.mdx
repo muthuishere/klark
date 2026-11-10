@@ -4,17 +4,16 @@ description: The sidebar, search, and how the hub lays out every agent on every 
 ---
 
 import { Image } from 'astro:assets';
-import home from '../../../assets/screens/home-1440.png';
-import list390 from '../../../assets/screens/list-390.png';
+import desk from '../../../assets/hub/desktop-agy.webp';
+import phone from '../../../assets/hub/phone-claude.webp';
 import search from '../../../assets/screens/search-message-hit-1920.png';
-import light from '../../../assets/screens/chat-claude-light-1440.png';
 
 The hub is laid out like the Claude desktop app: a sidebar of agents on the
 left, the selected agent's chat on the right.
 
 <div class="shots">
-	<Image src={home} alt="The hub's home page: agents grouped by project folder in the sidebar, 'Pick an agent' in the main area." />
-	<Image src={list390} alt="On a phone the agent list is the whole screen." />
+	<Image src={desk} alt="The hub in the Paper theme: the sidebar lists four agents under the folder 'tmp' (agy, codex, devin, claude) with status dots, and the agy chat fills the main area." />
+	<Image class="phone" src={phone} alt="The same hub on a phone: a Claude chat fills the screen, with back, terminal, menu and list buttons in the top bar." />
 </div>
 
 ## The sidebar
@@ -24,8 +23,9 @@ left, the selected agent's chat on the right.
 - Agents are grouped by **project folder** (the pane's working directory name;
   hover for the full path). Groups collapse and stay collapsed.
 - **Blocked agents first**, then the most recent activity.
-- Each row: status dot, agent badge (Claude, Devin, Codex, other, shell), title,
-  time since the last activity, and a one-line preview of the latest message.
+- Each row: status dot, agent badge (Claude, Devin, Codex, agy, other, shell), the agent's **name**,
+  time since the last activity, and a one-line preview of the latest message. The line under the name
+  starts with the agent kind. Name an agent with `klark msg name reviewer` and the name shows here.
 - On desktop the sidebar collapses (the icon at the top). Up to 860 px wide it
   is a drawer. On a phone the list page *is* the sidebar.
 
@@ -40,11 +40,18 @@ to the message.
 
 <Image src={search} alt="Searching for 'ndjson' finds a message inside a chat and opens it at that point." />
 
-## Light and dark
+## Themes
 
-The theme toggle sits at the bottom of the sidebar.
+The theme picker is in the sidebar's menu at the bottom (the half-filled circle). **Paper**, a warm
+off-white page with dark ink and a blue accent, is the default. The others are Teal, Indigo, Forest,
+Dusk, Term (light) and Term dark. The choice is remembered in the browser. These docs use Paper for
+light mode and Dusk for dark mode.
 
-<Image src={light} alt="A Claude chat in the light theme." />
+## On a phone
+
+Below 760 px wide the hub is one column. The list is the whole screen; opening an agent shows its chat,
+with a back arrow, the terminal toggle, a menu, and a button that opens the list as a drawer. The composer
+has a camera button for sending a photo to the agent.
 
 ## Where each URL goes
 

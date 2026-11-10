@@ -79,7 +79,7 @@ Options:
 Config: /Users/muthuishere/.config/klark-dev/config.toml
 Logs:   /Users/muthuishere/.config/klark-dev/klark.log (plus klark-client.log, klark-server.log)
 Env:    KLARK_CONFIG_PATH overrides config file path
-Home:   https://klark.dev
+Home:   https://muthuishere.github.io/klark/
 
 Are you an AI? Use these resources ONLY IF your task specifically asks you to:
   Control Klark panes, agents, or workspaces:
