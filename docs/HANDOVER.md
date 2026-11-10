@@ -51,6 +51,13 @@ the release number is recorded in `~/.config/klark/versions.txt`.
    `gh release edit vx.y.z.w --title ... --notes-file ...`. The installers use `releases/latest`, so
    until the macOS and Windows files are uploaded the one-liners 404 on those platforms.
 
+**Windows zip with the modern ConPTY (also upload this):** Windows' own ConPTY drops the answers agents send
+back to the terminal; klark's loader uses an app-local `conpty\` folder when it sits beside `klark.exe`. After the
+cross-build: download the pinned nupkg (`packaging/windows/conpty.json`, sha256-checked by the script), then
+`python3 scripts/package_windows_conpty.py stage --package <nupkg> --klark-exe <klark.exe> --output-dir <stage>` and
+`... archive --stage-dir <stage> --output klark-windows-x86_64.zip`, plus `shasum -a 256 ... > klark-windows-x86_64.zip.sha256`.
+`install.cmd` prefers the zip and falls back to the bare `.exe`.
+
 Asset names the installers expect: `klark-macos-aarch64`, `klark-macos-x86_64`, `klark-linux-x86_64`,
 `klark-linux-aarch64`, `klark-windows-x86_64.exe`, each with `<name>.sha256`.
 

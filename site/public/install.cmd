@@ -28,6 +28,32 @@ if errorlevel 1 goto :nocurl
 set "TMPD=%TEMP%\klark-install-%RANDOM%%RANDOM%"
 mkdir "%TMPD%" >nul 2>&1
 
+rem Preferred: the zip with klark.exe plus Microsoft's modern ConPTY (conpty\), which keeps the
+rem answers agents send back to the terminal. Falls back to the bare exe (Windows' own ConPTY).
+set "ZIP=klark-windows-x86_64.zip"
+where tar >nul 2>&1
+if errorlevel 1 goto :barefile
+echo Downloading %ZIP% ...
+curl -fsSL "%BASE%/%ZIP%" -o "%TMPD%\%ZIP%" 2>nul
+if errorlevel 1 goto :barefile
+curl -fsSL "%BASE%/%ZIP%.sha256" -o "%TMPD%\%ZIP%.sha256" 2>nul
+if errorlevel 1 goto :barefile
+set "WANT="
+for /f "usebackq tokens=1" %%H in ("%TMPD%\%ZIP%.sha256") do if not defined WANT set "WANT=%%H"
+set "GOT="
+for /f "skip=1 tokens=*" %%H in ('certutil -hashfile "%TMPD%\%ZIP%" SHA256') do if not defined GOT set "GOT=%%H"
+set "GOT=%GOT: =%"
+if not defined WANT goto :sumfail
+if /i not "%WANT%"=="%GOT%" goto :sumfail
+if not exist "%DEST%" mkdir "%DEST%"
+if exist "%DEST%\conpty" rmdir /s /q "%DEST%\conpty"
+tar -xf "%TMPD%\%ZIP%" -C "%DEST%"
+if errorlevel 1 goto :copyfail
+goto :installed
+
+:barefile
+set "WANT="
+set "GOT="
 echo Downloading %FILE% ...
 curl -fsSL "%BASE%/%FILE%" -o "%TMPD%\%FILE%"
 if errorlevel 1 goto :downloadfail
@@ -46,6 +72,8 @@ if /i not "%WANT%"=="%GOT%" goto :sumfail
 if not exist "%DEST%" mkdir "%DEST%"
 copy /y "%TMPD%\%FILE%" "%DEST%\klark.exe" >nul
 if errorlevel 1 goto :copyfail
+
+:installed
 echo Installed: %DEST%\klark.exe
 "%DEST%\klark.exe" --version
 
