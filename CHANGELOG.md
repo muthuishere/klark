@@ -2,8 +2,11 @@
 
 ## Unreleased
 
-### New
-- `klark session import-herdr` brings the current folder's herdr workspaces (from `~/.config/herdr`, read-only) into a klark session named after the folder; `klark session export-herdr` writes a klark session as a herdr `session.json`. Both use the shared version-3 format; the newer herdr app/core has no such file.
+## [0.9.5.6] - 2026-11-12
+
+### Added
+- `klark session import-herdr` brings the current folder's herdr workspaces (from `~/.config/herdr`, read-only) into a klark session named after the folder. The newer file wins: an existing klark layout is replaced only when herdr's is newer, and the old one is kept as `session.json.bak-before-herdr-import` (`--force` replaces regardless). `klark session export-herdr` writes a klark session as a herdr `session.json`. Both use the shared version-3 format; the newer herdr app/core has no such file.
+- Windows: the release now has `klark-windows-x86_64.zip` with Microsoft's modern ConPTY beside `klark.exe` (Windows' own ConPTY drops the replies agents send back to the terminal); `install.cmd` uses it and falls back to the bare `.exe`.
 - On macOS, the first interactive launch tells you once, when Full Disk Access is missing, how to grant it so macOS stops asking for each folder and volume separately.
 
 ## [0.9.5.5] - 2026-11-10
