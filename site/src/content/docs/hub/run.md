@@ -7,6 +7,12 @@ The hub (klarkhub) is a C# Blazor Server app in `hub/`. People sign in to it and
 watch and answer the agents on every linked machine. It is a separate server:
 deploy it once, then link any number of machines to it.
 
+:::note
+This page is about the released hub, the C# Blazor Server one in `hub/`. A rewrite as a Go API with a React UI,
+still one container on port 7470, is in progress in `hub-go/` and is not released. Machines keep working with
+either, because the machine link does not change. Reasons: ADR 0014.
+:::
+
 - One container, one port: plain HTTP on **7470**.
 - All state in `/data`: `hub.db`, one file per machine, temporary assets, keys.
 - Run **exactly one replica**. SQLite and the asset store are local files.

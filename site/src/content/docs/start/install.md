@@ -137,4 +137,4 @@ variables are `KLARK_*`, for example `KLARK_SOCKET_PATH`.
 ## The hub is separate
 
 The web hub (klarkhub) is a separate server in `hub/`. You do not need it to use
-klark in a terminal. See [Run the hub](/hub/run/).
+klark in a terminal. See [Run the hub](/hub/run/). (A Go + React rewrite of the hub is in progress; the released hub is the one in `hub/`.)

@@ -3,6 +3,23 @@
 What exists, what has been verified, and what is left. IDs are referenced from
 the ADRs and experiments. Last updated 2026-11-06 (first real builds; messaging, ADR 0009).
 
+## Go + React hub (ADR 0014, in progress)
+
+The released hub is still the Blazor one in `hub/`. The rewrite in `hub-go/` is tracked by its parity checklist
+(`hub-go/README.md`), not by IDs here, until it is released.
+
+| item | state | verified how |
+|---|---|---|
+| machine link (ADR 0013), tokens, config, base path, SQLite | done | `go test -race`; real `klark expose` machine online |
+| static and OIDC sign-in, mock ADFS | done | HTTP-level e2e test; browser login; OIDC not tried on a real ADFS/Entra |
+| data API, SSE, chat pipeline, files, messages, admin users/machines | done | Go tests; browser |
+| React UI | done | 51 vitest tests; real browser (login, shell, admin/machines) |
+| single-container image | done | built by the backend agent (25 MB, healthy, base path); not rebuilt by others |
+| image upload, offers, slash-command server list, syntax highlighting, quick replies, token and password pages | not done | |
+| LDAP, per-machine groups, browser approval for `klark hub connect` | not done | |
+| load / soak test, memory per viewer | not done | |
+| cut-over and retiring `hub/` | not started | |
+
 ## Done
 | id | item | verified how |
 |---|---|---|

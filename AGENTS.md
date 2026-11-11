@@ -13,7 +13,8 @@ This file is for any agent (or person) working in this repository.
 | `src/` | klark itself: server, TUI client, panes, agent detection, socket API | Rust |
 | `crates/klark-link` | the machine side of the hub link, plus `klark-loadtest` | Rust |
 | `crates/ghostty-vt` | bindings to the vendored libghostty-vt terminal core | Rust + Zig |
-| `hub/` | the hub: ASP.NET Core Blazor Server, SQLite, Docker | C# (.NET 9) |
+| `hub/` | the released hub: ASP.NET Core Blazor Server, SQLite, Docker | C# (.NET 9) |
+| `hub-go/` | the hub rewrite (in progress, ADR 0014): Go API, React UI embedded, one container | Go, TypeScript |
 | `api/klark-api.schema.json` | socket API schema | JSON |
 | `docs/STATUS.md` | **the backlog**: done, must do, features (IDs like S-05) | |
 | `docs/adr/` | decisions; `docs/experiments/` measured experiments | |
@@ -161,6 +162,9 @@ Don't add shared behavior that only works through the private TUI client socket.
   `Workspace::assert_invariants_for_test()` with the adversarial-state helpers.
 
 ## Hub (C#, `hub/`)
+
+This is the released hub. Its Go + React rewrite is in `hub-go/` (ADR 0014, in progress); keep to `hub-go/API.md`
+there and do not change `hub/` for it. The rules below are for `hub/`.
 
 - Blazor Server with per-page `@rendermode InteractiveServer`. Sign-in uses a
   plain HTML form posting to `/account/login`, which is not interactive.

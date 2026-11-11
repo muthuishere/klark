@@ -26,6 +26,7 @@ All live in the repository under `docs/`.
 | [0011](https://github.com/muthuishere/klark/blob/master/docs/adr/0011-assets-and-faithful-rendering.md) | assets, faithful rendering, chat view, app shell, file viewer |
 | [0012](https://github.com/muthuishere/klark/blob/master/docs/adr/0012-klark-hub-connect.md) | `klark hub connect` with a device code |
 | [0013](https://github.com/muthuishere/klark/blob/master/docs/adr/0013-http-only-transport.md) | HTTP-only transport, no WebSockets |
+| [0014](https://github.com/muthuishere/klark/blob/master/docs/adr/0014-go-react-hub.md) | the hub rewritten in Go + React, one container (in progress, not released) |
 
 ## Experiments
 

@@ -14,6 +14,7 @@
 | [adr/0007](adr/0007-no-ci-and-build.md) | no CI; how to build and verify by hand |
 | [adr/0008](adr/0008-hub-and-herdr-expose-are-separate.md) | the klark hub and herdr-expose are separate products |
 | [adr/0009](adr/0009-agent-messaging.md) | agents message agents across sessions and machines; user JWTs; LDAP as the default sign-in |
+| [adr/0014](adr/0014-go-react-hub.md) | the hub is rewritten in Go + React, one container (in progress; the released hub is still Blazor) |
 | [HANDOVER.md](HANDOVER.md) | read first: what klark is, what is verified, first steps |
 | [experiments/](experiments/README.md) | measured experiments: what was tried, the numbers, what is still to try |
 

@@ -51,6 +51,11 @@ Prebuilt Linux binaries come with each tagged release.
 
 ## Hub in two steps
 
+The hub below is the released one (C# Blazor Server, `hub/`). It is being rewritten as klarkhub in Go (API) and
+React (UI), shipped as one container on the same port 7470: **in progress**, the released hub is still the
+Blazor one ([status and parity checklist](hub-go/README.md), [why](docs/adr/0014-go-react-hub.md)). Existing
+klark machines will keep working against either, because the machine link protocol does not change.
+
 1. Run klarkhub (see [deploy guide](docs/deploy.md)):
 
    ```bash
@@ -75,7 +80,8 @@ Prebuilt Linux binaries come with each tagged release.
 |---|---|
 | `src/` | klark itself (Rust) |
 | `crates/klark-link` | the machine side of the hub link (HTTP: NDJSON down, POST up) |
-| `hub/` | klarkhub: C# Blazor Server (.NET 10), SQLite, Docker |
+| `hub/` | klarkhub, the released hub: C# Blazor Server (.NET 10), SQLite, Docker |
+| `hub-go/` | klarkhub (Go API + React UI, single container): **in progress**, not released; see [hub-go/README.md](hub-go/README.md) and [ADR 0014](docs/adr/0014-go-react-hub.md) |
 | `deploy/k8s/` | example Kubernetes manifest |
 | `site/` | the documentation site (`just docs`) |
 | `skills/klark` | the skill that teaches agents to use klark |

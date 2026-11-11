@@ -50,6 +50,7 @@ Open an issue with:
 | klark (`cargo build`) | Rust (see `rust-toolchain.toml`) and Zig 0.16 (`ZIG=/path/to/zig`) |
 | `crates/klark-link` (`cargo test -p klark-link`) | Rust only |
 | hub (`cd hub && dotnet build`) | .NET 9 SDK, or Docker (`docker compose up -d --build`) |
+| Go + React hub, in progress (`cd hub-go && make test`; run `cd hub-go/ui && npm ci && npm run build` before `go build`) | Go, Node, or Docker (`docker build hub-go`); see `hub-go/README.md` |
 
 ## License
 
