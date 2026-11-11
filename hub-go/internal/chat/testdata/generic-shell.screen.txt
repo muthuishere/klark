@@ -1,0 +1,17 @@
+muthu@mac klark % cargo test -p klark-link files
+[1m[32m   Compiling[0m klark-link v0.1.0 (/Users/muthu/klark/crates/klark-link)
+[1m[32m    Finished[0m `test` profile [unoptimized + debuginfo] target(s) in 2.31s
+     Running unittests src/lib.rs (target/debug/deps/klark_link-4f2a)
+
+running 4 tests
+test files::tests::line_suffix_is_ignored ... [32mok[0m
+test files::tests::credentials_are_refused ... [32mok[0m
+test files::tests::ten_mb_boundary ... [32mok[0m
+test files::tests::only_inside_cwd_or_home_and_not_secrets ... [31mFAILED[0m
+
+test result: [31mFAILED[0m. 3 passed; 1 failed; 0 ignored
+
+muthu@mac klark % git status --short
+ M crates/klark-link/src/files.rs
+?? docs/screens/
+muthu@mac klark % 

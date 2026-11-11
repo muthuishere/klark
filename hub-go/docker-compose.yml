@@ -1,0 +1,35 @@
+# Example: docker compose up -d   then open http://localhost:7470
+# Sign in with admin / adminadmin unless HUB_ADMIN_PASSWORD is set (set it).
+services:
+  hub:
+    build: .
+    image: klarkhub:latest
+    restart: unless-stopped
+    ports:
+      - "7470:7470"
+    volumes:
+      - hub-data:/data
+    environment:
+      HUB_ADMIN_PASSWORD: "change-me-please"
+      # Machines that may `klark expose` to this hub: name=<sha256 of the token>
+      #   echo -n 'my-token' | shasum -a 256     (or: echo my-token | klarkhub hash-token)
+      # Name ending in * is a fleet token. You can also add machines in /admin/machines.
+      # HUB_MACHINES: "mac=<sha256 hex>"
+      # More users: name=<bcrypt or sha256:hex>[:admin]   (echo pw | klarkhub hash-password)
+      # HUB_USERS: "alice=$$2a$$10$$...:admin"
+      # Behind a reverse proxy at https://host/klark/ :
+      # HUB_BASE_PATH: /klark
+      # HUB_PUBLIC_URL: https://host
+      # HUB_SESSION_KEY: "a long random string"   # else generated into /data/session.key
+      #
+      # ADFS / OpenID Connect:
+      # HUB_OIDC_ISSUER: https://adfs.example.com/adfs
+      # HUB_OIDC_CLIENT_ID: klark
+      # HUB_OIDC_CLIENT_SECRET: "..."
+      # HUB_OIDC_ADMIN_GROUP: klark-admins
+      #
+      # Development only: the hub plays ADFS itself at /mock-adfs/
+      # HUB_MOCK_ADFS: "1"
+      # HUB_MOCK_ADFS_USERS: "alice=alicepw:admin,bob=bobpw"
+volumes:
+  hub-data:
