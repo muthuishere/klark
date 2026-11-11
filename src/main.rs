@@ -38,6 +38,7 @@ mod kitty_graphics;
 mod layout;
 mod logging;
 mod fda_notice;
+mod herdr_session;
 mod metadata_tokens;
 mod noninteractive_process;
 mod pane;

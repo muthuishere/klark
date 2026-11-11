@@ -185,7 +185,7 @@ pub fn folder_session_name() -> Result<String, String> {
     folder_to_session_name(&cwd)
 }
 
-fn folder_to_session_name(path: &Path) -> Result<String, String> {
+pub(crate) fn folder_to_session_name(path: &Path) -> Result<String, String> {
     let base = path
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())

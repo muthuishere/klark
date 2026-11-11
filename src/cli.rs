@@ -451,6 +451,8 @@ fn run_session_command(args: &[String]) -> std::io::Result<i32> {
         "attach" => session_attach_help(&args[1..]),
         "stop" => session_stop(&args[1..]),
         "delete" => session_delete(&args[1..]),
+        "import-herdr" => Ok(crate::herdr_session::run_import(&args[1..])),
+        "export-herdr" => Ok(crate::herdr_session::run_export(&args[1..])),
         "help" | "--help" | "-h" => {
             print_session_help();
             Ok(0)
@@ -1028,6 +1030,8 @@ fn print_session_help() {
     eprintln!("  klark session attach <name>");
     eprintln!("  klark session stop <name> [--json]");
     eprintln!("  klark session delete <name> [--json]");
+    eprintln!("  klark session import-herdr [--from <dir>] [--cwd <folder>] [--name <session>] [--force]");
+    eprintln!("  klark session export-herdr [--name <session>] [--out <file>]");
     eprintln!("  use 'default' as <name> to target the default session for stop");
 }
 
