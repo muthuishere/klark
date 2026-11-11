@@ -60,6 +60,15 @@ fn build_snapshot(workspaces: Vec<Value>) -> Value {
     })
 }
 
+/// herdr's file is newer than klark's. An unknown time on either side counts as newer, so a
+/// session on a filesystem without modified times can still be imported.
+fn is_newer(herdr: Option<std::time::SystemTime>, klark: Option<std::time::SystemTime>) -> bool {
+    match (herdr, klark) {
+        (Some(h), Some(k)) => h > k,
+        _ => true,
+    }
+}
+
 fn herdr_session_files(dir: &Path) -> Vec<PathBuf> {
     let mut files = vec![dir.join("session.json")];
     if let Ok(entries) = std::fs::read_dir(dir.join("sessions")) {
@@ -127,9 +136,15 @@ fn import(args: &[String]) -> Result<String, String> {
     let options = parse_import(args)?;
     let mut found: Vec<Value> = Vec::new();
     let mut seen = std::collections::HashSet::new();
+    let mut newest_source: Option<std::time::SystemTime> = None;
     for file in herdr_session_files(&options.from) {
         let Ok(content) = std::fs::read_to_string(&file) else { continue };
-        for workspace in matching_workspaces(&content, &options.cwd)? {
+        let matched = matching_workspaces(&content, &options.cwd)?;
+        if !matched.is_empty() {
+            let modified = std::fs::metadata(&file).and_then(|m| m.modified()).ok();
+            newest_source = newest_source.max(modified);
+        }
+        for workspace in matched {
             let id = workspace.get("id").and_then(Value::as_str).unwrap_or("").to_string();
             if seen.insert(id) {
                 found.push(workspace);
@@ -148,21 +163,31 @@ fn import(args: &[String]) -> Result<String, String> {
         None => crate::session::folder_to_session_name(&options.cwd)?,
     };
     let target = crate::session::data_dir_for(Some(&name)).join("session.json");
-    if target.exists() && !options.force {
-        return Err(format!(
-            "klark session '{name}' already has a saved layout ({}); use --force to replace it",
-            target.display()
-        ));
-    }
+    // The latest one wins: an existing klark layout is replaced only when herdr's is newer.
+    let backup = if target.exists() {
+        let klark_time = std::fs::metadata(&target).and_then(|m| m.modified()).ok();
+        if !options.force && !is_newer(newest_source, klark_time) {
+            return Err(format!(
+                "klark session '{name}' is newer than herdr's ({}); nothing changed. Use --force to replace it anyway",
+                target.display()
+            ));
+        }
+        let backup = target.with_extension("json.bak-before-herdr-import");
+        std::fs::copy(&target, &backup).map_err(|e| format!("cannot back up the old layout: {e}"))?;
+        Some(backup)
+    } else {
+        None
+    };
     let count = found.len();
     let body = serde_json::to_string_pretty(&build_snapshot(found)).map_err(|e| e.to_string())?;
     if let Some(dir) = target.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
     write_atomic(&target, body.as_bytes()).map_err(|e| e.to_string())?;
+    let backed_up = backup.map_or(String::new(), |b| format!("\nreplaced an older layout; kept it at {}", b.display()));
     Ok(format!(
         "imported {count} herdr workspace(s) into klark session '{name}'. Open it with: klark -s {name}\n\
-         (layout and folders are restored; programs are started fresh)"
+         (layout and folders are restored; programs are started fresh){backed_up}"
     ))
 }
 
@@ -223,6 +248,17 @@ mod tests {
         assert_eq!(found.len(), 1);
         assert_eq!(found[0]["id"], "a");
         assert!(matching_workspaces(SAMPLE, Path::new("/work/none")).unwrap().is_empty());
+    }
+
+    #[test]
+    fn the_latest_file_wins() {
+        use std::time::{Duration, UNIX_EPOCH};
+        let old = Some(UNIX_EPOCH + Duration::from_secs(100));
+        let new = Some(UNIX_EPOCH + Duration::from_secs(200));
+        assert!(is_newer(new, old));
+        assert!(!is_newer(old, new));
+        assert!(!is_newer(old, old));
+        assert!(is_newer(None, old));
     }
 
     #[test]
