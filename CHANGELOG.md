@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### New
+- On macOS, the first interactive launch tells you once, when Full Disk Access is missing, how to grant it so macOS stops asking for each folder and volume separately.
+
 ## [0.9.5.5] - 2026-11-10
 
 ### Added

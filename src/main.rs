@@ -37,6 +37,7 @@ mod ipc;
 mod kitty_graphics;
 mod layout;
 mod logging;
+mod fda_notice;
 mod metadata_tokens;
 mod noninteractive_process;
 mod pane;
@@ -928,6 +929,7 @@ fn main() -> io::Result<()> {
 
     let loaded_config = config::Config::load();
     exit_if_nested_disabled(&loaded_config.config);
+    fda_notice::maybe_show();
 
     let saved_federation =
         client::endpoint::EndpointCatalog::load().is_ok_and(|catalog| catalog.has_enabled_ssh());
