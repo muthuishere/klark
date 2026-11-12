@@ -5,22 +5,31 @@ import (
 	"testing"
 )
 
-func TestMigrationsAreIdempotent(t *testing.T) {
+// backends runs f against a fresh SQLite store directory.
+func backends(t *testing.T, f func(t *testing.T, open func() *Store)) {
 	dir := t.TempDir()
-	for i := 0; i < 3; i++ {
+	f(t, func() *Store {
 		s, err := Open(dir)
 		if err != nil {
 			t.Fatal(err)
 		}
-		_ = s.Close()
-	}
+		return s
+	})
+}
+
+func TestMigrationsAreIdempotent(t *testing.T) {
+	backends(t, func(t *testing.T, open func() *Store) {
+		for i := 0; i < 3; i++ {
+			_ = open().Close()
+		}
+	})
 }
 
 func TestUsersMachinesMessagesSettings(t *testing.T) {
-	s, err := Open(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	backends(t, func(t *testing.T, open func() *Store) { usersMachinesMessagesSettings(t, open()) })
+}
+
+func usersMachinesMessagesSettings(t *testing.T, s *Store) {
 	defer s.Close()
 
 	if ok, _ := s.InsertUser(User{Name: "Alice", Hash: "h", Source: "local"}); !ok {
@@ -74,4 +83,26 @@ func TestUsersMachinesMessagesSettings(t *testing.T) {
 	if v, _ := s.Setting("k"); v != "v2" {
 		t.Fatal(v)
 	}
+}
+
+func TestStats(t *testing.T) {
+	backends(t, func(t *testing.T, open func() *Store) {
+		s := open()
+		defer s.Close()
+		for i := int64(1); i <= 3; i++ {
+			if err := s.InsertStat(StatRow{MachineID: "m", MachineName: "M", TS: i * 1000, RSSBytes: i * 10, CPUPercent: 1.5, AgentsJSON: "[]"}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		rows, err := s.StatsBetween(1000, 3000)
+		if err != nil || len(rows) != 2 || rows[0].RSSBytes != 10 || rows[0].CPUPercent != 1.5 {
+			t.Fatalf("%+v %v", rows, err)
+		}
+		if r, ok, _ := s.LatestStat("m"); !ok || r.TS != 3000 {
+			t.Fatal("latest")
+		}
+		if n, _ := s.PurgeStats(2500); n != 2 {
+			t.Fatalf("purged %d", n)
+		}
+	})
 }

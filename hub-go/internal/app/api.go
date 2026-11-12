@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/muthuishere/klark/hub-go/internal/auth"
-	"github.com/muthuishere/klark/hub-go/internal/chat"
 	"github.com/muthuishere/klark/hub-go/internal/hub"
+	"github.com/muthuishere/klark/hub-go/internal/hubchat"
 )
 
 func (a *App) mountAPI(mux *http.ServeMux) {
@@ -30,6 +30,15 @@ func (a *App) mountAPI(mux *http.ServeMux) {
 	mux.Handle("POST /api/machines/{id}/panes/{pane}/send", user(a.postSend))
 	mux.Handle("POST /api/machines/{id}/panes/{pane}/upload", user(a.postUpload))
 
+	mux.Handle("GET /api/assets/{sha}", http.HandlerFunc(a.getAsset)) // machine token or cookie, checked inside
+
+	// `klark hub connect` (ADR 0012): start and poll need no sign-in (rate limited); the decision does.
+	mux.HandleFunc("POST /api/connect/start", a.connectStart)
+	mux.HandleFunc("POST /api/connect/poll", a.connectPoll)
+	mux.Handle("GET /api/connect/requests/{code}", user(a.connectGet))
+	mux.Handle("POST /api/connect/requests/{code}/approve", user(a.connectDecide(true)))
+	mux.Handle("POST /api/connect/requests/{code}/deny", user(a.connectDecide(false)))
+
 	mux.Handle("GET /api/files/{id}", user(a.fileInfo))
 	mux.Handle("GET /api/files/{id}/markdown", user(a.fileMarkdown))
 	mux.Handle("GET /api/files/{id}/raw", user(a.fileRaw))
@@ -46,6 +55,13 @@ func (a *App) mountAPI(mux *http.ServeMux) {
 	mux.Handle("DELETE /api/admin/machines/{id}", admin(a.adminRevokeMachine))
 	mux.Handle("GET /api/admin/directory", admin(a.adminDirectory))
 	mux.Handle("PUT /api/admin/directory", admin(a.adminPutDirectory))
+	mux.Handle("DELETE /api/admin/directory", admin(a.adminResetDirectory))
+	mux.Handle("POST /api/admin/directory/test", admin(a.adminTestDirectory))
+	mux.Handle("GET /api/admin/analytics", admin(a.adminAnalytics))
+	mux.Handle("GET /api/admin/storage", admin(a.adminStorage))
+	mux.Handle("PUT /api/admin/storage", admin(a.adminPutStorage))
+	mux.Handle("DELETE /api/admin/storage", admin(a.adminResetStorage))
+	mux.Handle("POST /api/admin/storage/test", admin(a.adminTestStorage))
 }
 
 // failure turns an error from the machine link into an HTTP answer.
@@ -307,7 +323,7 @@ func (a *App) postSend(w http.ResponseWriter, r *http.Request) {
 	}
 	pane := r.PathValue("pane")
 	feed := a.Runtime.Feed(id, pane)
-	if chat.IsSlashCommand(text) && feed.State().Source != "jsonl" {
+	if hubchat.IsSlashCommand(text) && feed.State().Source != "jsonl" {
 		if err := feed.SendLocalCommand(r.Context(), text); err != nil {
 			failure(w, err)
 			return
@@ -315,7 +331,7 @@ func (a *App) postSend(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	if err := a.Runtime.Input(id, pane, chat.AppendNote(text, a.AgentNote)); err != nil {
+	if err := a.Runtime.Input(id, pane, hubchat.AppendNote(text, a.AgentNote)); err != nil {
 		failure(w, err)
 		return
 	}

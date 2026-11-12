@@ -110,7 +110,7 @@ func validAuthorize(q url.Values) string {
 		return "response_type must be code"
 	case q.Get("client_id") != MockClientID:
 		return "unknown client_id"
-	case !strings.HasSuffix(q.Get("redirect_uri"), "/auth/adfs/callback"):
+	case !isHubCallback(q.Get("redirect_uri")):
 		return "redirect_uri is not the hub's callback"
 	case q.Get("code_challenge") == "" || q.Get("code_challenge_method") != "S256":
 		return "PKCE (S256) is required"
@@ -118,6 +118,15 @@ func validAuthorize(q url.Values) string {
 		return "state is required"
 	}
 	return ""
+}
+
+// isHubCallback accepts the ADFS callback and the callbacks of HUB_OIDC_PROVIDERS entries (when the mock is their IdP).
+func isHubCallback(u string) bool {
+	if strings.HasSuffix(u, "/auth/adfs/callback") {
+		return true
+	}
+	i := strings.LastIndex(u, "/auth/oidc/")
+	return i >= 0 && strings.HasSuffix(u, "/callback") && !strings.Contains(u[i+len("/auth/oidc/"):], "/callback/")
 }
 
 func (m *MockADFS) authorizeForm(w http.ResponseWriter, r *http.Request) {

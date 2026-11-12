@@ -28,6 +28,7 @@ func (e *RemoteError) Error() string { return e.Msg }
 var AllowedCalls = map[string]bool{
 	"ping": true, "session.snapshot": true, "pane.read": true, "agent.read": true, "pane.get": true,
 	"workspace.list": true, "tab.list": true, "pane.list": true,
+	"system.stats": true, // the hub's own analytics collector (internal/stats)
 }
 
 // Info describes a machine for the machine list.

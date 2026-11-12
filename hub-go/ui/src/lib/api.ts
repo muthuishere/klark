@@ -15,6 +15,9 @@ export function onUnauthorized(fn: Listener): () => void {
   return () => unauthorized.delete(fn);
 }
 
+/** Tells the auth guard a call answered 401 (also used by the hub transport). */
+export function notifyUnauthorized(): void { unauthorized.forEach((f) => f()); }
+
 export interface Opts extends Omit<RequestInit, 'body'> { json?: unknown; body?: BodyInit; quiet401?: boolean }
 
 /** Every request is relative to <base href>, carries the cookie, and speaks JSON. */
@@ -33,7 +36,7 @@ export async function api<T = unknown>(path: string, opts: Opts = {}): Promise<T
   } catch {
     throw new ApiError(0, 'The hub did not answer.');
   }
-  if (res.status === 401 && !quiet401) unauthorized.forEach((f) => f());
+  if (res.status === 401 && !quiet401) notifyUnauthorized();
   if (res.status === 204) return undefined as T;
   const ct = res.headers.get('content-type') ?? '';
   const data = ct.includes('json') ? await res.json().catch(() => ({})) : await res.text().catch(() => '');

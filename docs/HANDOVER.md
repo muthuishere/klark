@@ -21,7 +21,7 @@ Two things in one repository:
    React 18 + Vite + TypeScript UI embedded in the binary, one container, port 7470. Decision:
    `docs/adr/0014-go-react-hub.md`; contract: `hub-go/API.md`; status and parity checklist: `hub-go/README.md`.
    Implemented and checked (2026-11-12): machine link, SQLite, static and OIDC/mock-ADFS sign-in, data API, chat
-   pipeline, React UI, single-container image. Not done: image upload, offers, LDAP, per-machine groups, browser
+   pipeline, React UI, single-container image. Not done: image upload, offers, per-machine groups, browser
    approval for `klark hub connect`, JWT pages, load tests. `hub/` stays until the parity checklist passes.
 
 Docs site (Astro Starlight, `site/`): https://muthuishere.github.io/klark/ , deployed by CI
@@ -42,7 +42,7 @@ on every push to `master`. It uses the hub's Paper theme and has the one-line in
 ## Releasing (the recipe that works)
 
 Release version comes from the git **tag** (`build.rs`: `v0.9.5.5` becomes `0.9.5+5`), so build
-the desktop binaries **after** tagging. `klark --version` still prints `0.9.5` (Cargo version);
+the desktop binaries **after** tagging. `klark --version` prints the Cargo version (`0.10.0` from the 0.10 series on; klark's own version line, no longer herdr's `0.9.5.N`; see `vendor/upstream.json` for the herdr base);
 the release number is recorded in `~/.config/klark/versions.txt`.
 
 1. Put a `## [x.y.z.w] - date` section at the top of `CHANGELOG.md` (below `## Unreleased`).
@@ -139,8 +139,7 @@ Deviations since the 2026-11-06 version of this file:
    machine online, login in a browser. The Docker image (25 MB distroless) was built by the backend agent only.
    **A fresh clone must run `cd hub-go/ui && npm ci && npm run build` before `go build`**: `internal/ui/dist`
    is not committed, and without it the binary serves a placeholder page. Next: image upload (asset store),
-   `klark offer`, LDAP and groups decision, browser approval for `klark hub connect`, JWT pages, test OIDC
-   against a real ADFS/Entra, measure memory per viewer and load, then cut over and retire `hub/`. Until then fix
+   `klark offer`, per-machine groups decision, browser approval for `klark hub connect`, JWT pages, measure memory per viewer and load, then cut over and retire `hub/`. Until then fix
    bugs in `hub/` too and remember them for the port. Numbers below are about the Blazor hub.
 2. **herdr comparison (asked, not started):** the user downloaded `herdr-app-master` and
    `herdr-core-master` to `/Users/muthuishere/Downloads/h` (herdr now ships an app and a core).

@@ -1,6 +1,6 @@
 import { Link, Navigate, useSearchParams } from 'react-router-dom';
 import { PageBar, useMachines } from '../shell';
-import { paneHref } from '../components/Sidebar';
+import { paneHref } from '../components/AppSidebar';
 
 /** A shared link from `klark expose url`: find the machine that reported that host name, then open the pane. */
 export function Go() {

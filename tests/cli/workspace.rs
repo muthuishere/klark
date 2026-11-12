@@ -595,7 +595,10 @@ fn config_check_reports_unknown_theme_names() {
         stdout.contains("unknown theme name theme.name = \"catppucin\"; using \"catppuccin\""),
         "{stdout}"
     );
-    assert!(stdout.contains("valid themes: paper, teal, indigo, forest, dusk, catppuccin"), "{stdout}");
+    assert!(
+        stdout.contains("valid themes: paper, teal, indigo, forest, dusk, catppuccin"),
+        "{stdout}"
+    );
 
     cleanup_test_base(&base);
 }

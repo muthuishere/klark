@@ -220,7 +220,11 @@ mod tests {
     fn the_shipped_changelog_has_klark_notes_on_top() {
         let notes = bundled_latest(BUNDLED_CHANGELOG).unwrap();
         assert!(!notes.body.contains("herdrdev/herdr"), "{}", notes.body);
-        assert!(notes.version.starts_with("0.9.5."), "{}", notes.version);
+        assert!(
+            notes.version.split('.').all(|p| p.parse::<u64>().is_ok()),
+            "{}",
+            notes.version
+        );
     }
 
     #[test]

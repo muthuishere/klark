@@ -7,23 +7,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/muthuishere/klark/hub-go/internal/chat"
+	"github.com/muthuishere/klark/hub-go/chat"
+	"github.com/muthuishere/klark/hub-go/feed"
+	"github.com/muthuishere/klark/hub-go/internal/hubchat"
 )
 
 const callTimeout = 8 * time.Second
 
-// ChatState is what the chat view draws for one pane.
-type ChatState struct {
-	Rows         []chat.Item   `json:"rows"`
-	Rev          int64         `json:"rev"`
-	Agent        string        `json:"agent"`
-	Status       string        `json:"status"`
-	Source       string        `json:"source"` // jsonl | screen | ""
-	Reader       string        `json:"reader"`
-	Error        string        `json:"error,omitempty"`
-	Blocked      *chat.Blocked `json:"blocked,omitempty"`
-	LastActivity string        `json:"lastActivity,omitempty"`
-}
+// ChatState is what the chat view draws for one pane (the public feed package's type).
+type ChatState = feed.ChatState
 
 // Feed is the chat data for one pane. It is kept in memory after the last viewer leaves so coming back paints at
 // once; one ~1 Hz poll per pane runs only while someone watches (lazy rule).
@@ -80,6 +72,9 @@ func (f *Feed) State() ChatState {
 	defer f.mu.Unlock()
 	st := ChatState{Rows: append([]chat.Item{}, f.items...), Rev: f.version, Agent: firstNonEmpty(f.agent, f.paneAgent),
 		Status: f.status, Source: f.source, Reader: f.reader, Error: f.errMsg, Blocked: f.blocked}
+	if f.blocked != nil && len(f.blocked.Choices) > 0 {
+		st.Status = "blocked"
+	}
 	if !f.lastActivity.IsZero() {
 		st.LastActivity = f.lastActivity.UTC().Format(time.RFC3339)
 	}
@@ -209,12 +204,20 @@ func (f *Feed) PollOnce(ctx context.Context) {
 		f.readScreenText(ctx)
 	}
 
+	// A choice menu at the bottom of the pane means the agent waits for an answer, whatever status the machine
+	// reports (agy, for one, reads as idle while it asks). The screen already read serves; else the visible rows.
 	var blocked *chat.Blocked
 	f.mu.Lock()
 	isBlocked := f.status == "blocked"
+	text, have := f.screenText, f.source == "screen" && f.haveScreen
 	f.mu.Unlock()
-	if isBlocked {
-		if text, err := rt.readText(ctx, f.machine, "pane.read", map[string]any{"pane_id": f.id, "source": "visible", "format": "text", "strip_ansi": true}); err == nil {
+	if !have {
+		if t, err := rt.readText(ctx, f.machine, "pane.read", map[string]any{"pane_id": f.id, "source": "visible", "format": "text", "strip_ansi": true}); err == nil {
+			text, have = t, true
+		}
+	}
+	if have {
+		if blocked = chat.ChoicePrompt(text); blocked == nil && isBlocked {
 			if c := chat.Clean(text); c != "" {
 				b := chat.BlockedPrompt(c)
 				blocked = &b
@@ -242,7 +245,7 @@ func sameBlocked(a, b *chat.Blocked) bool {
 	if a == nil || b == nil {
 		return a == b
 	}
-	if a.Question != b.Question || len(a.Options) != len(b.Options) {
+	if a.Question != b.Question || a.Selected != b.Selected || len(a.Options) != len(b.Options) || len(a.Choices) != len(b.Choices) {
 		return false
 	}
 	for i := range a.Options {
@@ -300,11 +303,11 @@ func linkItems(items []chat.Item, machine, pane string) {
 	for i := range items {
 		it := &items[i]
 		if it.HTML != "" {
-			it.HTML = chat.Linkify(it.HTML, machine, pane)
+			it.HTML = chat.Linkify(it.HTML, chat.KlarkHref(machine, pane))
 		}
 		for j := range it.Segments {
 			if it.Segments[j].HTML != "" {
-				it.Segments[j].HTML = chat.Linkify(it.Segments[j].HTML, machine, pane)
+				it.Segments[j].HTML = chat.Linkify(it.Segments[j].HTML, chat.KlarkHref(machine, pane))
 			}
 		}
 	}
@@ -407,8 +410,8 @@ func (f *Feed) apply(raw json.RawMessage) {
 		linkItems(one, f.machine, f.id)
 		list = append(list, one[0])
 	}
-	if len(list) > chat.MaxItems {
-		list = list[len(list)-chat.MaxItems:]
+	if len(list) > hubchat.MaxItems {
+		list = list[len(list)-hubchat.MaxItems:]
 	}
 	f.source, f.reader, f.cursor = "jsonl", source, cursor
 	if replace || len(list) != oldCount {
@@ -457,14 +460,14 @@ func (f *Feed) SendLocalCommand(ctx context.Context, command string) error {
 				continue
 			}
 			after = now
-			if time.Since(stableSince) >= 700*time.Millisecond && chat.ExtractCommandOutput(before, now, command) != "" {
+			if time.Since(stableSince) >= 700*time.Millisecond && hubchat.ExtractCommandOutput(before, now, command) != "" {
 				break
 			}
 		}
 		if after == "" {
 			after = last
 		}
-		f.addCommand(seq, command, chat.ExtractCommandOutput(before, after, command), ts)
+		f.addCommand(seq, command, hubchat.ExtractCommandOutput(before, after, command), ts)
 	}()
 	return nil
 }

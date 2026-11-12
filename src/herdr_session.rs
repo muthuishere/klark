@@ -29,7 +29,8 @@ fn same_folder(a: &Path, b: &Path) -> bool {
 
 /// The workspaces of one herdr `session.json` whose folder is `cwd`.
 fn matching_workspaces(content: &str, cwd: &Path) -> Result<Vec<Value>, String> {
-    let doc: Value = serde_json::from_str(content).map_err(|e| format!("not a session file: {e}"))?;
+    let doc: Value =
+        serde_json::from_str(content).map_err(|e| format!("not a session file: {e}"))?;
     if doc.get("version").and_then(Value::as_u64).unwrap_or(0) > SUPPORTED_VERSION {
         return Err("this session file is from a newer herdr than klark understands".into());
     }
@@ -138,14 +139,20 @@ fn import(args: &[String]) -> Result<String, String> {
     let mut seen = std::collections::HashSet::new();
     let mut newest_source: Option<std::time::SystemTime> = None;
     for file in herdr_session_files(&options.from) {
-        let Ok(content) = std::fs::read_to_string(&file) else { continue };
+        let Ok(content) = std::fs::read_to_string(&file) else {
+            continue;
+        };
         let matched = matching_workspaces(&content, &options.cwd)?;
         if !matched.is_empty() {
             let modified = std::fs::metadata(&file).and_then(|m| m.modified()).ok();
             newest_source = newest_source.max(modified);
         }
         for workspace in matched {
-            let id = workspace.get("id").and_then(Value::as_str).unwrap_or("").to_string();
+            let id = workspace
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
             if seen.insert(id) {
                 found.push(workspace);
             }
@@ -173,7 +180,8 @@ fn import(args: &[String]) -> Result<String, String> {
             ));
         }
         let backup = target.with_extension("json.bak-before-herdr-import");
-        std::fs::copy(&target, &backup).map_err(|e| format!("cannot back up the old layout: {e}"))?;
+        std::fs::copy(&target, &backup)
+            .map_err(|e| format!("cannot back up the old layout: {e}"))?;
         Some(backup)
     } else {
         None
@@ -184,7 +192,9 @@ fn import(args: &[String]) -> Result<String, String> {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
     write_atomic(&target, body.as_bytes()).map_err(|e| e.to_string())?;
-    let backed_up = backup.map_or(String::new(), |b| format!("\nreplaced an older layout; kept it at {}", b.display()));
+    let backed_up = backup.map_or(String::new(), |b| {
+        format!("\nreplaced an older layout; kept it at {}", b.display())
+    });
     Ok(format!(
         "imported {count} herdr workspace(s) into klark session '{name}'. Open it with: klark -s {name}\n\
          (layout and folders are restored; programs are started fresh){backed_up}"
@@ -220,7 +230,8 @@ fn export(args: &[String]) -> Result<String, String> {
     let source = crate::session::data_dir_for(name.as_deref()).join("session.json");
     let content = std::fs::read_to_string(&source)
         .map_err(|e| format!("no saved layout at {}: {e}", source.display()))?;
-    let doc: Value = serde_json::from_str(&content).map_err(|e| format!("unreadable session file: {e}"))?;
+    let doc: Value =
+        serde_json::from_str(&content).map_err(|e| format!("unreadable session file: {e}"))?;
     if doc.get("version").and_then(Value::as_u64) != Some(SUPPORTED_VERSION) {
         return Err("the saved layout is not in the version-3 format herdr reads".into());
     }
@@ -247,7 +258,9 @@ mod tests {
         let found = matching_workspaces(SAMPLE, Path::new("/work/api")).unwrap();
         assert_eq!(found.len(), 1);
         assert_eq!(found[0]["id"], "a");
-        assert!(matching_workspaces(SAMPLE, Path::new("/work/none")).unwrap().is_empty());
+        assert!(matching_workspaces(SAMPLE, Path::new("/work/none"))
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
@@ -263,7 +276,8 @@ mod tests {
 
     #[test]
     fn refuses_a_newer_format() {
-        let err = matching_workspaces(r#"{"version":9,"workspaces":[]}"#, Path::new("/x")).unwrap_err();
+        let err =
+            matching_workspaces(r#"{"version":9,"workspaces":[]}"#, Path::new("/x")).unwrap_err();
         assert!(err.contains("newer"));
     }
 

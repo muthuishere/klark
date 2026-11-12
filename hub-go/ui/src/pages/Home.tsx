@@ -1,6 +1,6 @@
 import { Navigate } from 'react-router-dom';
 import { PageBar, useMachines } from '../shell';
-import { paneHref } from '../components/Sidebar';
+import { paneHref } from '../components/AppSidebar';
 import { readStore } from '../lib/theme';
 
 export function Home() {

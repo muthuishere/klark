@@ -1,6 +1,6 @@
 [package]
 name = "klark"
-version = "0.9.5"
+version = "0.10.2"
 edition = "2021"
 build = "build.rs"
 description = "klark — terminal workspace manager for AI coding agents, with a built-in hub link"
@@ -90,6 +90,7 @@ windows-sys = { version = "0.61.2", features = [
     "Win32_System_LibraryLoader",
     "Win32_System_Ole",
     "Win32_System_Pipes",
+    "Win32_System_ProcessStatus",
     "Win32_System_Power",
     "Win32_System_Registry",
     "Win32_System_SystemInformation",

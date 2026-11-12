@@ -1,0 +1,52 @@
+{
+  "name": "@muthuishere/klark-hub-ui",
+  "version": "0.10.2",
+  "description": "React components for watching and driving coding agents: chat view, composer, terminal, sidebar, over a pluggable Transport (klark hub's HTTP + SSE by default).",
+  "license": "Apache-2.0",
+  "author": "Muthukumaran Navaneethakrishnan",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/muthuishere/klark.git",
+    "directory": "hub-go/ui/packages/hub-ui"
+  },
+  "homepage": "https://github.com/muthuishere/klark/tree/master/hub-go/ui/packages/hub-ui#readme",
+  "bugs": "https://github.com/muthuishere/klark/issues",
+  "keywords": [
+    "react",
+    "chat",
+    "terminal",
+    "xterm",
+    "coding-agent",
+    "klark"
+  ],
+  "type": "module",
+  "sideEffects": [
+    "*.css"
+  ],
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./style.css": "./style.css",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "style.css",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "vitest run"
+  },
+  "peerDependencies": {
+    "@xterm/addon-unicode11": ">=0.9.0",
+    "@xterm/xterm": "^6.0.0",
+    "react": ">=18"
+  }
+}

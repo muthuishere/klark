@@ -51,6 +51,9 @@ type Service struct {
 	Mock     *MockADFS
 	Insecure bool // never set Secure on cookies (plain-http tests)
 
+	// Dial opens LDAP connections (DialLDAP; tests replace it).
+	Dial Dialer
+
 	// Local serves the hub's own routes (without the base path) so the mock ADFS can be called in-process.
 	Local http.Handler
 
@@ -62,7 +65,7 @@ type Service struct {
 func New(st *store.Store, cfg config.Config, signer *Signer) *Service {
 	d, _ := HashPassword("not-a-real-password")
 	return &Service{Store: st, Cfg: cfg, Signer: signer, Limiter: NewLimiter(5, 15*time.Minute),
-		providers: map[string]*oidcProvider{}, dummy: d}
+		providers: map[string]*oidcProvider{}, dummy: d, Dial: DialLDAP}
 }
 
 // Seed makes the built-in admin and the HUB_USERS accounts in hub.db. HUB_ADMIN_PASSWORD, when set, always wins.
@@ -87,6 +90,9 @@ func (s *Service) Seed() error {
 		if err := s.Store.UpsertUser(store.User{Name: u.Name, Hash: u.Hash, Admin: u.Admin, Source: "env"}); err != nil {
 			return err
 		}
+	}
+	if s.DirectoryMode() == "mockldap" {
+		return s.SeedMock()
 	}
 	return nil
 }
@@ -121,6 +127,9 @@ func (s *Service) ExternalBase(r *http.Request) string {
 	}
 	return scheme + "://" + reqHost(r) + s.Cfg.BasePath
 }
+
+// ClientIP is the caller's address (X-Forwarded-For only from a loopback or private peer).
+func ClientIP(r *http.Request) string { return clientIP(r) }
 
 func clientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
@@ -238,20 +247,31 @@ func (s *Service) Mount(mux *http.ServeMux) {
 	mux.Handle("GET /api/auth/me", http.HandlerFunc(s.me))
 	mux.HandleFunc("GET /auth/adfs/login", s.adfsLogin)
 	mux.HandleFunc("GET /auth/adfs/callback", s.adfsCallback)
+	mux.HandleFunc("GET /auth/oidc/{id}/login", s.oidcLogin)
+	mux.HandleFunc("GET /auth/oidc/{id}/callback", s.oidcCallback)
 }
 
 func (s *Service) adfsEnabled() bool { return s.Cfg.OIDC.Enabled() || s.Mock != nil }
 
+func (s *Service) adfsName() string {
+	if s.Mock != nil && !s.Cfg.OIDC.Enabled() {
+		return "Mock ADFS"
+	}
+	return s.Cfg.OIDC.Name
+}
+
 func (s *Service) providersH(w http.ResponseWriter, _ *http.Request) {
 	adfs := map[string]any{"enabled": false}
 	if s.adfsEnabled() {
-		name := s.Cfg.OIDC.Name
-		if s.Mock != nil && !s.Cfg.OIDC.Enabled() {
-			name = "Mock ADFS"
-		}
-		adfs = map[string]any{"enabled": true, "name": name, "loginUrl": "auth/adfs/login"}
+		adfs = map[string]any{"enabled": true, "name": s.adfsName(), "loginUrl": "auth/adfs/login"}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"static": true, "adfs": adfs})
+	mode := s.DirectoryMode()
+	oidc := []map[string]string{}
+	for _, p := range s.Cfg.OIDCProviders {
+		oidc = append(oidc, map[string]string{"id": p.ID, "name": p.Name, "loginUrl": "auth/oidc/" + p.ID + "/login"})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"static": true, "directory": map[string]string{"mode": mode, "name": dirName(mode)},
+		"adfs": adfs, "oidc": oidc})
 }
 
 func (s *Service) me(w http.ResponseWriter, r *http.Request) {
@@ -283,45 +303,103 @@ func (s *Service) login(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	u, err := s.Store.User(name)
-	hash := s.dummy
-	if err == nil {
-		hash = u.Hash
-	}
-	if !VerifyPassword(hash, body.Password) || err != nil {
+	fail := func() {
 		s.Limiter.Fail(ukey)
 		s.Limiter.Fail(ipkey)
 		apiError(w, http.StatusUnauthorized, "wrong username or password")
-		return
 	}
-	s.Limiter.Reset(ukey)
-	if err := s.startSession(w, r, Session{User: u.Name, Source: "db"}); err != nil {
-		apiError(w, http.StatusInternalServerError, "could not start a session")
-		return
+	ok := func(sess Session, u User) {
+		s.Limiter.Reset(ukey)
+		if err := s.startSession(w, r, sess); err != nil {
+			apiError(w, http.StatusInternalServerError, "could not start a session")
+			return
+		}
+		writeJSON(w, http.StatusOK, u)
 	}
-	writeJSON(w, http.StatusOK, User{Name: u.Name, Display: u.DisplayName, Admin: u.Admin})
+	mode := s.DirectoryMode()
+	u, err := s.Store.User(name)
+	if err == nil && u.Source == SourceMock && mode != "mockldap" {
+		err = store.ErrNotFound // mock users only exist while the mock directory is the directory
+	}
+	switch {
+	case err == nil: // built-in admin, HUB_USERS, admin-created accounts, and (in mockldap mode) the mock directory
+		if !VerifyPassword(u.Hash, body.Password) {
+			fail()
+			return
+		}
+		if u.Source == SourceMock {
+			if allowed := s.Directory().AllowedGroups; len(allowed) > 0 && !AnyGroup(u.Groups, allowed) {
+				fail()
+				return
+			}
+		}
+		ok(Session{User: u.Name, Source: "db"}, User{Name: u.Name, Display: u.DisplayName, Admin: u.Admin})
+	case mode == "ldap":
+		du, err := s.directoryLogin(strings.TrimSpace(body.Username), body.Password)
+		if err != nil {
+			apiError(w, http.StatusServiceUnavailable, "the directory could not be reached; try again or ask an administrator")
+			return
+		}
+		if du == nil {
+			fail()
+			return
+		}
+		ok(Session{User: du.Name, Display: du.Display, Admin: du.Admin, Source: "ldap"}, User{Name: du.Name, Display: du.Display, Admin: du.Admin})
+	default:
+		VerifyPassword(s.dummy, body.Password) // same work whether or not the user exists
+		fail()
+	}
 }
 
 // ---- ADFS / OIDC ----------------------------------------------------------------
 
 type oidcState struct {
 	State, Nonce, Verifier, Redirect, Issuer, Return string
+	Provider                                         string
 	Expires                                          int64
 }
 
-// issuerFor is the provider issuer: the configured one, or the mock served by this hub.
-func (s *Service) issuerFor(r *http.Request) string {
-	if s.Cfg.OIDC.Enabled() {
-		return s.Cfg.OIDC.Issuer
-	}
-	return s.ExternalBase(r) + "/mock-adfs"
+// idp is one OpenID Connect sign-in: the ADFS one (HUB_OIDC_* or the mock) or an entry of HUB_OIDC_PROVIDERS.
+type idp struct {
+	id, name, issuer, clientID, secret, scopes, adminGroup, groupsClaim, usernameClaim string
+	local                                                                              bool // the mock ADFS served by this hub
 }
 
-func (s *Service) clientCreds() (id, secret string) {
-	if s.Cfg.OIDC.Enabled() {
-		return s.Cfg.OIDC.ClientID, s.Cfg.OIDC.ClientSecret
+func (p idp) callbackPath() string {
+	if p.id == "adfs" {
+		return "/auth/adfs/callback"
 	}
-	return MockClientID, MockClientSecret
+	return "/auth/oidc/" + p.id + "/callback"
+}
+
+func (p idp) errCode(what string) string {
+	if p.id == "adfs" {
+		return "adfs_" + what
+	}
+	return "oidc_" + what + "&provider=" + url.QueryEscape(p.id)
+}
+
+// idpFor resolves a provider id: "adfs" or an HUB_OIDC_PROVIDERS id.
+func (s *Service) idpFor(r *http.Request, id string) (idp, bool) {
+	if id == "adfs" {
+		if !s.adfsEnabled() {
+			return idp{}, false
+		}
+		if s.Cfg.OIDC.Enabled() {
+			o := s.Cfg.OIDC
+			return idp{id: "adfs", name: o.Name, issuer: o.Issuer, clientID: o.ClientID, secret: o.ClientSecret,
+				scopes: orStr(o.Scopes, "openid profile email"), adminGroup: o.AdminGroup}, true
+		}
+		return idp{id: "adfs", name: "Mock ADFS", issuer: s.ExternalBase(r) + "/mock-adfs", clientID: MockClientID,
+			secret: MockClientSecret, scopes: "openid profile email", adminGroup: "klark-admins", local: true}, true
+	}
+	for _, p := range s.Cfg.OIDCProviders {
+		if p.ID == id {
+			return idp{id: p.ID, name: p.Name, issuer: p.Issuer, clientID: p.ClientID, secret: p.ClientSecret, scopes: p.Scopes,
+				adminGroup: p.AdminGroup, groupsClaim: p.GroupsClaim, usernameClaim: p.UsernameClaim}, true
+		}
+	}
+	return idp{}, false
 }
 
 type localTransport struct {
@@ -340,28 +418,29 @@ func (t localTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return resp, nil
 }
 
-func (s *Service) httpClient(issuer string) *http.Client {
-	if s.Mock != nil && !s.Cfg.OIDC.Enabled() && s.Local != nil {
+func (s *Service) httpClient(p idp) *http.Client {
+	if p.local && s.Local != nil {
 		return &http.Client{Transport: localTransport{h: s.Local, base: s.Cfg.BasePath}, Timeout: 10 * time.Second}
 	}
 	return &http.Client{Timeout: 10 * time.Second}
 }
 
-func (s *Service) provider(ctx context.Context, issuer string) (*oidcProvider, error) {
+func (s *Service) provider(ctx context.Context, p idp) (*oidcProvider, error) {
+	key := p.id + "|" + p.issuer
 	s.mu.Lock()
-	p := s.providers[issuer]
+	op := s.providers[key]
 	s.mu.Unlock()
-	if p != nil {
-		return p, nil
+	if op != nil {
+		return op, nil
 	}
-	p, err := discover(ctx, s.httpClient(issuer), issuer)
+	op, err := discover(ctx, s.httpClient(p), p.issuer)
 	if err != nil {
 		return nil, err
 	}
 	s.mu.Lock()
-	s.providers[issuer] = p
+	s.providers[key] = op
 	s.mu.Unlock()
-	return p, nil
+	return op, nil
 }
 
 func safeReturn(p string) string {
@@ -371,42 +450,51 @@ func safeReturn(p string) string {
 	return ""
 }
 
-func (s *Service) adfsLogin(w http.ResponseWriter, r *http.Request) {
-	if !s.adfsEnabled() {
+func (s *Service) adfsLogin(w http.ResponseWriter, r *http.Request)    { s.idpLogin(w, r, "adfs") }
+func (s *Service) adfsCallback(w http.ResponseWriter, r *http.Request) { s.idpCallback(w, r, "adfs") }
+func (s *Service) oidcLogin(w http.ResponseWriter, r *http.Request) {
+	s.idpLogin(w, r, r.PathValue("id"))
+}
+func (s *Service) oidcCallback(w http.ResponseWriter, r *http.Request) {
+	s.idpCallback(w, r, r.PathValue("id"))
+}
+
+func (s *Service) idpLogin(w http.ResponseWriter, r *http.Request, id string) {
+	p, found := s.idpFor(r, id)
+	if !found {
 		http.NotFound(w, r)
 		return
 	}
-	issuer := s.issuerFor(r)
-	p, err := s.provider(r.Context(), issuer)
+	op, err := s.provider(r.Context(), p)
 	if err != nil {
-		log.Printf("auth: adfs discovery failed: %v", err)
-		http.Redirect(w, r, s.Cfg.BasePath+"/login?error=adfs_unavailable", http.StatusFound)
+		log.Printf("auth: %s discovery failed: %v", p.id, err)
+		http.Redirect(w, r, s.Cfg.BasePath+"/login?error="+p.errCode("unavailable"), http.StatusFound)
 		return
 	}
-	st := oidcState{State: randToken(18), Nonce: randToken(18), Verifier: randToken(32),
-		Redirect: s.ExternalBase(r) + "/auth/adfs/callback", Issuer: issuer, Return: safeReturn(r.URL.Query().Get("return")),
+	st := oidcState{State: randToken(18), Nonce: randToken(18), Verifier: randToken(32), Provider: p.id,
+		Redirect: s.ExternalBase(r) + p.callbackPath(), Issuer: p.issuer, Return: safeReturn(r.URL.Query().Get("return")),
 		Expires: time.Now().Add(10 * time.Minute).Unix()}
 	tok, _ := s.Signer.Sign(st)
 	s.setCookie(w, r, oidcCookie, tok, 600)
-	id, _ := s.clientCreds()
-	scopes := s.Cfg.OIDC.Scopes
-	if scopes == "" {
-		scopes = "openid profile email"
-	}
-	q := url.Values{"response_type": {"code"}, "client_id": {id}, "redirect_uri": {st.Redirect}, "scope": {scopes},
+	q := url.Values{"response_type": {"code"}, "client_id": {p.clientID}, "redirect_uri": {st.Redirect}, "scope": {p.scopes},
 		"state": {st.State}, "nonce": {st.Nonce}, "code_challenge": {pkceChallenge(st.Verifier)}, "code_challenge_method": {"S256"}}
 	sep := "?"
-	if strings.Contains(p.AuthEndpoint, "?") {
+	if strings.Contains(op.AuthEndpoint, "?") {
 		sep = "&"
 	}
-	http.Redirect(w, r, p.AuthEndpoint+sep+q.Encode(), http.StatusFound)
+	http.Redirect(w, r, op.AuthEndpoint+sep+q.Encode(), http.StatusFound)
 }
 
-func (s *Service) adfsCallback(w http.ResponseWriter, r *http.Request) {
+func (s *Service) idpCallback(w http.ResponseWriter, r *http.Request, id string) {
+	p, found := s.idpFor(r, id)
+	if !found {
+		http.NotFound(w, r)
+		return
+	}
 	fail := func(why string, err error) {
-		log.Printf("auth: adfs callback refused (%s): %v", why, err)
+		log.Printf("auth: %s callback refused (%s): %v", p.id, why, err)
 		s.setCookie(w, r, oidcCookie, "", -1)
-		http.Redirect(w, r, s.Cfg.BasePath+"/login?error=adfs_failed", http.StatusFound)
+		http.Redirect(w, r, s.Cfg.BasePath+"/login?error="+p.errCode("failed"), http.StatusFound)
 	}
 	c, err := r.Cookie(oidcCookie)
 	if err != nil {
@@ -418,6 +506,10 @@ func (s *Service) adfsCallback(w http.ResponseWriter, r *http.Request) {
 		fail("bad or expired state cookie", err)
 		return
 	}
+	if st.Provider != p.id || st.Issuer != p.issuer {
+		fail("state belongs to another provider", errors.New("provider"))
+		return
+	}
 	q := r.URL.Query()
 	if e := q.Get("error"); e != "" {
 		fail("provider error", errors.New(e))
@@ -427,29 +519,24 @@ func (s *Service) adfsCallback(w http.ResponseWriter, r *http.Request) {
 		fail("state mismatch", errors.New("state"))
 		return
 	}
-	p, err := s.provider(r.Context(), st.Issuer)
+	op, err := s.provider(r.Context(), p)
 	if err != nil {
 		fail("discovery", err)
 		return
 	}
-	id, secret := s.clientCreds()
-	raw, err := p.exchange(r.Context(), id, secret, q.Get("code"), st.Redirect, st.Verifier)
+	raw, err := op.exchange(r.Context(), p.clientID, p.secret, q.Get("code"), st.Redirect, st.Verifier)
 	if err != nil {
 		fail("code exchange", err)
 		return
 	}
-	ident, err := p.verifyIDToken(r.Context(), raw, id, st.Nonce)
+	ident, err := op.verifyIDToken(r.Context(), raw, p.clientID, st.Nonce, p.usernameClaim, p.groupsClaim)
 	if err != nil {
 		fail("id token", err)
 		return
 	}
-	adminGroup := s.Cfg.OIDC.AdminGroup
-	if !s.Cfg.OIDC.Enabled() {
-		adminGroup = "klark-admins"
-	}
 	admin := false
 	for _, g := range ident.Groups {
-		if adminGroup != "" && strings.EqualFold(g, adminGroup) {
+		if p.adminGroup != "" && strings.EqualFold(g, p.adminGroup) {
 			admin = true
 		}
 	}

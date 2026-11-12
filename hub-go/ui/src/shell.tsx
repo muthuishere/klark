@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
-import { Sidebar } from './components/Sidebar';
+import { AppSidebar } from './components/AppSidebar';
 import { useMachineTrees, type MachineTree } from './hooks';
 import { readStore, toggleSide } from './lib/theme';
 
@@ -18,8 +18,8 @@ export function Shell() {
   useEffect(() => { document.documentElement.classList.remove('drawer-open'); }, [loc.pathname]);
   return (
     <MachinesCtx.Provider value={{ items, loaded }}>
-      <div className={'app' + (home ? ' home' : '')}>
-        <Sidebar />
+      <div className={'app khu' + (home ? ' home' : '')}>
+        <AppSidebar />
         <Outlet />
       </div>
     </MachinesCtx.Provider>

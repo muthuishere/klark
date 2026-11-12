@@ -11,7 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/muthuishere/klark/hub-go/internal/chat"
+	"github.com/muthuishere/klark/hub-go/chat"
+	"github.com/muthuishere/klark/hub-go/internal/hubchat"
 )
 
 const (
@@ -113,7 +114,7 @@ func (a *App) fetchFile(w http.ResponseWriter, r *http.Request) (cachedFile, boo
 		return cachedFile{}, false
 	}
 	if len(data) > maxFileBytes {
-		jsonErr(w, 413, "file is "+chat.FileSize(int64(len(data)))+"; limit 10 MB")
+		jsonErr(w, 413, "file is "+hubchat.FileSize(int64(len(data)))+"; limit 10 MB")
 		return cachedFile{}, false
 	}
 	f := cachedFile{bytes: data, name: firstOf(res.Name, path.Base(p)), path: firstOf(res.Path, p), at: time.Now()}
@@ -147,7 +148,7 @@ func (a *App) fileInfo(w http.ResponseWriter, r *http.Request) {
 	q := url.Values{"pane": {r.URL.Query().Get("pane")}, "path": {r.URL.Query().Get("path")}}.Encode()
 	raw := "api/files/" + url.PathEscape(r.PathValue("id")) + "/raw?" + q
 	jsonOut(w, 200, map[string]any{"path": f.path, "name": f.name, "view": k.View, "lang": k.Lang, "mime": k.Mime,
-		"size": len(f.bytes), "size_label": chat.FileSize(int64(len(f.bytes))), "lines": lines, "raw": raw, "download": raw + "&download=1"})
+		"size": len(f.bytes), "size_label": hubchat.FileSize(int64(len(f.bytes))), "lines": lines, "raw": raw, "download": raw + "&download=1"})
 }
 
 func (a *App) fileMarkdown(w http.ResponseWriter, r *http.Request) {
@@ -184,10 +185,4 @@ func (a *App) fileRaw(w http.ResponseWriter, r *http.Request) {
 		h.Set("Content-Type", "text/plain; charset=utf-8")
 	}
 	_, _ = w.Write(f.bytes)
-}
-
-// postUpload would hand a file to the pane's agent (the machine downloads it with fetch_asset). The hub's asset
-// store is not ported yet.
-func (a *App) postUpload(w http.ResponseWriter, r *http.Request) {
-	jsonErr(w, http.StatusNotImplemented, "uploads are not available in the Go hub yet")
 }

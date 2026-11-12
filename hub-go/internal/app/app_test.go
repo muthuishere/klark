@@ -238,10 +238,10 @@ func TestAdminUsersAndDirectory(t *testing.T) {
 	if r, _ := c.do("DELETE", "/api/admin/users/admin", nil); r.StatusCode != 409 {
 		t.Fatal("must not delete yourself")
 	}
-	if r, _ := c.do("PUT", "/api/admin/directory", map[string]any{"mode": "adfs", "x": 1}); r.StatusCode != 200 {
+	if r, _ := c.do("PUT", "/api/admin/directory", map[string]any{"mode": "ldap", "host": "ldap.example.com", "userDnTemplate": "uid={0},dc=x"}); r.StatusCode != 200 {
 		t.Fatal("put directory")
 	}
-	if _, b := c.do("GET", "/api/admin/directory", nil); !strings.Contains(string(b), `"mode":"adfs"`) {
+	if _, b := c.do("GET", "/api/admin/directory", nil); !strings.Contains(string(b), `"mode":"ldap"`) || !strings.Contains(string(b), `"host":"ldap.example.com"`) {
 		t.Fatalf("directory %s", b)
 	}
 	// machines: add (token shown once), connect with it, revoke

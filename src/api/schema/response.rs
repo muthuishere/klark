@@ -15,7 +15,9 @@ use super::plugins::{
     InstalledPluginInfo, PluginActionInfo, PluginCommandLogInfo, PluginInvocationContext,
     PluginPaneInfo,
 };
-use super::server::ServerCapabilities;
+use super::server::{
+    ServerCapabilities, SystemStatsAgent, SystemStatsHost, SystemStatsKlark, SystemStatsPanes,
+};
 use super::session::SessionSnapshot;
 use super::tabs::TabInfo;
 use super::workspaces::WorkspaceInfo;
@@ -47,6 +49,13 @@ pub enum ResponseResult {
         protocol: u32,
         #[serde(default)]
         capabilities: Option<ServerCapabilities>,
+    },
+    SystemStats {
+        ts_ms: u64,
+        klark: SystemStatsKlark,
+        host: SystemStatsHost,
+        panes: SystemStatsPanes,
+        agents: Vec<SystemStatsAgent>,
     },
     SessionSnapshot {
         snapshot: Box<SessionSnapshot>,

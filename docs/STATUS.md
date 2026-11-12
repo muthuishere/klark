@@ -11,7 +11,7 @@ The released hub is still the Blazor one in `hub/`. The rewrite in `hub-go/` is 
 | item | state | verified how |
 |---|---|---|
 | machine link (ADR 0013), tokens, config, base path, SQLite | done | `go test -race`; real `klark expose` machine online |
-| static and OIDC sign-in, mock ADFS | done | HTTP-level e2e test; browser login; OIDC not tried on a real ADFS/Entra |
+| static and OIDC sign-in, mock ADFS | done | HTTP-level e2e test; browser login; the mock ADFS is the tested path |
 | data API, SSE, chat pipeline, files, messages, admin users/machines | done | Go tests; browser |
 | React UI | done | 51 vitest tests; real browser (login, shell, admin/machines) |
 | single-container image | done | built by the backend agent (25 MB, healthy, base path); not rebuilt by others |

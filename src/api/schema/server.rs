@@ -56,3 +56,49 @@ pub struct ServerCapabilities {
     #[serde(default)]
     pub ssh_agent_registration: bool,
 }
+
+/// This klark server process.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SystemStatsKlark {
+    pub pid: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rss_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peak_rss_bytes: Option<u64>,
+    /// CPU use since the previous `system.stats` call, in percent of one core; 0 on the first call.
+    pub cpu_percent: f64,
+    pub uptime_s: u64,
+    pub version: String,
+}
+
+/// The machine klark runs on. A field is left out when the OS cannot tell.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SystemStatsHost {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mem_total_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mem_available_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub load1: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpus: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SystemStatsPanes {
+    pub count: u32,
+    pub agents: u32,
+}
+
+/// One agent pane's resource use: the process tree under its shell.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SystemStatsAgent {
+    pub pane_id: String,
+    /// Detected agent name (for example `claude`).
+    pub name: String,
+    pub state: super::AgentStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rss_bytes: Option<u64>,
+    /// CPU use since the previous call, in percent of one core; 0 on the first call.
+    pub cpu_percent: f64,
+}

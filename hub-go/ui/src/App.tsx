@@ -8,14 +8,19 @@ import { MachinePage } from './pages/MachinePage';
 import { PanePage } from './pages/PanePage';
 import { FileViewer } from './pages/FileViewer';
 import { Messages } from './pages/Messages';
-import { AdminDirectory, AdminMachines, AdminUsers } from './pages/Admin';
+import { AdminMachines, AdminUsers } from './pages/Admin';
+import { AdminDirectory } from './pages/Directory';
+import { AdminAnalytics } from './pages/Analytics';
+import { AdminStorage } from './pages/Storage';
 import { Go } from './pages/Go';
+import { Connect } from './pages/Connect';
 import { NotFound } from './pages/NotFound';
 
 export function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/connect" element={<RequireAuth><Connect /></RequireAuth>} />
       <Route element={<RequireAuth><Shell /></RequireAuth>}>
         <Route path="/" element={<Home />} />
         <Route path="/go" element={<Go />} />
@@ -25,6 +30,8 @@ export function AppRoutes() {
         <Route path="/messages" element={<Messages />} />
         <Route path="/admin/users" element={<RequireAuth admin><AdminUsers /></RequireAuth>} />
         <Route path="/admin/machines" element={<RequireAuth admin><AdminMachines /></RequireAuth>} />
+        <Route path="/admin/analytics" element={<RequireAuth admin><AdminAnalytics /></RequireAuth>} />
+        <Route path="/admin/storage" element={<RequireAuth admin><AdminStorage /></RequireAuth>} />
         <Route path="/admin/directory" element={<RequireAuth admin><AdminDirectory /></RequireAuth>} />
       </Route>
       <Route path="*" element={<NotFound />} />

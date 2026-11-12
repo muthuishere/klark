@@ -32,6 +32,7 @@ pub(super) fn command() -> Command {
         .subcommand(completion::command())
         .subcommand(update_command())
         .subcommand(status_command())
+        .subcommand(stats_command())
         .subcommand(config_command())
         .subcommand(channel_command())
         .subcommand(machine::command())
@@ -133,6 +134,17 @@ fn status_command() -> Command {
                 .about("Show local client status")
                 .arg(json_flag()),
         )
+}
+
+fn stats_command() -> Command {
+    Command::new("stats")
+        .about("Show memory and CPU use of the server, the host and each agent pane")
+        .long_about(
+            "Show memory and CPU use of the running server, the host, and the process tree of \
+             each agent pane. CPU is the share of one core since the previous stats call. \
+             --json prints the same fields the system.stats API method returns.",
+        )
+        .arg(json_flag())
 }
 
 fn config_command() -> Command {
