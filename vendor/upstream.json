@@ -1,0 +1,8 @@
+{
+  "upstream": "https://github.com/herdrdev/herdr",
+  "note": "klark was forked from herdr 0.9.5 and has its own version line from 0.10.0. herdr's terminal client has had no release since v0.9.5 (2026-10-14); its work moved to herdr-app and herdr-core, which klark does not follow.",
+  "base_release": "v0.9.5",
+  "synced_through": "ee5bfb5041bb3e4a49d591c72308aae3c81ecdde",
+  "synced_through_date": "2026-10-29",
+  "checked": "2026-11-12"
+}

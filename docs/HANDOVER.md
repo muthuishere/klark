@@ -42,7 +42,7 @@ on every push to `master`. It uses the hub's Paper theme and has the one-line in
 ## Releasing (the recipe that works)
 
 Release version comes from the git **tag** (`build.rs`: `v0.9.5.5` becomes `0.9.5+5`), so build
-the desktop binaries **after** tagging. `klark --version` still prints `0.9.5` (Cargo version);
+the desktop binaries **after** tagging. `klark --version` prints the Cargo version (`0.10.0` from the 0.10 series on; klark's own version line, no longer herdr's `0.9.5.N`; see `vendor/upstream.json` for the herdr base);
 the release number is recorded in `~/.config/klark/versions.txt`.
 
 1. Put a `## [x.y.z.w] - date` section at the top of `CHANGELOG.md` (below `## Unreleased`).
