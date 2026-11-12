@@ -111,8 +111,8 @@ terminal multiplexer for coding agents. klark keeps herdr's core and builds on i
 **Changed from herdr:** self-update, hosted announcements and remote catalogs are
 removed. The config folder is `~/.config/klark`; klark never reads or moves
 `~/.config/herdr`, so herdr and klark run side by side. Environment variables are
-`KLARK_*`, for example `KLARK_SOCKET_PATH`. The version number follows herdr's
-(currently 0.9.5).
+`KLARK_*`, for example `KLARK_SOCKET_PATH`. klark has its own version line (0.10.0 and up);
+the herdr commit it is based on is recorded in `vendor/upstream.json`.
 
 herdr-expose, the earlier web view for herdr, is a separate product; klarkhub
 re-implements its ideas without sharing code (ADR 0008).
