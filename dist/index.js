@@ -1074,7 +1074,7 @@ function PaneHeader({ title, agent = "", session, status = "", statusText = "", 
   ] });
 }
 const plainClick = (e) => e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey;
-function Sidebar({ items, loaded = true, current, hrefFor, onOpen, filter: filterProp, onFilterChange, store = defaultStorage, renderGroupExtra, header, footer, empty }) {
+function Sidebar({ items, loaded = true, current, hrefFor, onOpen, filter: filterProp, onFilterChange, store = defaultStorage, renderGroupExtra, renderSubtitle, header, footer, empty }) {
   const [own, setOwn] = useState("");
   const filter = filterProp ?? own;
   const setFilter = (f) => {
@@ -1145,13 +1145,15 @@ function Sidebar({ items, loaded = true, current, hrefFor, onOpen, filter: filte
                   /* @__PURE__ */ jsx("span", { className: "ent-time", children: st === "blocked" ? "!" : "" }),
                   /* @__PURE__ */ jsxs("span", { className: "ent-sub", children: [
                     st === "blocked" && /* @__PURE__ */ jsx("b", { className: "needs", children: "needs you · " }),
-                    agent && /* @__PURE__ */ jsxs(Fragment, { children: [
-                      /* @__PURE__ */ jsx("b", { className: "kind", children: agent.toLowerCase() }),
-                      " · "
-                    ] }),
-                    r.machineName,
-                    " · ",
-                    r.session
+                    renderSubtitle ? renderSubtitle(r) : /* @__PURE__ */ jsxs(Fragment, { children: [
+                      agent && /* @__PURE__ */ jsxs(Fragment, { children: [
+                        /* @__PURE__ */ jsx("b", { className: "kind", children: agent.toLowerCase() }),
+                        " · "
+                      ] }),
+                      r.machineName,
+                      " · ",
+                      r.session
+                    ] })
                   ] })
                 ]
               },
