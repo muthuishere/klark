@@ -11,6 +11,12 @@ export interface DirectorySettings {
   groupSearchBase?: string; groupFilter?: string; useMemberOf?: boolean; displayNameAttr?: string; adminGroup?: string; allowedGroups?: string[] | string;
   oidc?: Array<{ id: string; name?: string; redirectUri?: string; loginUrl?: string }>;
 }
+/** GET /api/admin/directory: the effective settings nested under `settings`. */
+export interface DirectoryInfo {
+  mode?: string; name?: string; source?: 'env' | 'admin'; settings?: DirectorySettings;
+  adfs?: { enabled: boolean; name?: string; loginUrl?: string; redirectUri?: string };
+  oidc?: Array<{ id: string; name?: string; redirectUri?: string; loginUrl?: string; issuer?: string; clientId?: string }>;
+}
 export interface MachineInfo { id: string; name: string; online: boolean; version?: string; protocol?: number; lastSeen?: string }
 
 // session.snapshot (snake_case, straight from the machine)
@@ -37,3 +43,26 @@ export interface FileMeta {
 export interface HubMessage { ts: string; from: string; to: string; text: string; ok: boolean; error?: string; sender?: string }
 export interface AdminUser { username: string; displayName?: string; admin?: boolean; source?: string; groups?: string[] }
 export interface AdminMachine { name: string; status?: string; approvedBy?: string; created?: string }
+
+export interface AgentStat { paneId: string; name: string; state: string; rssBytes: number; cpuPercent: number }
+export interface LatestStats {
+  ts: number; klarkRssBytes: number; klarkPeakRssBytes: number; klarkCpuPercent: number; uptimeSeconds: number; version: string;
+  hostMemTotalBytes: number; hostMemAvailableBytes: number; load1: number; cpus: number; panes: number; agents: number; agentList: AgentStat[];
+}
+export interface SeriesPoint { t: number; klarkRssBytes: number; klarkCpuPercent: number; hostMemAvailableBytes: number; panes: number; agents: number }
+export interface MachineAnalytics {
+  id: string; name: string; online: boolean; hasStats: boolean; latest: LatestStats | null;
+  peak?: { klarkRssBytes: number; klarkCpuPercent: number; hostMemUsedPercent: number; panes: number; agents: number } | null;
+  series?: SeriesPoint[] | null;
+}
+export interface Analytics {
+  range: string; intervalSeconds: number; bucketSeconds?: number;
+  totals: { machines: number; online: number; panes: number; agents: number; klarkRssBytes: number };
+  machines: MachineAnalytics[];
+}
+export interface StorageInfo {
+  kind: 'none' | 'folder' | 's3'; source?: 'env' | 'admin'; path?: string;
+  s3?: { bucket?: string; region?: string; endpoint?: string; accessKeyId?: string; secretAccessKeySet?: boolean; pathStyle?: boolean };
+  sqlite?: { enabled?: boolean; every?: string; keep?: number; owner?: string; backups?: number };
+  lastSqliteBackupMs?: number; lastAnalyticsWriteMs?: number; lastError?: string; filesWritten?: number;
+}

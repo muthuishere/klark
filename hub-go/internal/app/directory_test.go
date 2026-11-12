@@ -16,7 +16,7 @@ func status(c *client, user, pw string) int {
 	return r.StatusCode
 }
 
-func TestMockLDAPIsTheDefault(t *testing.T) {
+func TestLocalIsTheDefaultAndMockLDAPIsOptIn(t *testing.T) {
 	_, ts := newApp(t, nil)
 	c := newClient(t, ts.URL)
 	_, b := c.do("GET", "/api/auth/providers", nil)
@@ -26,16 +26,26 @@ func TestMockLDAPIsTheDefault(t *testing.T) {
 		Adfs      struct{ Enabled bool }
 		Oidc      []any
 	}
-	if err := json.Unmarshal(b, &p); err != nil || !p.Static || p.Directory.Mode != "mockldap" || p.Directory.Name != "Mock LDAP" || p.Adfs.Enabled || p.Oidc == nil {
+	if err := json.Unmarshal(b, &p); err != nil || !p.Static || p.Directory.Mode != "local" || p.Directory.Name != "Local" || p.Adfs.Enabled || p.Oidc == nil {
 		t.Fatalf("providers %s", b)
 	}
-	if status(c, "user1", "user1pass") != 200 || status(newClient(t, ts.URL), "user2", "user2pass") != 200 {
+	if status(c, "user1", "user1pass") != 401 || status(newClient(t, ts.URL), "admin", "adminadmin") != 200 {
+		t.Fatal("default: only the built-in admin, no mock users")
+	}
+	// opt in with HUB_AUTH_MODE=mockldap
+	_, ts2 := newApp(t, func(c *config.Config) { c.Directory.Mode = "mockldap" })
+	c2 := newClient(t, ts2.URL)
+	_, b = c2.do("GET", "/api/auth/providers", nil)
+	if err := json.Unmarshal(b, &p); err != nil || p.Directory.Mode != "mockldap" || p.Directory.Name != "Mock LDAP" {
+		t.Fatalf("providers %s", b)
+	}
+	if status(c2, "user1", "user1pass") != 200 || status(newClient(t, ts2.URL), "user2", "user2pass") != 200 {
 		t.Fatal("seeded mock users must sign in")
 	}
-	if status(newClient(t, ts.URL), "user1", "wrong") != 401 || status(newClient(t, ts.URL), "admin", "adminadmin") != 200 {
+	if status(newClient(t, ts2.URL), "user1", "wrong") != 401 || status(newClient(t, ts2.URL), "admin", "adminadmin") != 200 {
 		t.Fatal("mock/builtin")
 	}
-	_, b = c.do("GET", "/api/auth/me", nil)
+	_, b = c2.do("GET", "/api/auth/me", nil)
 	if !strings.Contains(string(b), `"username":"user1"`) || !strings.Contains(string(b), `"admin":false`) {
 		t.Fatalf("me %s", b)
 	}
@@ -43,6 +53,7 @@ func TestMockLDAPIsTheDefault(t *testing.T) {
 
 func TestMockLDAPAdminManagementEnvSeedAndGroups(t *testing.T) {
 	a, ts := newApp(t, func(c *config.Config) {
+		c.Directory.Mode = "mockldap"
 		c.MockLDAPUsers = []config.MockLDAPUser{{Name: "ann", Password: "annpassword", Admin: true, Groups: []string{"devs"}}, {Name: "bo", Password: "bopassword", Groups: []string{"ops"}}}
 	})
 	// the env seed replaces the defaults
@@ -256,7 +267,7 @@ func TestLDAPLoginSharesTheRateLimiter(t *testing.T) {
 }
 
 func TestAdminDirectoryNeedsAdminAndCSRF(t *testing.T) {
-	_, ts := newApp(t, nil)
+	_, ts := newApp(t, func(c *config.Config) { c.Directory.Mode = "mockldap" })
 	u := newClient(t, ts.URL)
 	u.login("user1", "user1pass")
 	for _, p := range [][2]string{{"GET", "/api/admin/directory"}, {"PUT", "/api/admin/directory"}, {"DELETE", "/api/admin/directory"}, {"POST", "/api/admin/directory/test"}} {

@@ -10,6 +10,8 @@ import { FileViewer } from './pages/FileViewer';
 import { Messages } from './pages/Messages';
 import { AdminMachines, AdminUsers } from './pages/Admin';
 import { AdminDirectory } from './pages/Directory';
+import { AdminAnalytics } from './pages/Analytics';
+import { AdminStorage } from './pages/Storage';
 import { Go } from './pages/Go';
 import { NotFound } from './pages/NotFound';
 
@@ -26,6 +28,8 @@ export function AppRoutes() {
         <Route path="/messages" element={<Messages />} />
         <Route path="/admin/users" element={<RequireAuth admin><AdminUsers /></RequireAuth>} />
         <Route path="/admin/machines" element={<RequireAuth admin><AdminMachines /></RequireAuth>} />
+        <Route path="/admin/analytics" element={<RequireAuth admin><AdminAnalytics /></RequireAuth>} />
+        <Route path="/admin/storage" element={<RequireAuth admin><AdminStorage /></RequireAuth>} />
         <Route path="/admin/directory" element={<RequireAuth admin><AdminDirectory /></RequireAuth>} />
       </Route>
       <Route path="*" element={<NotFound />} />

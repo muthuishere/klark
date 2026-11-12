@@ -12,7 +12,7 @@ coordinator (2026-11-12); the gaps are listed under "Not done". Do not replace t
 |---|---|
 | machine link (ADR 0013), machine tokens, fleet tokens | done; tests; a real `klark expose` machine shows online |
 | config, `HUB_BASE_PATH` | done |
-| SQLite storage (pure Go, no cgo) | done |
+| SQLite storage (pure Go, no cgo); optional PostgreSQL (pure-Go pgx) | done |
 | static credentials (bcrypt or `sha256:`), built-in `admin` | done |
 | OIDC / ADFS client, mock ADFS (HTTP-level end-to-end test) | done; the mock ADFS is the tested path (a real ADFS or Entra is not needed for this rewrite) |
 | machines, session tree, calls, input, keys; per-pane SSE (lazy, by viewer count) | done |
@@ -69,7 +69,126 @@ Source of truth: `API.md`; code: `internal/config`.
 | `HUB_ADMIN_PASSWORD` | `adminadmin` | the built-in `admin` account's password; set it |
 | `HUB_SESSION_KEY` | generated into the data dir | signs the `klark_session` cookie |
 | `HUB_OIDC_ISSUER`, `_CLIENT_ID`, `_CLIENT_SECRET`, `_SCOPES`, `_ADMIN_GROUP`, `_NAME` | scopes `openid profile email`, name `ADFS` | ADFS / OIDC (code + PKCE) |
+| `HUB_AUTH_MODE` | `local`, or `ldap` when `HUB_LDAP_HOST` is set | sign-in = the built-in local `admin` (plus `HUB_USERS`) and a configurable LDAP (`HUB_LDAP_*`, see API.md). `mockldap` (demo users `user1/user1pass`, `HUB_MOCK_USERS`) is opt-in only |
+| `HUB_STATS_INTERVAL_SECONDS`, `HUB_STATS_RETENTION_DAYS` | 30 (min 5), 14 | analytics: least time between two calls to one machine; days of history kept |
+| `HUB_BACKUP` (`none`/`folder`/`s3`), `HUB_BACKUP_PATH`, `HUB_BACKUP_S3_BUCKET`/`_REGION`/`_ENDPOINT`/`_ACCESS_KEY_ID`/`_SECRET_ACCESS_KEY`/`_PATH_STYLE` | `none` (the image: `folder`, `/data/backup`) | the ONE storage target for the SQLite backups and the analytics files; see "Storage and backups" |
+| `HUB_SQLITE_BACKUP_EVERY`, `HUB_SQLITE_BACKUP_KEEP` | `6h` (min `5m`), `7` | SQLite snapshot interval and how many to keep |
+| `HUB_DB`, `HUB_DATABASE_URL`, `HUB_POD_ID`, `HUB_POD_URL`, `HUB_POD_SECRET` | `sqlite` | `postgres` for several active pods; see "Running several pods" |
 | `HUB_MOCK_ADFS`, `HUB_MOCK_ADFS_USERS` | off | `1` serves a mock IdP at `/mock-adfs/`; users `alice=pw:admin,bob=pw`. Dev and tests only |
+
+## Analytics
+
+The hub has built-in analytics of the machines (admin only, `GET /api/admin/analytics`): the klark process's memory (RSS and
+peak), CPU and uptime, host memory and load, panes and agents (with each agent's RSS and CPU), latest value, peak and a
+series per machine (at most 120 points).
+
+- **Collected lazily: no traffic to idle machines.** The hub asks a machine for `system.stats` (an ordinary machine call, so
+  old machines and hubs keep working; a machine without it shows `hasStats:false` and is retried every 10 min) only while an
+  admin has the Analytics page open (each request refreshes machines whose last sample is older than
+  `HUB_STATS_INTERVAL_SECONDS`) and once when a machine connects. History therefore only grows while someone looks, plus one
+  point per connect. When a machine disconnects its last known sample stays.
+- **Storage: SQLite** (`hub.db`, pure Go), table `machine_stats`, kept `HUB_STATS_RETENTION_DAYS` (default 14).
+- **Analytics files** (JSON per sample, one gzip NDJSON file per UTC hour) go to the storage target, see below, where DuckDB
+  can read them.
+- **DuckDB is not linked into the hub.** It needs cgo and would break the small static image. Query the files with DuckDB
+  yourself, for example the peak memory per machine:
+
+  ```sql
+  INSTALL httpfs; LOAD httpfs;   -- for s3://; set s3_region / s3_endpoint / keys (CREATE SECRET) first
+  SELECT machine, max(klark_rss_bytes)/1048576 AS peak_rss_mb, max(klark_cpu_percent) AS peak_cpu
+  FROM read_json_auto('s3://bucket/klarkhub/prod/analytics/**/*.ndjson.gz')
+  GROUP BY machine ORDER BY peak_rss_mb DESC;
+  -- a folder target: read_json_auto('/data/backup/analytics/**/*.ndjson.gz')
+  ```
+
+  The S3 writer is a small built-in SigV4 client (no SDK). It was verified against SeaweedFS in Docker (put, get, list, delete,
+  prefix, path style) and a signature-checking fake; AWS S3 itself, Cloudflare R2, Garage and virtual-host addressing were not
+  tried (they speak the same API). DuckDB was not run against the files here.
+
+## Storage and backups
+
+One target, `HUB_BACKUP=none|folder|s3`, holds both under `HUB_BACKUP_PATH` (a folder, or a key prefix for S3):
+
+```
+<path>/sqlite/hub-<UTC time>.db.gz       SQLite snapshots (sqlite mode), owner marker <path>/sqlite/owner.json
+<path>/analytics/YYYY/MM/DD/HH-<hubid>.ndjson.gz
+```
+
+- **The image defaults to `HUB_BACKUP=folder`, `/data/backup`: the same volume as the database.** It survives a restart or a
+  corrupt file, not a lost volume. For a real backup point it at S3 (or another disk).
+- **SQLite backup** is a consistent snapshot (`VACUUM INTO`, gzip) every `HUB_SQLITE_BACKUP_EVERY` (default 6h, min 5m), skipped when
+  nothing changed, plus one on clean shutdown; the newest `HUB_SQLITE_BACKUP_KEEP` (7) are kept. **Data-loss window after a crash or
+  a lost disk: up to the interval** (6h by default). It is not continuous replication; set `30m` or `1h` for a smaller window.
+  On start a missing `hub.db`, or one older than the newest snapshot, is restored from it. One hub per location (owner marker, 90 s
+  expiry): a second hub on the same path refuses to start with a clear message. Restore uses the environment's settings (admin-saved
+  settings live in the database).
+- **Swap the storage** by setting only endpoint and keys: AWS S3 (leave `_ENDPOINT` empty, set region), Cloudflare R2
+  (`_ENDPOINT=https://<account>.r2.cloudflarestorage.com`, region `auto`), Garage (its S3 endpoint, path style) or SeaweedFS
+  (`http://host:8333`, path style). Only SeaweedFS was run here.
+- **Try it locally**: `HUB_BACKUP=s3 HUB_BACKUP_PATH=klarkhub docker compose --profile s3 up -d` starts a pinned SeaweedFS
+  (`chrislusf/seaweedfs:4.00`, Apache-2.0) with one access key and creates the bucket `klarkhub`. A compose profile cannot change the
+  hub's own environment, so the two variables are given on the command line (or in a `.env` file).
+
+## Running several pods
+
+`HUB_DB=postgres` lets several hub pods run behind a load balancer. Honest summary:
+
+- State is in PostgreSQL (`HUB_DATABASE_URL`); `HUB_SESSION_KEY` must be set and identical on every pod (the hub refuses to start
+  without it) so one sign-in works everywhere.
+- **Machine links and live viewers are per pod.** A machine's link lives on the pod it connected to. The pods record that in
+  `machine_presence` (heartbeat 5 s, expiry 15 s); a request that reaches another pod is proxied to the holder over `HUB_POD_URL`,
+  authenticated by `HUB_POD_SECRET` (header; `/internal/*` is closed without it): tree, calls, files, input and the pane SSE streams,
+  and the machine's own `/agent/*` requests if the load balancer sends them elsewhere. If a pod dies, its machines reconnect (to any
+  pod) within a few seconds and presence moves. No sticky routing is needed. The extra hop costs one proxied request.
+- Analytics sampling stays lazy and local: only the pod holding a machine calls it.
+- The login rate limiter is per pod. No SQLite backup in this mode (use PostgreSQL's own backups); analytics files still go to the
+  storage target.
+- Not built: LISTEN/NOTIFY (presence is read on demand), a hub-wide rate limit, per-pod metrics.
+
+Kubernetes sketch (external S3 and PostgreSQL):
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: klarkhub}
+spec:
+  replicas: 2
+  selector: {matchLabels: {app: klarkhub}}
+  template:
+    metadata: {labels: {app: klarkhub}}
+    spec:
+      containers:
+        - name: hub
+          image: klarkhub:latest          # your registry
+          ports: [{containerPort: 7470}]
+          readinessProbe: {httpGet: {path: /healthz, port: 7470}}
+          env:
+            - {name: HUB_DB, value: postgres}
+            - {name: HUB_POD_ID, valueFrom: {fieldRef: {fieldPath: metadata.name}}}
+            - {name: POD_IP, valueFrom: {fieldRef: {fieldPath: status.podIP}}}
+            - {name: HUB_POD_URL, value: "http://$(POD_IP):7470"}
+            - {name: HUB_DATABASE_URL, valueFrom: {secretKeyRef: {name: klarkhub, key: database-url}}}
+            - {name: HUB_SESSION_KEY, valueFrom: {secretKeyRef: {name: klarkhub, key: session-key}}}
+            - {name: HUB_POD_SECRET, valueFrom: {secretKeyRef: {name: klarkhub, key: pod-secret}}}
+            - {name: HUB_ADMIN_PASSWORD, valueFrom: {secretKeyRef: {name: klarkhub, key: admin-password}}}
+            - {name: HUB_BACKUP, value: s3}                 # analytics files go here
+            - {name: HUB_BACKUP_PATH, value: klarkhub/prod}
+            - {name: HUB_BACKUP_S3_BUCKET, value: my-bucket}
+            - {name: HUB_BACKUP_S3_REGION, value: eu-west-1}
+            - {name: HUB_BACKUP_S3_ACCESS_KEY_ID, valueFrom: {secretKeyRef: {name: klarkhub, key: s3-key}}}
+            - {name: HUB_BACKUP_S3_SECRET_ACCESS_KEY, valueFrom: {secretKeyRef: {name: klarkhub, key: s3-secret}}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: klarkhub}
+spec:
+  selector: {app: klarkhub}
+  ports: [{port: 80, targetPort: 7470}]
+```
+
+The container's volume is not needed for the database in this mode (the image's `/data` only holds a generated `session.key`
+when `HUB_SESSION_KEY` is unset, which postgres mode does not allow). Docker Compose: a `postgres` service and the `HUB_*` variables
+in `docker-compose.yml` (commented).
 
 ## Run locally
 
@@ -185,6 +304,10 @@ Derived from reading `hub/` (pages, endpoints, services), updated 2026-11-12 fro
 | Built-in `admin` account, static users, hashed | done |
 | Change password page (`Password.razor`) | not started |
 | OIDC / ADFS, mock ADFS (new, not in Blazor) | done; mock ADFS is the tested path |
+| Built-in analytics of the machines (lazy `system.stats`, history in the database, folder/S3 files for DuckDB) (new, not in Blazor) | done; unit tests, real SeaweedFS checked; DuckDB not run against the files here |
+| SQLite snapshot backup + restore on start, one storage target (new) | done; folder and SeaweedFS tested; loss window = the interval |
+| Optional PostgreSQL and several active pods (new) | done; two in-process hubs on a real PostgreSQL tested; not load-tested; no real load balancer or Kubernetes run |
+| Sign-in: default `local` (built-in admin only); mock LDAP opt-in with `HUB_AUTH_MODE=mockldap` | done |
 | LDAP (direct bind / search-then-bind, groups, allowed groups, test), mock LDAP, extra OIDC providers | done; unit-tested with a fake connection and tried by hand against OpenLDAP (osixia/openldap in Docker): search-then-bind, group search, admin group, wrong and empty password; direct bind, LDAPS, StartTLS and Active Directory not tried |
 | Per-group machine visibility, read-only viewers (`HubAccess`) | not started |
 | Sign-in rate limit | not checked |

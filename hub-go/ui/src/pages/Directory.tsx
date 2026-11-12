@@ -2,13 +2,13 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { api } from '../lib/api';
 import { usePoll } from '../hooks';
 import { AdminFrame, Notice } from './Admin';
-import type { DirectorySettings } from '../lib/types';
+import type { DirectoryInfo, DirectorySettings } from '../lib/types';
 
 const toText = (v: string[] | string | undefined) => (Array.isArray(v) ? v.join(', ') : v ?? '');
 const toList = (s: string) => s.split(/[,\n]/).map((x) => x.trim()).filter(Boolean);
 
 export function AdminDirectory() {
-  const { data, error, reload } = usePoll<DirectorySettings>('api/admin/directory', 0);
+  const { data, error, reload } = usePoll<DirectoryInfo>('api/admin/directory', 0);
   const [f, setF] = useState<DirectorySettings>({});
   const [allowed, setAllowed] = useState('');
   const [pw, setPw] = useState('');
@@ -17,7 +17,7 @@ export function AdminDirectory() {
   const [t, setT] = useState({ username: '', password: '' });
   const [res, setRes] = useState<{ ok: boolean; message: string } | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
-  useEffect(() => { if (data) { setF(data); setAllowed(toText(data.allowedGroups)); } }, [data]);
+  useEffect(() => { if (data) { const st = data.settings ?? {}; setF(st); setAllowed(toText(st.allowedGroups)); } }, [data]);
 
   const set = <K extends keyof DirectorySettings>(k: K, v: DirectorySettings[K]) => setF((p) => ({ ...p, [k]: v }));
   const body = () => {
@@ -44,11 +44,12 @@ export function AdminDirectory() {
     <label className="check"><input type="checkbox" checked={!!f[k]} onChange={(e) => set(k, e.target.checked as never)} /> {label}</label>
   );
   const mode = f.mode ?? data?.mode;
+  const live = data?.mode;
 
   return (
     <AdminFrame title="Directory">
       <Notice ok={ok} err={err ?? error} />
-      <p>Mode: <b data-testid="dir-mode">{mode === 'mockldap' ? 'Mock LDAP' : mode === 'ldap' ? 'LDAP' : mode ?? 'local'}</b></p>
+      <p>Mode: <b data-testid="dir-mode">{live === 'mockldap' ? 'Mock LDAP' : live === 'ldap' ? 'LDAP' : 'local'}</b>{data?.source && <span className="muted"> · from {data.source === 'admin' ? 'saved settings' : 'environment'}</span>}</p>
       <form className="stack" onSubmit={save} aria-label="LDAP settings">
         <label>Mode<select value={mode ?? 'local'} onChange={(e) => set('mode', e.target.value)}><option value="local">local (no directory)</option><option value="mockldap">mockldap (test users)</option><option value="ldap">ldap</option></select></label>
         {text('host', 'Host')}

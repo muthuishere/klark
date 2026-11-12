@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // User is a statically configured account.
@@ -67,7 +68,7 @@ type MockLDAPUser struct {
 // Directory is the LDAP / directory sign-in setting set. The environment fills it from HUB_LDAP_*; an
 // administrator can store a replacement (same JSON names) from /admin/directory.
 type Directory struct {
-	Mode            string   `json:"mode"` // mockldap | ldap | local ("" = ldap when Host is set, else mockldap)
+	Mode            string   `json:"mode"` // mockldap | ldap | local ("" = ldap when Host is set, else local; mockldap only when asked for)
 	Host            string   `json:"host"`
 	Port            int      `json:"port"` // 0 = 389, or 636 with SSL
 	SSL             bool     `json:"ssl"`
@@ -87,6 +88,24 @@ type Directory struct {
 	AllowedGroups   []string `json:"allowedGroups"`
 }
 
+// S3Config is an S3 (or S3-compatible: MinIO, R2, ...) bucket. The key prefix is Storage.Path.
+type S3Config struct {
+	Bucket          string `json:"bucket"`
+	Region          string `json:"region"`
+	Endpoint        string `json:"endpoint"` // empty = AWS
+	AccessKeyID     string `json:"accessKeyId"`
+	SecretAccessKey string `json:"secretAccessKey,omitempty"` // never returned by any API
+	PathStyle       bool   `json:"pathStyle"`
+}
+
+// Storage is the ONE storage target of the hub (HUB_BACKUP*): the SQLite backups under <Path>/sqlite/ and the
+// analytics files under <Path>/analytics/. Kind none|folder|s3; Path is a local folder (folder) or a key prefix (s3).
+type Storage struct {
+	Kind string   `json:"kind"`
+	Path string   `json:"path"`
+	S3   S3Config `json:"s3"`
+}
+
 // EffectiveMode resolves an empty mode.
 func (d Directory) EffectiveMode() string {
 	switch strings.ToLower(strings.TrimSpace(d.Mode)) {
@@ -96,7 +115,7 @@ func (d Directory) EffectiveMode() string {
 	if strings.TrimSpace(d.Host) != "" {
 		return "ldap"
 	}
-	return "mockldap"
+	return "local"
 }
 
 // Config is everything the hub reads from its environment.
@@ -115,6 +134,18 @@ type Config struct {
 	Directory     Directory
 	MockLDAPUsers []MockLDAPUser // HUB_MOCK_USERS; nil = the defaults (user1, user2)
 	OIDCProviders []OIDCProvider
+
+	StatsIntervalSeconds int // HUB_STATS_INTERVAL_SECONDS, default 30, min 5
+	StatsRetentionDays   int // HUB_STATS_RETENTION_DAYS, default 14
+	Storage              Storage
+	SQLiteBackupEvery    time.Duration // HUB_SQLITE_BACKUP_EVERY, default 6h, min 5m
+	SQLiteBackupKeep     int           // HUB_SQLITE_BACKUP_KEEP, default 7
+
+	DB          string // HUB_DB: sqlite (default) or postgres
+	DatabaseURL string // HUB_DATABASE_URL (postgres); from the environment only, never logged or returned
+	PodID       string // HUB_POD_ID
+	PodURL      string // HUB_POD_URL: where other pods reach this one, e.g. http://10.0.0.5:7470 (postgres, several pods)
+	PodSecret   string // HUB_POD_SECRET: shared secret for pod-to-pod requests
 }
 
 // NormalizeBase turns "klark/", "/klark" or "/" into "/klark" or "".
@@ -161,6 +192,27 @@ func FromEnv(getenv func(string) string) (Config, error) {
 	if c.OIDCProviders, err = ParseOIDCProviders(getenv("HUB_OIDC_PROVIDERS"), getenv); err != nil {
 		return c, err
 	}
+	if c.StatsIntervalSeconds, err = envInt(getenv, "HUB_STATS_INTERVAL_SECONDS", 30, 5); err != nil {
+		return c, err
+	}
+	if c.StatsRetentionDays, err = envInt(getenv, "HUB_STATS_RETENTION_DAYS", 14, 1); err != nil {
+		return c, err
+	}
+	if c.Storage, err = parseStorage(getenv); err != nil {
+		return c, err
+	}
+	if c.SQLiteBackupEvery, err = envDuration(getenv, "HUB_SQLITE_BACKUP_EVERY", 6*time.Hour, 5*time.Minute); err != nil {
+		return c, err
+	}
+	if c.SQLiteBackupKeep, err = envInt(getenv, "HUB_SQLITE_BACKUP_KEEP", 7, 1); err != nil {
+		return c, err
+	}
+	c.DB = strings.ToLower(orDefault(getenv("HUB_DB"), "sqlite"))
+	if c.DB != "sqlite" && c.DB != "postgres" {
+		return c, fmt.Errorf("HUB_DB: %q must be sqlite or postgres", c.DB)
+	}
+	c.DatabaseURL = strings.TrimSpace(getenv("HUB_DATABASE_URL"))
+	c.PodID, c.PodURL, c.PodSecret = strings.TrimSpace(getenv("HUB_POD_ID")), strings.TrimRight(strings.TrimSpace(getenv("HUB_POD_URL")), "/"), getenv("HUB_POD_SECRET")
 	if c.MockADFS {
 		c.MockUsers, err = parseMockUsers(getenv("HUB_MOCK_ADFS_USERS"))
 		if err != nil {
@@ -168,6 +220,50 @@ func FromEnv(getenv func(string) string) (Config, error) {
 		}
 	}
 	return c, nil
+}
+
+// envInt reads a whole number >= min; empty = def, a smaller number is raised to min.
+func envInt(g func(string) string, name string, def, min int) (int, error) {
+	v := strings.TrimSpace(g(name))
+	if v == "" {
+		return def, nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %q is not a number", name, v)
+	}
+	if n < min {
+		n = min
+	}
+	return n, nil
+}
+
+func envDuration(g func(string) string, name string, def, min time.Duration) (time.Duration, error) {
+	v := strings.TrimSpace(g(name))
+	if v == "" {
+		return def, nil
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %q is not a duration like 30m, 6h or 24h", name, v)
+	}
+	return max(d, min), nil
+}
+
+func parseStorage(g func(string) string) (Storage, error) {
+	a := Storage{Kind: strings.ToLower(strings.TrimSpace(g("HUB_BACKUP"))), Path: strings.TrimSpace(g("HUB_BACKUP_PATH")),
+		S3: S3Config{Bucket: strings.TrimSpace(g("HUB_BACKUP_S3_BUCKET")),
+			Region: strings.TrimSpace(g("HUB_BACKUP_S3_REGION")), Endpoint: strings.TrimSpace(g("HUB_BACKUP_S3_ENDPOINT")),
+			AccessKeyID: strings.TrimSpace(g("HUB_BACKUP_S3_ACCESS_KEY_ID")), SecretAccessKey: g("HUB_BACKUP_S3_SECRET_ACCESS_KEY"),
+			PathStyle: truthy(g("HUB_BACKUP_S3_PATH_STYLE"))}}
+	switch a.Kind {
+	case "":
+		a.Kind = "none"
+	case "none", "folder", "s3":
+	default:
+		return a, fmt.Errorf("HUB_BACKUP: %q must be none, folder or s3", a.Kind)
+	}
+	return a, nil
 }
 
 func parseDirectory(g func(string) string) (Directory, error) {

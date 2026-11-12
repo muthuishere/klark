@@ -3,19 +3,28 @@
 package app
 
 import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
+	"fmt"
 	"io/fs"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/muthuishere/klark/hub-go/internal/auth"
+	"github.com/muthuishere/klark/hub-go/internal/backup"
 	"github.com/muthuishere/klark/hub-go/internal/chat"
 	"github.com/muthuishere/klark/hub-go/internal/config"
 	"github.com/muthuishere/klark/hub-go/internal/hub"
 	"github.com/muthuishere/klark/hub-go/internal/link"
 	"github.com/muthuishere/klark/hub-go/internal/server"
+	"github.com/muthuishere/klark/hub-go/internal/stats"
 	"github.com/muthuishere/klark/hub-go/internal/store"
 	"github.com/muthuishere/klark/hub-go/internal/tokens"
 	"github.com/muthuishere/klark/hub-go/internal/ui"
@@ -32,11 +41,18 @@ type App struct {
 	Registry *link.Registry
 	Runtime  *hub.Runtime
 	Tokens   *tokenSource
+	// Stats samples the machines; Archive copies the samples to a folder or S3. Start both with StartBackground.
+	Cluster *Cluster // several pods (postgres + HUB_POD_URL); nil otherwise
+	Server  *server.Server
+	Backup  *backup.Manager // SQLite only; nil with postgres
+	Stats   *stats.Collector
+	Archive *stats.Archiver
 	// UI is the built app; nil uses the one embedded in the binary.
 	UI fs.FS
 	// AgentNote is appended to what people send from the hub (see chat.AppendNote); empty turns it off.
 	AgentNote string
 
+	agentCache   agentCacheT
 	files        *fileCache
 	scriptHashes []string
 	mux          *http.ServeMux
@@ -44,9 +60,39 @@ type App struct {
 
 // New opens the database, seeds accounts and wires every route.
 func New(cfg config.Config, uiFS fs.FS) (*App, error) {
-	st, err := store.Open(cfg.DataDir)
-	if err != nil {
-		return nil, err
+	if cfg.PodID == "" {
+		host, _ := os.Hostname()
+		raw := make([]byte, 3)
+		_, _ = rand.Read(raw)
+		cfg.PodID = host + "-" + hex.EncodeToString(raw)
+	}
+	var st *store.Store
+	var err error
+	if cfg.DB == "postgres" {
+		switch {
+		case cfg.DatabaseURL == "":
+			return nil, errors.New("HUB_DB=postgres needs HUB_DATABASE_URL")
+		case cfg.SessionKey == "":
+			return nil, errors.New("HUB_DB=postgres needs HUB_SESSION_KEY (the same on every pod, so a sign-in works on all of them)")
+		case cfg.PodURL != "" && len(cfg.PodSecret) < 16:
+			return nil, errors.New("HUB_POD_URL needs HUB_POD_SECRET of at least 16 characters (pod-to-pod requests are authenticated with it)")
+		}
+		if st, err = store.OpenPostgres(cfg.DatabaseURL); err != nil {
+			return nil, err
+		}
+	} else {
+		if cfg.Storage.Kind != "none" && cfg.Storage.Kind != "" { // restore a missing or older hub.db before opening it
+			sink, serr := stats.NewSink(cfg.Storage)
+			if serr != nil {
+				return nil, fmt.Errorf("HUB_BACKUP: %w", serr)
+			}
+			if _, rerr := backup.Start(context.Background(), sink, cfg.PodID, filepath.Join(cfg.DataDir, "hub.db"), backup.OwnerTTL+10*time.Second); rerr != nil {
+				return nil, fmt.Errorf("sqlite backup: %w", rerr)
+			}
+		}
+		if st, err = store.Open(cfg.DataDir); err != nil {
+			return nil, err
+		}
 	}
 	key, err := auth.LoadKey(cfg.SessionKey, cfg.DataDir)
 	if err != nil {
@@ -72,16 +118,31 @@ func New(cfg config.Config, uiFS fs.FS) (*App, error) {
 		st.TouchMachine(id, version, protocol)
 	}
 	a.Tokens = &tokenSource{cfg: cfg, st: st}
+	a.initStats()
+	if !st.IsPostgres() {
+		a.Backup = &backup.Manager{Store: st, Pod: cfg.PodID, Dir: cfg.DataDir, Every: cfg.SQLiteBackupEvery, Keep: cfg.SQLiteBackupKeep,
+			Sink: func() (stats.Sink, error) { c, _ := a.storageConfig(); return stats.NewSink(c) }}
+	}
+	a.Server = &server.Server{Tokens: a.Tokens, Registry: a.Registry}
+	a.initCluster()
 	a.build()
 	return a, nil
 }
 
-// Close releases the database.
-func (a *App) Close() error { return a.Store.Close() }
+// Close takes the final SQLite backup (when configured and changed), releases the backup owner marker and closes
+// the database.
+func (a *App) Close() error {
+	if a.Backup != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		a.Backup.Final(ctx)
+		cancel()
+	}
+	return a.Store.Close()
+}
 
 func (a *App) build() {
 	mux := http.NewServeMux()
-	(&server.Server{Tokens: a.Tokens, Registry: a.Registry}).Mount(mux)
+	a.Server.Mount(mux)
 	a.Auth.Mount(mux)
 	if a.Auth.Mock != nil {
 		a.Auth.Mock.Mount(mux)
@@ -102,7 +163,7 @@ func (a *App) build() {
 // Handler is the whole hub: the base path, security headers and gzip around the routes.
 func (a *App) Handler() http.Handler {
 	base := a.Cfg.BasePath
-	var h http.Handler = a.mux
+	var h http.Handler = a.podLayer(a.mux)
 	if base != "" {
 		inner := h
 		h = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

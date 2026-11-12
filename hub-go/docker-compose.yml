@@ -1,7 +1,8 @@
 # Example: docker compose up -d   then open http://localhost:7470
+# With S3 (SeaweedFS included): HUB_BACKUP=s3 HUB_BACKUP_PATH=klarkhub docker compose --profile s3 up -d
 # Sign in with admin / adminadmin unless HUB_ADMIN_PASSWORD is set (set it).
-# With no other setting the hub runs a MOCK LDAP directory: user1/user1pass and user2/user2pass (development and
-# demos only; manage them in /admin/users, or set HUB_MOCK_USERS). Set HUB_LDAP_HOST for a real directory.
+# Sign-in is the built-in local admin (plus HUB_USERS) and, when HUB_LDAP_HOST is set, an LDAP directory.
+# A MOCK LDAP (user1/user1pass, user2/user2pass; demos only) is opt-in: HUB_AUTH_MODE: mockldap.
 services:
   hub:
     build: .
@@ -11,8 +12,25 @@ services:
       - "7470:7470"
     volumes:
       - hub-data:/data
+    depends_on:
+      s3-init:
+        condition: service_completed_successfully
+        required: false          # only when the s3 profile is on
     environment:
       HUB_ADMIN_PASSWORD: "change-me-please"
+      # ONE storage target for the SQLite backups (<path>/sqlite/hub-<UTC time>.db.gz, every HUB_SQLITE_BACKUP_EVERY,
+      # default 6h, last 7 kept, plus one on clean shutdown; a missing or older hub.db is restored from the newest on
+      # start) and the analytics files (<path>/analytics/YYYY/MM/DD/HH-<hubid>.ndjson.gz).
+      # Default: a folder on the same volume. That survives a restart but is NOT a backup of the volume: point it at S3.
+      #   S3 (SeaweedFS included):  HUB_BACKUP=s3 HUB_BACKUP_PATH=klarkhub docker compose --profile s3 up
+      HUB_BACKUP: "${HUB_BACKUP:-folder}"
+      HUB_BACKUP_PATH: "${HUB_BACKUP_PATH:-/data/backup}"        # folder: a path; s3: a key prefix
+      HUB_BACKUP_S3_BUCKET: "${HUB_BACKUP_S3_BUCKET:-klarkhub}"
+      HUB_BACKUP_S3_ENDPOINT: "${HUB_BACKUP_S3_ENDPOINT:-http://seaweedfs:8333}"   # empty = AWS; R2, Garage, SeaweedFS: their endpoint
+      HUB_BACKUP_S3_REGION: "${HUB_BACKUP_S3_REGION:-us-east-1}"
+      HUB_BACKUP_S3_PATH_STYLE: "${HUB_BACKUP_S3_PATH_STYLE:-true}"
+      HUB_BACKUP_S3_ACCESS_KEY_ID: "${HUB_BACKUP_S3_ACCESS_KEY_ID:-klark}"
+      HUB_BACKUP_S3_SECRET_ACCESS_KEY: "${HUB_BACKUP_S3_SECRET_ACCESS_KEY:-klark-change-me-please}"
       # Machines that may `klark expose` to this hub: name=<sha256 of the token>
       #   echo -n 'my-token' | shasum -a 256     (or: echo my-token | klarkhub hash-token)
       # Name ending in * is a fleet token. You can also add machines in /admin/machines.
@@ -30,8 +48,8 @@ services:
       # HUB_OIDC_CLIENT_SECRET: "..."
       # HUB_OIDC_ADMIN_GROUP: klark-admins
       #
-      # Directory sign-in. HUB_AUTH_MODE: mockldap | ldap | local ("" = ldap when HUB_LDAP_HOST is set, else mockldap)
-      # HUB_MOCK_USERS: "ann=secretpw:admin:devs|ops,bo=otherpw"       # name=password[:admin][:group1|group2]
+      # Directory sign-in. HUB_AUTH_MODE: local | ldap | mockldap ("" = ldap when HUB_LDAP_HOST is set, else local)
+      # HUB_MOCK_USERS (only with HUB_AUTH_MODE=mockldap): "ann=secretpw:admin:devs|ops,bo=otherpw"       # name=password[:admin][:group1|group2]
       # Real LDAP (OpenLDAP, Active Directory, FreeIPA). The server checks the password by a bind as the user.
       # HUB_LDAP_HOST: ldap.example.com
       # HUB_LDAP_PORT: "636"                  # default 389, or 636 with HUB_LDAP_SSL
@@ -55,5 +73,80 @@ services:
       # Development only: the hub plays ADFS itself at /mock-adfs/
       # HUB_MOCK_ADFS: "1"
       # HUB_MOCK_ADFS_USERS: "alice=alicepw:admin,bob=bobpw"
+      #
+      # Analytics of the machines (admin page). Collected LAZILY: machines are asked only while an admin has the
+      # analytics page open, and once when they connect. History is kept in /data/hub.db (SQLite).
+      # HUB_STATS_INTERVAL_SECONDS: "30"      # least time between two calls to one machine (min 5)
+      # HUB_STATS_RETENTION_DAYS: "14"
+      #
+      # Several active pods behind a load balancer need PostgreSQL (see README "Running several pods"; the `postgres`
+      # profile below runs two pods against a PostgreSQL container):
+      # HUB_DB: postgres
+      # HUB_DATABASE_URL: postgres://klark:pw@postgres:5432/klark?sslmode=disable   # environment only; never logged
+      # HUB_SESSION_KEY: "the same long random string on every pod"                 # required with postgres
+      # HUB_POD_URL: http://$(POD_IP):7470        # where the OTHER pods reach this one (k8s: from the downward API)
+      # HUB_POD_SECRET: "at least 16 random characters, the same on every pod"
+
+  # Optional S3 for the storage target above: HUB_BACKUP=s3 HUB_BACKUP_PATH=klarkhub docker compose --profile s3 up -d
+  # SeaweedFS (Apache-2.0), one container, one access key (the HUB_BACKUP_S3_* values above), bucket created by s3-init.
+  # Swap it for AWS S3, Cloudflare R2 or Garage by setting HUB_BACKUP_S3_ENDPOINT / _REGION / keys and not using the profile.
+  seaweedfs:
+    profiles: ["s3"]
+    image: chrislusf/seaweedfs:4.00
+    restart: unless-stopped
+    environment:
+      S3_ACCESS_KEY: "${HUB_BACKUP_S3_ACCESS_KEY_ID:-klark}"
+      S3_SECRET_KEY: "${HUB_BACKUP_S3_SECRET_ACCESS_KEY:-klark-change-me-please}"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        cat > /tmp/s3.json <<EOF
+        {"identities":[{"name":"klark","credentials":[{"accessKey":"$$S3_ACCESS_KEY","secretKey":"$$S3_SECRET_KEY"}],"actions":["Admin","Read","Write","List","Tagging"]}]}
+        EOF
+        exec weed server -dir=/data -ip=seaweedfs -s3 -s3.port=8333 -s3.config=/tmp/s3.json -master.volumeSizeLimitMB=512 -volume.max=8
+    ports:
+      - "${S3_PORT:-8333}:8333"
+    volumes:
+      - s3-data:/data
+  s3-init:                         # one-shot: creates the bucket, then exits
+    profiles: ["s3"]
+    image: chrislusf/seaweedfs:4.00
+    depends_on: [seaweedfs]
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - until echo "s3.bucket.create -name klarkhub" | weed shell -master=seaweedfs:9333 2>&1 | tee /dev/stderr | grep -v -i -E "error|fail|connect" >/dev/null && echo "s3.bucket.list" | weed shell -master=seaweedfs:9333 2>&1 | grep -q klarkhub; do sleep 3; done
+
+  # Several active pods on PostgreSQL: docker compose --profile postgres up -d   (hub-pg-1 on :7471, hub-pg-2 on :7472; put a
+  # load balancer in front, or point machines and browsers at either: requests are forwarded to the pod holding the machine).
+  # These two are separate from the `hub` service above (stop it, or its port 7470 stays as the SQLite hub).
+  postgres:
+    profiles: ["postgres"]
+    image: postgres:17-alpine
+    environment: {POSTGRES_USER: klark, POSTGRES_PASSWORD: klark-pg-change-me, POSTGRES_DB: klark}
+    volumes: [pg-data:/var/lib/postgresql/data]
+    healthcheck: {test: ["CMD-SHELL", "pg_isready -U klark -d klark"], interval: 3s, timeout: 3s, retries: 20}
+  hub-pg-1: &hubpg
+    profiles: ["postgres"]
+    image: klarkhub:latest
+    ports: ["7471:7470"]
+    depends_on: {postgres: {condition: service_healthy}}
+    environment: &hubpg-env
+      HUB_DB: postgres
+      HUB_DATABASE_URL: postgres://klark:klark-pg-change-me@postgres:5432/klark?sslmode=disable
+      HUB_SESSION_KEY: change-me-a-long-random-string-shared-by-all-pods
+      HUB_POD_SECRET: change-me-pod-secret-16+
+      HUB_ADMIN_PASSWORD: change-me-please
+      HUB_POD_ID: hub-pg-1
+      HUB_POD_URL: http://hub-pg-1:7470
+  hub-pg-2:
+    <<: *hubpg
+    ports: ["7472:7470"]
+    environment:
+      <<: *hubpg-env
+      HUB_POD_ID: hub-pg-2
+      HUB_POD_URL: http://hub-pg-2:7470
 volumes:
   hub-data:
+  s3-data:
+  pg-data:

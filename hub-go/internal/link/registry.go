@@ -89,6 +89,13 @@ func (r *Registry) Machines() []string {
 	return ids
 }
 
+// Conn is the live session of a machine, nil when none.
+func (r *Registry) Conn(machineID string) *Conn {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.machines[machineID]
+}
+
 // Revoke drops a machine's session at once.
 func (r *Registry) Revoke(machineID string) {
 	r.mu.Lock()

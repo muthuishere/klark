@@ -3,6 +3,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"embed"
 	"errors"
@@ -10,20 +11,63 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
+	_ "github.com/jackc/pgx/v5/stdlib"
 	_ "modernc.org/sqlite"
 )
 
-//go:embed migrations/*.sql
+//go:embed migrations
 var migrations embed.FS
 
 // ErrNotFound is returned when a row does not exist.
 var ErrNotFound = errors.New("not found")
 
-// Store wraps hub.db.
-type Store struct{ db *sql.DB }
+// Store is the hub's database: SQLite (hub.db, the default) or PostgreSQL (several active pods). The queries are
+// written once in the SQLite dialect with `?` placeholders; the Postgres connection rewrites the few differences
+// (placeholders, INSERT OR IGNORE, the case-insensitive name key, rowid) in dbx.
+type Store struct {
+	db *dbx
+	pg bool
+}
+
+// dbx is a *sql.DB that rewrites queries for PostgreSQL.
+type dbx struct {
+	*sql.DB
+	pg bool
+}
+
+func (d *dbx) rewrite(q string) string {
+	if !d.pg {
+		return q
+	}
+	if strings.HasPrefix(q, "INSERT OR IGNORE INTO") {
+		q = "INSERT INTO" + strings.TrimPrefix(q, "INSERT OR IGNORE INTO") + " ON CONFLICT DO NOTHING"
+	}
+	q = strings.Replace(q, "ON CONFLICT(name)", "ON CONFLICT ((lower(name)))", 1)
+	q = strings.Replace(q, ", rowid DESC", ", id DESC", 1)
+	var b strings.Builder
+	n := 0
+	for i := 0; i < len(q); i++ {
+		if q[i] == '?' {
+			n++
+			b.WriteString("$" + strconv.Itoa(n))
+		} else {
+			b.WriteByte(q[i])
+		}
+	}
+	return b.String()
+}
+
+func (d *dbx) Exec(q string, args ...any) (sql.Result, error) {
+	return d.DB.Exec(d.rewrite(q), args...)
+}
+func (d *dbx) Query(q string, args ...any) (*sql.Rows, error) {
+	return d.DB.Query(d.rewrite(q), args...)
+}
+func (d *dbx) QueryRow(q string, args ...any) *sql.Row { return d.DB.QueryRow(d.rewrite(q), args...) }
 
 // Open opens (creating) dir/hub.db and applies the embedded migrations. Safe to call on every start.
 func Open(dir string) (*Store, error) {
@@ -41,7 +85,7 @@ func OpenPath(path string) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(4)
-	s := &Store{db: db}
+	s := &Store{db: &dbx{DB: db}}
 	if err := s.migrate(); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -49,14 +93,67 @@ func OpenPath(path string) (*Store, error) {
 	return s, nil
 }
 
-func (s *Store) Close() error { return s.db.Close() }
+// OpenPostgres connects to PostgreSQL (url is a postgres:// URL; it is never logged) and applies the migrations
+// under an advisory lock, so pods starting together do not race.
+func OpenPostgres(url string) (*Store, error) {
+	db, err := sql.Open("pgx", url)
+	if err != nil {
+		return nil, errors.New("postgres: invalid HUB_DATABASE_URL")
+	}
+	db.SetMaxOpenConns(10)
+	db.SetConnMaxIdleTime(5 * time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := db.PingContext(ctx); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("postgres: cannot connect: %s", scrubURL(err.Error(), url))
+	}
+	s := &Store{db: &dbx{DB: db, pg: true}, pg: true}
+	if err := s.migrate(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	return s, nil
+}
 
-// migrate applies migrations/NNN_*.sql once each, in order; re-running is a no-op.
+func scrubURL(msg, url string) string { return strings.ReplaceAll(msg, url, "***") }
+
+// IsPostgres reports the backend.
+func (s *Store) IsPostgres() bool { return s.pg }
+
+// Snapshot writes a consistent copy of a SQLite database to path (VACUUM INTO; the file must not exist).
+func (s *Store) Snapshot(path string) error {
+	if s.pg {
+		return errors.New("snapshots are for SQLite")
+	}
+	_, err := s.db.DB.Exec(`VACUUM INTO ?`, path)
+	return err
+}
+
+func (s *Store) Close() error { return s.db.DB.Close() }
+
+// migrate applies migrations/<dialect>/NNN_*.sql once each, in order; re-running is a no-op.
 func (s *Store) migrate() error {
-	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY, applied INTEGER NOT NULL)`); err != nil {
+	dir := "migrations/sqlite"
+	if s.pg {
+		dir = "migrations/postgres"
+	}
+	ctx := context.Background()
+	conn, err := s.db.DB.Conn(ctx)
+	if err != nil {
 		return err
 	}
-	entries, err := migrations.ReadDir("migrations")
+	defer conn.Close()
+	if s.pg {
+		if _, err := conn.ExecContext(ctx, `SELECT pg_advisory_lock(727274)`); err != nil {
+			return err
+		}
+		defer conn.ExecContext(ctx, `SELECT pg_advisory_unlock(727274)`) //nolint:errcheck
+	}
+	if _, err := conn.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY, applied BIGINT NOT NULL)`); err != nil {
+		return err
+	}
+	entries, err := migrations.ReadDir(dir)
 	if err != nil {
 		return err
 	}
@@ -65,24 +162,32 @@ func (s *Store) migrate() error {
 		names = append(names, e.Name())
 	}
 	sort.Strings(names)
+	ph := "?"
+	if s.pg {
+		ph = "$1"
+	}
 	for _, n := range names {
 		var done int
-		if err := s.db.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE name = ?`, n).Scan(&done); err != nil {
+		if err := conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations WHERE name = `+ph, n).Scan(&done); err != nil {
 			return err
 		}
 		if done > 0 {
 			continue
 		}
-		body, _ := migrations.ReadFile("migrations/" + n)
-		tx, err := s.db.Begin()
+		body, _ := migrations.ReadFile(dir + "/" + n)
+		tx, err := conn.BeginTx(ctx, nil)
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(string(body)); err != nil {
+		if _, err := tx.ExecContext(ctx, string(body)); err != nil {
 			_ = tx.Rollback()
 			return fmt.Errorf("migration %s: %w", n, err)
 		}
-		if _, err := tx.Exec(`INSERT INTO schema_migrations (name, applied) VALUES (?, ?)`, n, time.Now().Unix()); err != nil {
+		ins := `INSERT INTO schema_migrations (name, applied) VALUES (?, ?)`
+		if s.pg {
+			ins = `INSERT INTO schema_migrations (name, applied) VALUES ($1, $2)`
+		}
+		if _, err := tx.ExecContext(ctx, ins, n, time.Now().Unix()); err != nil {
 			_ = tx.Rollback()
 			return err
 		}
@@ -156,7 +261,7 @@ func scanUser(sc interface{ Scan(...any) error }) (User, error) {
 const userCols = `name, display_name, hash, admin, source, created, groups`
 
 func (s *Store) User(name string) (User, error) {
-	u, err := scanUser(s.db.QueryRow(`SELECT `+userCols+` FROM users WHERE name = ?`, name))
+	u, err := scanUser(s.db.QueryRow(`SELECT `+userCols+` FROM users WHERE lower(name) = lower(?)`, name))
 	if errors.Is(err, sql.ErrNoRows) {
 		return u, ErrNotFound
 	}
@@ -181,7 +286,7 @@ func (s *Store) Users() ([]User, error) {
 }
 
 func (s *Store) DeleteUser(name string) error {
-	r, err := s.db.Exec(`DELETE FROM users WHERE name = ?`, name)
+	r, err := s.db.Exec(`DELETE FROM users WHERE lower(name) = lower(?)`, name)
 	if err != nil {
 		return err
 	}
@@ -192,7 +297,7 @@ func (s *Store) DeleteUser(name string) error {
 }
 
 func (s *Store) SetPassword(name, hash string) error {
-	r, err := s.db.Exec(`UPDATE users SET hash = ? WHERE name = ?`, hash, name)
+	r, err := s.db.Exec(`UPDATE users SET hash = ? WHERE lower(name) = lower(?)`, hash, name)
 	if err != nil {
 		return err
 	}
@@ -246,7 +351,7 @@ func (s *Store) Machines() ([]Machine, error) {
 }
 
 func (s *Store) DeleteMachine(name string) error {
-	r, err := s.db.Exec(`DELETE FROM machines WHERE name = ?`, name)
+	r, err := s.db.Exec(`DELETE FROM machines WHERE lower(name) = lower(?)`, name)
 	if err != nil {
 		return err
 	}
@@ -258,7 +363,7 @@ func (s *Store) DeleteMachine(name string) error {
 
 // TouchMachine records that a machine (stored or static) was seen, for the machine list after a restart.
 func (s *Store) TouchMachine(name, version string, protocol int) {
-	_, _ = s.db.Exec(`UPDATE machines SET last_seen = ?, version = ?, protocol = ? WHERE name = ?`, time.Now().Unix(), version, protocol, name)
+	_, _ = s.db.Exec(`UPDATE machines SET last_seen = ?, version = ?, protocol = ? WHERE lower(name) = lower(?)`, time.Now().Unix(), version, protocol, name)
 }
 
 // ---- messages ----------------------------------------------------------------

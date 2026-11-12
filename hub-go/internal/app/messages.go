@@ -1,8 +1,10 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"sort"
 	"strconv"
@@ -29,18 +31,18 @@ type agentEntry struct {
 	Address string `json:"address"`
 }
 
-var agentCache = struct {
+type agentCacheT struct {
 	sync.Mutex
 	at  time.Time
 	val []agentEntry
-}{}
+}
 
 // agents asks every online protocol>=2 machine for its agents, concurrently (answers shared for 2 s).
 func (a *App) agents(ctx context.Context) []agentEntry {
-	agentCache.Lock()
-	defer agentCache.Unlock()
-	if time.Since(agentCache.at) < 2*time.Second {
-		return agentCache.val
+	a.agentCache.Lock()
+	defer a.agentCache.Unlock()
+	if time.Since(a.agentCache.at) < 2*time.Second {
+		return a.agentCache.val
 	}
 	var wg sync.WaitGroup
 	var mu sync.Mutex
@@ -82,12 +84,16 @@ func (a *App) agents(ctx context.Context) []agentEntry {
 	}
 	wg.Wait()
 	sort.Slice(all, func(i, j int) bool { return strings.ToLower(all[i].Address) < strings.ToLower(all[j].Address) })
-	agentCache.at, agentCache.val = time.Now(), all
+	a.agentCache.at, a.agentCache.val = time.Now(), all
 	return all
 }
 
 func (a *App) listAgents(w http.ResponseWriter, r *http.Request) {
-	jsonOut(w, http.StatusOK, append([]agentEntry{}, a.agents(r.Context())...))
+	out := append([]agentEntry{}, a.agents(r.Context())...)
+	if a.Cluster != nil && !isForwarded(r) {
+		out = append(out, a.Cluster.remoteAgents(r.Context())...)
+	}
+	jsonOut(w, http.StatusOK, out)
 }
 
 type messageOut struct {
@@ -122,7 +128,9 @@ func (a *App) listMessages(w http.ResponseWriter, r *http.Request) {
 func (a *App) postMessage(w http.ResponseWriter, r *http.Request) {
 	u, _ := auth.FromContext(r.Context())
 	var b struct{ To, Text, From string }
-	if !decode(w, r, &b) {
+	raw, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if json.Unmarshal(raw, &b) != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
 	parts := strings.Split(b.To, "/")
@@ -142,6 +150,15 @@ func (a *App) postMessage(w http.ResponseWriter, r *http.Request) {
 	for _, in := range a.Runtime.Machines() {
 		if strings.EqualFold(in.ID, machine) {
 			machine = in.ID
+		}
+	}
+	if a.Cluster != nil && !isForwarded(r) { // the machine may be linked to another pod: it delivers and records
+		for _, p := range a.Cluster.others() {
+			if strings.EqualFold(p.MachineID, machine) {
+				r.Body = io.NopCloser(bytes.NewReader(raw))
+				a.Cluster.proxy(w, r, p.PodURL)
+				return
+			}
 		}
 	}
 	from := strings.TrimSpace(b.From)

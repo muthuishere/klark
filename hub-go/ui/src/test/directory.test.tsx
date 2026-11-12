@@ -33,7 +33,7 @@ describe('login with a directory', () => {
 
 describe('admin directory page', () => {
   beforeEach(() => setBase('/'));
-  const settings = { mode: 'ldap', host: 'ldap.x', port: 389, bindDn: 'cn=svc', bindPasswordSet: true, allowedGroups: ['a', 'b'], oidc: [{ id: 'g', name: 'Google', redirectUri: 'https://h/auth/oidc/g/callback' }] };
+  const settings = { mode: 'ldap', name: 'LDAP', source: 'admin', settings: { mode: 'ldap', host: 'ldap.x', port: 389, bindDn: 'cn=svc', bindPasswordSet: true, allowedGroups: ['a', 'b'] }, oidc: [{ id: 'g', name: 'Google', redirectUri: 'https://h/auth/oidc/g/callback' }] };
   it('never prefills the bind password, keeps it when empty, tests and lists providers', async () => {
     const calls = mockFetch((u, init) => {
       if (me401(u)) return { body: { username: 'a', admin: true } };

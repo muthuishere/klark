@@ -11,7 +11,7 @@ export function AdminFrame({ title, children }: { title: string; children: React
       <PageBar title={title} />
       <div className="page admin">
         <nav className="subnav" aria-label="Admin">
-          <NavLink to="/admin/users">Users</NavLink><NavLink to="/admin/machines">Machines</NavLink><NavLink to="/admin/directory">Directory</NavLink>
+          <NavLink to="/admin/users">Users</NavLink><NavLink to="/admin/machines">Machines</NavLink><NavLink to="/admin/directory">Directory</NavLink><NavLink to="/admin/analytics">Analytics</NavLink><NavLink to="/admin/storage">Storage</NavLink>
         </nav>
         <h1>{title}</h1>
         {children}
