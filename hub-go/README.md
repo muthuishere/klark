@@ -14,7 +14,7 @@ coordinator (2026-11-12); the gaps are listed under "Not done". Do not replace t
 | config, `HUB_BASE_PATH` | done |
 | SQLite storage (pure Go, no cgo) | done |
 | static credentials (bcrypt or `sha256:`), built-in `admin` | done |
-| OIDC / ADFS client, mock ADFS (HTTP-level end-to-end test) | done; OIDC **not tested against a real ADFS or Entra** (RSA keys only) |
+| OIDC / ADFS client, mock ADFS (HTTP-level end-to-end test) | done; the mock ADFS is the tested path (a real ADFS or Entra is not needed for this rewrite) |
 | machines, session tree, calls, input, keys; per-pane SSE (lazy, by viewer count) | done |
 | chat pipeline: Claude, Devin, Codex, Agy and generic screen readers, markdown, ANSI, command output, file links | done |
 | file endpoints (10 MB cap, secrets refused), messages, admin users and machines | done |
@@ -168,7 +168,7 @@ HUB_MOCK_ADFS=1 HUB_MOCK_ADFS_USERS="alice=pw:admin,bob=pw" go run ./cmd/klarkhu
    and returns to `/`. `alice` is an admin.
 4. Discovery is at `/mock-adfs/.well-known/openid-configuration`.
 
-The flow has an HTTP-level end-to-end test. A real ADFS or Entra ID has not been tried.
+The flow has an HTTP-level end-to-end test against the mock ADFS, which is the supported test path.
 
 ## Parity checklist against the Blazor hub
 
@@ -184,8 +184,8 @@ Derived from reading `hub/` (pages, endpoints, services), updated 2026-11-12 fro
 | Sign-in form, session cookie (`Login.razor`) | done |
 | Built-in `admin` account, static users, hashed | done |
 | Change password page (`Password.razor`) | not started |
-| OIDC / ADFS, mock ADFS (new, not in Blazor) | done; real ADFS / Entra untested |
-| LDAP (direct bind / search-then-bind, groups, allowed groups, test), mock LDAP, extra OIDC providers | done; tested against a fake LDAP connection only, no real LDAP server yet |
+| OIDC / ADFS, mock ADFS (new, not in Blazor) | done; mock ADFS is the tested path |
+| LDAP (direct bind / search-then-bind, groups, allowed groups, test), mock LDAP, extra OIDC providers | done; unit-tested with a fake connection and tried by hand against OpenLDAP (osixia/openldap in Docker): search-then-bind, group search, admin group, wrong and empty password; direct bind, LDAPS, StartTLS and Active Directory not tried |
 | Per-group machine visibility, read-only viewers (`HubAccess`) | not started |
 | Sign-in rate limit | not checked |
 | Machines and agents sidebar, status (`Sidebar.razor`, `Home.razor`) | done (short names truncate: UI nit) |

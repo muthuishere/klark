@@ -21,7 +21,7 @@ Two things in one repository:
    React 18 + Vite + TypeScript UI embedded in the binary, one container, port 7470. Decision:
    `docs/adr/0014-go-react-hub.md`; contract: `hub-go/API.md`; status and parity checklist: `hub-go/README.md`.
    Implemented and checked (2026-11-12): machine link, SQLite, static and OIDC/mock-ADFS sign-in, data API, chat
-   pipeline, React UI, single-container image. Not done: image upload, offers, LDAP, per-machine groups, browser
+   pipeline, React UI, single-container image. Not done: image upload, offers, per-machine groups, browser
    approval for `klark hub connect`, JWT pages, load tests. `hub/` stays until the parity checklist passes.
 
 Docs site (Astro Starlight, `site/`): https://muthuishere.github.io/klark/ , deployed by CI
@@ -139,8 +139,7 @@ Deviations since the 2026-11-06 version of this file:
    machine online, login in a browser. The Docker image (25 MB distroless) was built by the backend agent only.
    **A fresh clone must run `cd hub-go/ui && npm ci && npm run build` before `go build`**: `internal/ui/dist`
    is not committed, and without it the binary serves a placeholder page. Next: image upload (asset store),
-   `klark offer`, LDAP and groups decision, browser approval for `klark hub connect`, JWT pages, test OIDC
-   against a real ADFS/Entra, measure memory per viewer and load, then cut over and retire `hub/`. Until then fix
+   `klark offer`, per-machine groups decision, browser approval for `klark hub connect`, JWT pages, measure memory per viewer and load, then cut over and retire `hub/`. Until then fix
    bugs in `hub/` too and remember them for the port. Numbers below are about the Blazor hub.
 2. **herdr comparison (asked, not started):** the user downloaded `herdr-app-master` and
    `herdr-core-master` to `/Users/muthuishere/Downloads/h` (herdr now ships an app and a core).
