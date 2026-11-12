@@ -13,6 +13,8 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd ./cmd
+COPY chat ./chat
+COPY feed ./feed
 COPY internal ./internal
 COPY --from=ui /src/internal/ui/dist ./internal/ui/dist
 ARG VERSION=dev
