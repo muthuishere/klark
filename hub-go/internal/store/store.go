@@ -11,11 +11,9 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
-	_ "github.com/jackc/pgx/v5/stdlib"
 	_ "modernc.org/sqlite"
 )
 
@@ -25,49 +23,15 @@ var migrations embed.FS
 // ErrNotFound is returned when a row does not exist.
 var ErrNotFound = errors.New("not found")
 
-// Store is the hub's database: SQLite (hub.db, the default) or PostgreSQL (several active pods). The queries are
-// written once in the SQLite dialect with `?` placeholders; the Postgres connection rewrites the few differences
-// (placeholders, INSERT OR IGNORE, the case-insensitive name key, rowid) in dbx.
+// Store is the hub's SQLite database (hub.db).
 type Store struct {
 	db *dbx
-	pg bool
 }
 
-// dbx is a *sql.DB that rewrites queries for PostgreSQL.
+// dbx is the *sql.DB the queries run on.
 type dbx struct {
 	*sql.DB
-	pg bool
 }
-
-func (d *dbx) rewrite(q string) string {
-	if !d.pg {
-		return q
-	}
-	if strings.HasPrefix(q, "INSERT OR IGNORE INTO") {
-		q = "INSERT INTO" + strings.TrimPrefix(q, "INSERT OR IGNORE INTO") + " ON CONFLICT DO NOTHING"
-	}
-	q = strings.Replace(q, "ON CONFLICT(name)", "ON CONFLICT ((lower(name)))", 1)
-	q = strings.Replace(q, ", rowid DESC", ", id DESC", 1)
-	var b strings.Builder
-	n := 0
-	for i := 0; i < len(q); i++ {
-		if q[i] == '?' {
-			n++
-			b.WriteString("$" + strconv.Itoa(n))
-		} else {
-			b.WriteByte(q[i])
-		}
-	}
-	return b.String()
-}
-
-func (d *dbx) Exec(q string, args ...any) (sql.Result, error) {
-	return d.DB.Exec(d.rewrite(q), args...)
-}
-func (d *dbx) Query(q string, args ...any) (*sql.Rows, error) {
-	return d.DB.Query(d.rewrite(q), args...)
-}
-func (d *dbx) QueryRow(q string, args ...any) *sql.Row { return d.DB.QueryRow(d.rewrite(q), args...) }
 
 // Open opens (creating) dir/hub.db and applies the embedded migrations. Safe to call on every start.
 func Open(dir string) (*Store, error) {
@@ -93,39 +57,8 @@ func OpenPath(path string) (*Store, error) {
 	return s, nil
 }
 
-// OpenPostgres connects to PostgreSQL (url is a postgres:// URL; it is never logged) and applies the migrations
-// under an advisory lock, so pods starting together do not race.
-func OpenPostgres(url string) (*Store, error) {
-	db, err := sql.Open("pgx", url)
-	if err != nil {
-		return nil, errors.New("postgres: invalid HUB_DATABASE_URL")
-	}
-	db.SetMaxOpenConns(10)
-	db.SetConnMaxIdleTime(5 * time.Minute)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if err := db.PingContext(ctx); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("postgres: cannot connect: %s", scrubURL(err.Error(), url))
-	}
-	s := &Store{db: &dbx{DB: db, pg: true}, pg: true}
-	if err := s.migrate(); err != nil {
-		_ = db.Close()
-		return nil, err
-	}
-	return s, nil
-}
-
-func scrubURL(msg, url string) string { return strings.ReplaceAll(msg, url, "***") }
-
-// IsPostgres reports the backend.
-func (s *Store) IsPostgres() bool { return s.pg }
-
 // Snapshot writes a consistent copy of a SQLite database to path (VACUUM INTO; the file must not exist).
 func (s *Store) Snapshot(path string) error {
-	if s.pg {
-		return errors.New("snapshots are for SQLite")
-	}
 	_, err := s.db.DB.Exec(`VACUUM INTO ?`, path)
 	return err
 }
@@ -135,21 +68,12 @@ func (s *Store) Close() error { return s.db.DB.Close() }
 // migrate applies migrations/<dialect>/NNN_*.sql once each, in order; re-running is a no-op.
 func (s *Store) migrate() error {
 	dir := "migrations/sqlite"
-	if s.pg {
-		dir = "migrations/postgres"
-	}
 	ctx := context.Background()
 	conn, err := s.db.DB.Conn(ctx)
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
-	if s.pg {
-		if _, err := conn.ExecContext(ctx, `SELECT pg_advisory_lock(727274)`); err != nil {
-			return err
-		}
-		defer conn.ExecContext(ctx, `SELECT pg_advisory_unlock(727274)`) //nolint:errcheck
-	}
 	if _, err := conn.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY, applied BIGINT NOT NULL)`); err != nil {
 		return err
 	}
@@ -162,13 +86,9 @@ func (s *Store) migrate() error {
 		names = append(names, e.Name())
 	}
 	sort.Strings(names)
-	ph := "?"
-	if s.pg {
-		ph = "$1"
-	}
 	for _, n := range names {
 		var done int
-		if err := conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations WHERE name = `+ph, n).Scan(&done); err != nil {
+		if err := conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations WHERE name = ?`, n).Scan(&done); err != nil {
 			return err
 		}
 		if done > 0 {
@@ -184,9 +104,6 @@ func (s *Store) migrate() error {
 			return fmt.Errorf("migration %s: %w", n, err)
 		}
 		ins := `INSERT INTO schema_migrations (name, applied) VALUES (?, ?)`
-		if s.pg {
-			ins = `INSERT INTO schema_migrations (name, applied) VALUES ($1, $2)`
-		}
 		if _, err := tx.ExecContext(ctx, ins, n, time.Now().Unix()); err != nil {
 			_ = tx.Rollback()
 			return err

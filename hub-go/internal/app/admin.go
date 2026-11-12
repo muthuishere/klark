@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -125,7 +124,7 @@ func (a *App) adminMachines(w http.ResponseWriter, _ *http.Request) {
 	out := []adminMachine{}
 	seen := map[string]bool{}
 	status := func(name string) string {
-		if a.machineOnline(name) {
+		if a.Runtime.Online(name) {
 			return "online"
 		}
 		return "offline"
@@ -191,11 +190,6 @@ func (a *App) adminRevokeMachine(w http.ResponseWriter, r *http.Request) {
 		if strings.EqualFold(in.ID, name) || strings.HasPrefix(strings.ToLower(in.ID), strings.ToLower(name)+":") {
 			a.Runtime.Revoke(in.ID)
 			revoked = true
-		}
-	}
-	if a.Cluster != nil { // a machine linked to another pod is dropped there
-		for _, pod := range a.Cluster.otherPodURLs() {
-			_, _ = a.Cluster.podCall(r.Context(), pod, "POST", "/internal/revoke?machine="+url.QueryEscape(name))
 		}
 	}
 	for _, m := range a.Cfg.Machines {

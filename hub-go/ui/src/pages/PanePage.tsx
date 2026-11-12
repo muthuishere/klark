@@ -13,7 +13,8 @@ import { agentIcon, agentKey, displayName, isAgent, paneAgent, paneCwd, paneStat
 import { connectSSE, type SseState } from '../lib/sse';
 import { slashCommandsFor } from '../lib/slash';
 import { nextTheme, toggleSide, writeStore } from '../lib/theme';
-import type { ChatItem, ChatPayload, Offer } from '../lib/types';
+import type { Blocked, ChatItem, ChatPayload, Offer } from '../lib/types';
+import { ChoiceBar } from '../components/ChoiceBar';
 import { useMachines } from '../shell';
 import { sizeLabel } from '../lib/files';
 
@@ -27,14 +28,16 @@ export function useChat(machine: string, pane: string, wantFrames: boolean, term
   const [error, setError] = useState<string | null>(null);
   const [live, setLive] = useState<SseState>('connecting');
   const [size, setSize] = useState({ cols: 120, rows: 40 });
+  const [blocked, setBlocked] = useState<Blocked | null>(null);
+  const meta = (p: ChatPayload) => { setBlocked(p.blocked ?? null); };
 
   const load = useCallback(() =>
     api<ChatPayload>(`${paneBase(machine, pane)}/chat`)
-      .then((p) => { setItems((cur) => (cur.length ? mergeItems(cur, p.rows ?? []) : p.rows ?? [])); setOffers(p.offers ?? []); setError(null); })
+      .then((p) => { meta(p); setItems((cur) => (cur.length ? mergeItems(cur, p.rows ?? []) : p.rows ?? [])); setOffers(p.offers ?? []); setError(null); })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false)), [machine, pane]);
 
-  useEffect(() => { setItems([]); setOffers([]); setLoading(true); void load(); }, [load]);
+  useEffect(() => { setItems([]); setOffers([]); setBlocked(null); setLoading(true); void load(); }, [load]);
   useEffect(() => connectSSE(`${paneBase(machine, pane)}/events${wantFrames ? '?frames=1' : ''}`, {
     events: ['chat', 'frame', 'size', 'offer'],
     onState: setLive,
@@ -43,6 +46,7 @@ export function useChat(machine: string, pane: string, wantFrames: boolean, term
       if (name === 'chat') {
         const p = parse<ChatPayload | ChatItem[] | ChatItem>(data);
         const rows = Array.isArray(p) ? p : p && 'rows' in p ? p.rows : p ? [p as ChatItem] : [];
+        if (p && !Array.isArray(p) && 'rows' in p) meta(p);
         setItems((cur) => mergeItems(cur, rows));
       } else if (name === 'frame') {
         const f = parse<{ data: string; reset?: boolean }>(data);
@@ -57,7 +61,7 @@ export function useChat(machine: string, pane: string, wantFrames: boolean, term
       }
     },
   }), [machine, pane, wantFrames, load, term]);
-  return { items, offers, loading, error, live, size };
+  return { items, offers, loading, error, live, size, blocked, reload: load };
 }
 
 const keyOf = (r: ChatRowModel) => r.key;
@@ -89,7 +93,8 @@ export function PanePage() {
   useEffect(() => { writeStore('lastpane', `${machine}\n${pane}`); }, [machine, pane]);
   useEffect(() => { setAttachments([]); setToast(null); }, [machine, pane]);
   const agent = info ? paneAgent(info) : '';
-  const status = offline ? '' : info ? paneStatus(info) : '';
+  // A choice menu on screen means the agent waits, even when the machine reports it idle.
+  const status = offline ? '' : chat.blocked?.choices?.length ? 'blocked' : info ? paneStatus(info) : '';
   const title = info ? displayName(info) : pane;
   const session = info && m ? workspaceLabel(m.tree, info.workspace_id) : '';
   const statusText = offline ? 'offline' : chat.live === 'retrying' ? 'reconnecting…' : status === 'working' ? 'working…' : status === 'blocked' ? 'needs you' : status === 'idle' ? 'idle' : '';
@@ -207,6 +212,7 @@ export function PanePage() {
                 ))}
               </div>
             )}
+            {chat.blocked && !offline && <ChoiceBar blocked={chat.blocked} onKeys={async (keys) => { await post('keys', { keys }); list.current?.scrollToBottom(); setTimeout(() => void chat.reload(), 400); }} />}
             {!pinned && <button type="button" className="jump show" onClick={() => list.current?.scrollToBottom()}>Jump to latest</button>}
             {status === 'working' && !offline && <div className="live live-working" role="status"><span className="dot" aria-hidden="true" />working…</div>}
           </div>

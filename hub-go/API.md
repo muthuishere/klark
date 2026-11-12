@@ -11,11 +11,11 @@ This file is what the server does today; the tests in `internal/app` pin it.
 | `HUB_ADDR` | listen address, default `:7470` |
 | `HUB_BASE_PATH` | mount prefix, e.g. `/klark` (default none) |
 | `HUB_PUBLIC_URL` | public origin (`https://host`, no path) used for OIDC redirects; else derived from the request (`X-Forwarded-*`) |
-| `HUB_DATA_DIR` | `hub.db` (SQLite, sqlite mode) and `session.key`, default `data` |
+| `HUB_DATA_DIR` | `hub.db` (SQLite) and `session.key`, default `data` |
 | `HUB_MACHINES` | `name=<sha256 of token>[,fleet*=<sha256>]` machines accepted without admin UI |
 | `HUB_USERS` | `alice=<bcrypt or sha256:hex>[:admin],bob=...` |
 | `HUB_ADMIN_PASSWORD` | the built-in `admin` account's password (default `adminadmin`) |
-| `HUB_SESSION_KEY` | cookie signing secret (else generated into the data dir). **Required with `HUB_DB=postgres`** (the same on every pod); the hub refuses to start without it |
+| `HUB_SESSION_KEY` | cookie signing secret (else generated into the data dir). |
 | `HUB_OIDC_ISSUER` `_CLIENT_ID` `_CLIENT_SECRET` `_SCOPES` `_ADMIN_GROUP` `_NAME` | ADFS / OIDC (code + PKCE; ID token checked against the jwks, RS256/384/512) |
 | `HUB_AUTH_MODE` | sign-in directory: `local`, `ldap` or `mockldap`. Empty = `ldap` when `HUB_LDAP_HOST` is set, else `local`. Sign-in is ONE built-in local admin (plus `HUB_USERS` and admin-created accounts) and a configurable LDAP; the mock LDAP is opt-in only (`HUB_AUTH_MODE=mockldap`) |
 | `HUB_MOCK_USERS` | only with `HUB_AUTH_MODE=mockldap`: `name=password[:admin][:group1\|group2],...` seeds the mock LDAP (added when missing on each start; replaces the default `user1/user1pass`, `user2/user2pass`, which are seeded once). Passwords cannot contain `,` or `:` |
@@ -29,14 +29,12 @@ This file is what the server does today; the tests in `internal/app` pin it.
 | `HUB_OIDC_PROVIDERS` | JSON array of more OAuth/OIDC providers: `[{"id","name","issuer","clientId","clientSecret","scopes","adminGroup","groupsClaim","usernameClaim"}]`. `id` is `[a-z0-9_-]{1,32}`, not `adfs`; `clientSecret` `"env:NAME"` reads that variable; defaults: name = id, scopes `openid profile email`; `usernameClaim` default `preferred_username`/`upn`/`unique_name`/`email`/`sub`; `groupsClaim` default `groups`/`roles`/`group`. Invalid JSON stops the start |
 | `HUB_STATS_INTERVAL_SECONDS` | analytics: the least time between two `system.stats` calls to one machine (default 30, min 5) |
 | `HUB_STATS_RETENTION_DAYS` | analytics history kept in `hub.db` (default 14; purged hourly) |
-| `HUB_BACKUP` | the ONE storage target: `none` (default; the container image sets `folder`), `folder` or `s3`. Used for the SQLite backups (sqlite mode only) and the analytics files (both modes) |
+| `HUB_BACKUP` | the ONE storage target: `none` (default; the container image sets `folder`), `folder` or `s3`. Used for the SQLite backups and the analytics files |
 | `HUB_BACKUP_PATH` | the parent: a local folder for `folder` (image: `/data/backup`), a key prefix for `s3` (e.g. `klarkhub/prod`) |
 | `HUB_BACKUP_S3_BUCKET` `_REGION` `_ENDPOINT` `_ACCESS_KEY_ID` `_SECRET_ACCESS_KEY` `_PATH_STYLE` | one set of S3 credentials: region default `us-east-1`; `_ENDPOINT` empty = AWS, else an S3-compatible server (Cloudflare R2, Garage, SeaweedFS: `http://host:8333`); `_PATH_STYLE=true` for `endpoint/bucket/key` URLs. The secret comes from the environment or the admin page and is never returned |
 | `HUB_SQLITE_BACKUP_EVERY` | a Go duration, default `6h`, minimum `5m` (e.g. `30m`, `1h`, `24h`): how often a SQLite snapshot is uploaded |
 | `HUB_SQLITE_BACKUP_KEEP` | snapshots kept, default 7 |
-| `HUB_DB` | `sqlite` (default) or `postgres` |
-| `HUB_DATABASE_URL` | postgres URL (`postgres://user:pw@host:5432/db?sslmode=...`); environment only, never logged or returned |
-| `HUB_POD_ID` `HUB_POD_URL` `HUB_POD_SECRET` | several pods (postgres): this pod's id (default hostname + random), the address the other pods use to reach it (`http://10.0.0.5:7470`; no base path), and the shared secret (>= 16 chars) of pod-to-pod requests |
+| `HUB_POD_ID` | this hub's id as owner of the SQLite backup location (default hostname + random) |
 | `HUB_MOCK_ADFS=1`, `HUB_MOCK_ADFS_USERS="alice=pw:admin,bob=pw"` | dev only: the hub serves an IdP at `/mock-adfs/` and uses it |
 
 `klarkhub healthcheck` (exit 0 when `/healthz` answers), `klarkhub hash-password`, `klarkhub hash-token` (read stdin).
@@ -213,7 +211,12 @@ Samples are rows of `machine_stats` in `hub.db`, kept `HUB_STATS_RETENTION_DAYS`
    "latest":{"ts","klarkRssBytes","klarkPeakRssBytes","klarkCpuPercent","uptimeSeconds","version","hostMemTotalBytes",
              "hostMemAvailableBytes","load1","cpus","panes","agents","agentList":[{"paneId","name","state","rssBytes","cpuPercent"}]} | null,
    "peak":{"klarkRssBytes","klarkCpuPercent","hostMemUsedPercent","panes","agents"},   // max over the range
-   "series":[{"t":<ms>,"klarkRssBytes","klarkCpuPercent","hostMemAvailableBytes","panes","agents"}]}]}
+   "series":[{"t":<ms>,"klarkRssBytes","klarkCpuPercent","hostMemAvailableBytes","panes","agents"}]}],
+ "hub":{"latest":{"ts","rssBytes","peakRssBytes","cpuPercent","heapInuseBytes","heapSysBytes","sysBytes","goroutines","gcCount",
+                  "gcPauseTotalMs","gcLastPauseMs","uptimeSeconds","version","goVersion","os","machineLinks","sseStreams","paneViewers",
+                  "requests","requestsPerMinute","dbBytes","dbWalBytes","assetsBytes","lastBackupMs","lastAnalyticsWriteMs"} | null,
+        "peak":{"rssBytes","cpuPercent","goroutines","heapBytes"},
+        "series":[{"t":<ms>,"rssBytes","cpuPercent","heapBytes","goroutines","streams"}]}}
 ```
 `intervalSeconds` is the minimum sampling interval; `bucketSeconds` is the width of one series point (0 when the series are
 raw samples). `latest` is the newest sample ever stored (even outside the range or while offline); `null` and `hasStats:false`
@@ -221,61 +224,45 @@ when none. Series have at most 120 points: with more samples they are folded int
 agents and the lowest available memory. Missing fields in a sample are 0. Machines are the ones the hub knows plus any with
 history in the range.
 
+`hub` is the hub process itself, sampled by the same request (at most once per `intervalSeconds`) and stored in
+`machine_stats` under the reserved machine id `hub` (same retention; never listed in `machines`; written to the analytics
+files as lines with `"kind":"hub"`, machine lines carry `"kind":"machine"`). `rssBytes` is the current resident memory
+(Linux `/proc/self/statm`, macOS `ps`; 0 where not measured, e.g. Windows); `peakRssBytes` is `getrusage` max RSS (bytes on
+macOS, KiB scaled on Linux). `cpuPercent` and `requestsPerMinute` are since the previous hub sample (since start for the
+first); `cpuPercent` can exceed 100 on several cores. `sseStreams` are open `…/events` streams, `paneViewers` those with
+`frames=1`; `machineLinks` are online machines; `dbBytes`/`dbWalBytes` are `hub.db` and its WAL; `assetsBytes` sums the
+stored asset blobs; the `last*Ms` are 0 when it never happened.
+
 ### Storage: SQLite backups and the analytics files
 
 ONE target (`HUB_BACKUP*`, or saved on the admin page) holds both, under a parent (`HUB_BACKUP_PATH`: a folder, or an S3 key prefix):
 
 ```
-<parent>/sqlite/hub-<UTC yyyymmddThhmmssZ>.db.gz        SQLite backups (sqlite mode only)
+<parent>/sqlite/hub-<UTC yyyymmddThhmmssZ>.db.gz        SQLite backups
 <parent>/sqlite/owner.json                               owner marker: which hub backs up here
-<parent>/analytics/YYYY/MM/DD/HH-<hubid>.ndjson.gz       analytics, one gzip NDJSON file per UTC hour (both modes)
+<parent>/analytics/YYYY/MM/DD/HH-<hubid>.ndjson.gz       analytics, one gzip NDJSON file per UTC hour
 ```
 
 **Analytics files**: one flat JSON object per sample: `ts_ms, ts, hub, machine, machine_id, klark_rss_bytes, klark_peak_rss_bytes,
 klark_cpu_percent, klark_uptime_s, klark_version, host_mem_total_bytes, host_mem_available_bytes, host_load1, host_cpus, panes, agents,
 agent_list`. Re-writing an hour overwrites the same object (idempotent). It only writes what exists (no timers call machines): 30 s
 after start and then every 10 min it refreshes the current hour and writes finished hours it has not written (up to 48 h back after a
-gap or first enable). With several pods every pod writes the same hour with the same `<hubid>` (kept in the database): same bytes,
-same object.
+gap or first enable).
 
-**SQLite backups** (only in sqlite mode): a consistent snapshot (`VACUUM INTO`, gzip) is uploaded every `HUB_SQLITE_BACKUP_EVERY`
+**SQLite backups**: a consistent snapshot (`VACUUM INTO`, gzip) is uploaded every `HUB_SQLITE_BACKUP_EVERY`
 (default 6h; also once at start), skipped when the content did not change since the last upload, plus one on clean shutdown; the newest
 `HUB_SQLITE_BACKUP_KEEP` (7) are kept. **Data-loss window after a crash or a lost disk = up to the interval** (a clean stop loses
 nothing). On start, a missing hub.db, or one whose modification time is older than the newest snapshot, is replaced by that snapshot
 (the old file is kept as `hub.db.before-restore-<time>`); restore always uses the environment's target (admin-saved settings live in
 the database, which does not exist yet). One hub per location: the owner marker (renewed every 30 s, expires after 90 s) makes a second
-hub on the same location wait up to 100 s and then refuse to start with a clear message; a clean stop removes it. Not applied with
-`HUB_DB=postgres` (back up PostgreSQL with its own tools).
+hub on the same location wait up to 100 s and then refuse to start with a clear message; a clean stop removes it.
 
 | request | reply |
 |---|---|
-| `GET /api/admin/storage` | `{"kind":"none|folder|s3","source":"env|admin","path","s3":{"bucket","region","endpoint","accessKeyId","secretAccessKeySet":bool,"pathStyle"},"sqlite":{"enabled":bool,"every":"6h0m0s","keep":7,"owner":"<pod id>","backups":<uploads since start>},"lastSqliteBackupMs","lastAnalyticsWriteMs","lastError","filesWritten"}` (`*Ms` 0 = never; `filesWritten` counts analytics files since start; `lastError` is the newest problem of either job, empty when the last attempt worked; `sqlite.owner`/`backups` only in sqlite mode; the secret is never returned) |
+| `GET /api/admin/storage` | `{"kind":"none|folder|s3","source":"env|admin","path","s3":{"bucket","region","endpoint","accessKeyId","secretAccessKeySet":bool,"pathStyle"},"sqlite":{"enabled":bool,"every":"6h0m0s","keep":7,"owner":"<pod id>","backups":<uploads since start>},"lastSqliteBackupMs","lastAnalyticsWriteMs","lastError","filesWritten"}` (`*Ms` 0 = never; `filesWritten` counts analytics files since start; `lastError` is the newest problem of either job, empty when the last attempt worked; the secret is never returned) |
 | `PUT /api/admin/storage` | body = `{"kind","path","s3":{"bucket","region","endpoint","accessKeyId","secretAccessKey"?,"pathStyle"},"clearSecretAccessKey"?}`. `secretAccessKey` replaces the secret; absent keeps the current one while `accessKeyId` is unchanged. Validates (`400 {error}`), creates a folder, stores the settings (they replace the environment's as a whole; `every`/`keep` stay environment-only), answers with the GET body |
 | `DELETE /api/admin/storage` | drops the stored settings; the environment applies again; GET body |
 | `POST /api/admin/storage/test` | optional body like PUT (tests those unsaved settings), else the current ones. Writes and deletes a marker object: `200 {ok,message}` (`ok:false` with the reason, never the secret) |
 
 The folder kind never writes outside its folder. The S3 client is a small built-in SigV4 implementation (path-style or virtual-host,
 any endpoint; PUT, GET, DELETE, ListObjectsV2).
-
-## Several pods (HUB_DB=postgres)
-
-`HUB_DB=postgres` + `HUB_DATABASE_URL` puts users, machines, messages, settings and analytics in PostgreSQL (pure-Go `pgx`; migrations
-under `internal/store/migrations/postgres`, applied under an advisory lock). Several pods may then run behind a load balancer. What is
-and is not shared:
-
-- **Shared (database)**: accounts, machine tokens, messages, settings, analytics history, and `machine_presence`.
-- **Per pod**: the machine links and the pane streams. `machine_presence(machine_id, pod_id, pod_url, session_id, name, version, protocol,
-  heartbeat_ms)` says which pod holds a machine (heartbeat every 5 s, expires after 15 s, so a dead pod's machines reconnect to any pod).
-  Lookups read the table on demand (LISTEN/NOTIFY is not used).
-- **Forwarding**: a browser request for a machine held by another pod (`/api/machines/{id}/...` including the SSE streams, `/api/files/{id}...`,
-  `POST /api/messages` to such a machine) is reverse-proxied to that pod's `HUB_POD_URL` with header `X-Klark-Pod-Secret`. The pod that
-  received the request has already checked the cookie and the cross-origin rule; the target re-checks the cookie (same `HUB_SESSION_KEY`).
-  A machine's own link requests (`/agent/events`, `/agent/push`) that land on another pod are proxied by session id the same way. The
-  header must equal `HUB_POD_SECRET` (constant-time compare): any other value gets `403`, and `/internal/*` (`GET /internal/agents`,
-  `POST /internal/stats/refresh`, `POST /internal/revoke?machine=`) answers only with it. Without `HUB_POD_URL` postgres runs as a single pod.
-- `GET /api/machines`, `/api/agents`, admin machines and analytics merge the other pods' machines; revoking a machine also tells the other pods.
-- **Analytics sampling stays lazy and local**: the pod that holds a machine is the only one that calls it; an analytics request on any pod
-  asks the other pods to refresh their own machines.
-- **Sign-in**: the cookie works on every pod (shared `HUB_SESSION_KEY`, required). The login rate limiter is per pod (a client can try
-  `limit x pods` times).
-- Each pod runs its own archive writer (same bytes, same objects) and purge; no SQLite backup in this mode.

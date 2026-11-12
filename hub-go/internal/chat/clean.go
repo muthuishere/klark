@@ -381,6 +381,9 @@ type Option struct {
 type Blocked struct {
 	Question string   `json:"question"`
 	Options  []Option `json:"options"`
+	// Choices is set for a numbered, arrow-selected menu (see ChoicePrompt); Selected is the highlighted key.
+	Choices  []Choice `json:"choices,omitempty"`
+	Selected string   `json:"selected,omitempty"`
 }
 
 var (
@@ -398,6 +401,9 @@ func tail(lines []string, n int) []string {
 // BlockedPrompt reads the tail of a cleaned screen for a question and its numbered or yes/no options.
 // Nothing is guessed: no options found means no buttons.
 func BlockedPrompt(cleaned string) Blocked {
+	if c := ChoicePrompt(cleaned); c != nil {
+		return *c
+	}
 	lines := tail(strings.Split(cleaned, "\n"), 30)
 	opts := []Option{}
 	firstOpt := -1

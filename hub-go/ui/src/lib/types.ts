@@ -35,7 +35,10 @@ export interface ChatItem {
   tool?: string; summary?: string; input?: string; ok?: boolean; toolUseId?: string; lines?: number;
 }
 export interface Offer { id: string; name: string; size?: number; mime?: string; url: string }
-export interface ChatPayload { rows: ChatItem[]; rev?: string | number; offers?: Offer[] }
+export interface Choice { key: string; label: string }
+/** A question the agent waits on: a numbered menu (choices, selected = the highlighted key) or quick replies. */
+export interface Blocked { question: string; options?: { label: string; send: string; enter: boolean }[]; choices?: Choice[]; selected?: string }
+export interface ChatPayload { rows: ChatItem[]; rev?: string | number; offers?: Offer[]; status?: string; blocked?: Blocked | null }
 
 export interface FileMeta {
   path: string; name: string; view: string; size_label?: string; lines?: number; lang?: string; raw?: string; download?: string;
@@ -59,6 +62,19 @@ export interface Analytics {
   range: string; intervalSeconds: number; bucketSeconds?: number;
   totals: { machines: number; online: number; panes: number; agents: number; klarkRssBytes: number };
   machines: MachineAnalytics[];
+  hub?: HubAnalytics | null;
+}
+export interface HubLatest {
+  ts: number; rssBytes: number; peakRssBytes: number; cpuPercent: number; heapInuseBytes: number; heapSysBytes: number; sysBytes: number;
+  goroutines: number; gcCount: number; gcPauseTotalMs: number; gcLastPauseMs: number; uptimeSeconds: number; version: string; goVersion: string; os: string;
+  machineLinks: number; sseStreams: number; paneViewers: number; requests: number; requestsPerMinute: number;
+  dbBytes: number; dbWalBytes: number; assetsBytes: number; lastBackupMs: number; lastAnalyticsWriteMs: number;
+}
+export interface HubPoint { t: number; rssBytes: number; cpuPercent: number; heapBytes: number; goroutines: number; streams: number }
+export interface HubAnalytics {
+  latest: HubLatest | null;
+  peak?: { rssBytes: number; cpuPercent: number; goroutines: number; heapBytes: number } | null;
+  series?: HubPoint[] | null;
 }
 export interface StorageInfo {
   kind: 'none' | 'folder' | 's3'; source?: 'env' | 'admin'; path?: string;

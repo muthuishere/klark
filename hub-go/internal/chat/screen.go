@@ -50,7 +50,9 @@ func PickReader(agent, raw string) string {
 
 // Transform turns a raw screen into turns with the transformer PickReader chose.
 func Transform(agent, raw string) []ScreenTurn {
-	switch PickReader(agent, raw) {
+	reader := PickReader(agent, raw)
+	raw = CutChoice(raw)
+	switch reader {
 	case ReaderClaude:
 		return TurnsWith(BoxTables(Clean(raw)), ">❯", "⏺●", "⎿")
 	case ReaderDevin:

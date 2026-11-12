@@ -6,7 +6,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"io/fs"
 	"log"
@@ -42,11 +41,13 @@ type App struct {
 	Runtime  *hub.Runtime
 	Tokens   *tokenSource
 	// Stats samples the machines; Archive copies the samples to a folder or S3. Start both with StartBackground.
-	Cluster *Cluster // several pods (postgres + HUB_POD_URL); nil otherwise
 	Server  *server.Server
-	Backup  *backup.Manager // SQLite only; nil with postgres
+	Backup  *backup.Manager
 	Stats   *stats.Collector
 	Archive *stats.Archiver
+	// HubStats samples the hub process itself (lazily, with the analytics page).
+	HubStats *stats.HubSampler
+	traffic  hubTraffic
 	// UI is the built app; nil uses the one embedded in the binary.
 	UI fs.FS
 	// AgentNote is appended to what people send from the hub (see chat.AppendNote); empty turns it off.
@@ -74,31 +75,17 @@ func New(cfg config.Config, uiFS fs.FS) (*App, error) {
 	}
 	var st *store.Store
 	var err error
-	if cfg.DB == "postgres" {
-		switch {
-		case cfg.DatabaseURL == "":
-			return nil, errors.New("HUB_DB=postgres needs HUB_DATABASE_URL")
-		case cfg.SessionKey == "":
-			return nil, errors.New("HUB_DB=postgres needs HUB_SESSION_KEY (the same on every pod, so a sign-in works on all of them)")
-		case cfg.PodURL != "" && len(cfg.PodSecret) < 16:
-			return nil, errors.New("HUB_POD_URL needs HUB_POD_SECRET of at least 16 characters (pod-to-pod requests are authenticated with it)")
+	if cfg.Storage.Kind != "none" && cfg.Storage.Kind != "" { // restore a missing or older hub.db before opening it
+		sink, serr := stats.NewSink(cfg.Storage)
+		if serr != nil {
+			return nil, fmt.Errorf("HUB_BACKUP: %w", serr)
 		}
-		if st, err = store.OpenPostgres(cfg.DatabaseURL); err != nil {
-			return nil, err
+		if _, rerr := backup.Start(context.Background(), sink, cfg.PodID, filepath.Join(cfg.DataDir, "hub.db"), backup.OwnerTTL+10*time.Second); rerr != nil {
+			return nil, fmt.Errorf("sqlite backup: %w", rerr)
 		}
-	} else {
-		if cfg.Storage.Kind != "none" && cfg.Storage.Kind != "" { // restore a missing or older hub.db before opening it
-			sink, serr := stats.NewSink(cfg.Storage)
-			if serr != nil {
-				return nil, fmt.Errorf("HUB_BACKUP: %w", serr)
-			}
-			if _, rerr := backup.Start(context.Background(), sink, cfg.PodID, filepath.Join(cfg.DataDir, "hub.db"), backup.OwnerTTL+10*time.Second); rerr != nil {
-				return nil, fmt.Errorf("sqlite backup: %w", rerr)
-			}
-		}
-		if st, err = store.Open(cfg.DataDir); err != nil {
-			return nil, err
-		}
+	}
+	if st, err = store.Open(cfg.DataDir); err != nil {
+		return nil, err
 	}
 	key, err := auth.LoadKey(cfg.SessionKey, cfg.DataDir)
 	if err != nil {
@@ -126,12 +113,9 @@ func New(cfg config.Config, uiFS fs.FS) (*App, error) {
 	}
 	a.Tokens = &tokenSource{cfg: cfg, st: st}
 	a.initStats()
-	if !st.IsPostgres() {
-		a.Backup = &backup.Manager{Store: st, Pod: cfg.PodID, Dir: cfg.DataDir, Every: cfg.SQLiteBackupEvery, Keep: cfg.SQLiteBackupKeep,
-			Sink: func() (stats.Sink, error) { c, _ := a.storageConfig(); return stats.NewSink(c) }}
-	}
+	a.Backup = &backup.Manager{Store: st, Pod: cfg.PodID, Dir: cfg.DataDir, Every: cfg.SQLiteBackupEvery, Keep: cfg.SQLiteBackupKeep,
+		Sink: func() (stats.Sink, error) { c, _ := a.storageConfig(); return stats.NewSink(c) }}
 	a.Server = &server.Server{Tokens: a.Tokens, Registry: a.Registry}
-	a.initCluster()
 	a.build()
 	return a, nil
 }
@@ -170,7 +154,7 @@ func (a *App) build() {
 // Handler is the whole hub: the base path, security headers and gzip around the routes.
 func (a *App) Handler() http.Handler {
 	base := a.Cfg.BasePath
-	var h http.Handler = a.podLayer(a.mux)
+	var h http.Handler = a.countTraffic(a.mux)
 	if base != "" {
 		inner := h
 		h = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

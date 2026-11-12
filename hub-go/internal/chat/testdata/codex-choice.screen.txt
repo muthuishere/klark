@@ -1,0 +1,18 @@
+>_ OpenAI Codex (v0.46.0)
+
+model:     gpt-5-codex   /model to change
+directory: ~/work/app
+
+› delete the build folder
+
+• I'll remove the build directory.
+
+Would you like to run the following command?
+
+  $ rm -rf build
+
+› 1. Yes, proceed (y)
+  2. Yes, and don't ask again for this command (a)
+  3. No, and tell Codex what to do differently (esc)
+
+Press enter to confirm or esc to cancel

@@ -20,15 +20,15 @@ func (a *App) mountAPI(mux *http.ServeMux) {
 	admin := func(f http.HandlerFunc) http.Handler { return auth.CSRF(a.Auth.Require(true, f)) }
 
 	mux.Handle("GET /api/machines", user(a.listMachines))
-	mux.Handle("GET /api/machines/{id}/tree", user(a.owned(a.getTree)))
-	mux.Handle("POST /api/machines/{id}/call", user(a.owned(a.postCall)))
-	mux.Handle("GET /api/machines/{id}/events", user(a.owned(a.machineEvents)))
-	mux.Handle("GET /api/machines/{id}/panes/{pane}/chat", user(a.owned(a.getChat)))
-	mux.Handle("GET /api/machines/{id}/panes/{pane}/events", user(a.owned(a.paneEvents)))
-	mux.Handle("POST /api/machines/{id}/panes/{pane}/input", user(a.owned(a.postInput)))
-	mux.Handle("POST /api/machines/{id}/panes/{pane}/keys", user(a.owned(a.postKeys)))
-	mux.Handle("POST /api/machines/{id}/panes/{pane}/send", user(a.owned(a.postSend)))
-	mux.Handle("POST /api/machines/{id}/panes/{pane}/upload", user(a.owned(a.postUpload)))
+	mux.Handle("GET /api/machines/{id}/tree", user(a.getTree))
+	mux.Handle("POST /api/machines/{id}/call", user(a.postCall))
+	mux.Handle("GET /api/machines/{id}/events", user(a.machineEvents))
+	mux.Handle("GET /api/machines/{id}/panes/{pane}/chat", user(a.getChat))
+	mux.Handle("GET /api/machines/{id}/panes/{pane}/events", user(a.paneEvents))
+	mux.Handle("POST /api/machines/{id}/panes/{pane}/input", user(a.postInput))
+	mux.Handle("POST /api/machines/{id}/panes/{pane}/keys", user(a.postKeys))
+	mux.Handle("POST /api/machines/{id}/panes/{pane}/send", user(a.postSend))
+	mux.Handle("POST /api/machines/{id}/panes/{pane}/upload", user(a.postUpload))
 
 	mux.Handle("GET /api/assets/{sha}", http.HandlerFunc(a.getAsset)) // machine token or cookie, checked inside
 
@@ -39,9 +39,9 @@ func (a *App) mountAPI(mux *http.ServeMux) {
 	mux.Handle("POST /api/connect/requests/{code}/approve", user(a.connectDecide(true)))
 	mux.Handle("POST /api/connect/requests/{code}/deny", user(a.connectDecide(false)))
 
-	mux.Handle("GET /api/files/{id}", user(a.owned(a.fileInfo)))
-	mux.Handle("GET /api/files/{id}/markdown", user(a.owned(a.fileMarkdown)))
-	mux.Handle("GET /api/files/{id}/raw", user(a.owned(a.fileRaw)))
+	mux.Handle("GET /api/files/{id}", user(a.fileInfo))
+	mux.Handle("GET /api/files/{id}/markdown", user(a.fileMarkdown))
+	mux.Handle("GET /api/files/{id}/raw", user(a.fileRaw))
 
 	mux.Handle("GET /api/agents", user(a.listAgents))
 	mux.Handle("GET /api/messages", user(a.listMessages))
@@ -160,17 +160,6 @@ func (a *App) listMachines(w http.ResponseWriter, _ *http.Request) {
 		o.Name = firstOf(in.Name, in.ID)
 		o.Online, o.Version, o.Protocol = in.Online, in.Version, in.Protocol
 		o.LastSeen = rfc(in.LastSeen)
-	}
-	if a.Cluster != nil {
-		for _, p := range a.Cluster.others() {
-			o := byID[p.MachineID]
-			if o == nil {
-				o = &machineOut{ID: p.MachineID}
-				byID[p.MachineID] = o
-			}
-			o.Name, o.Online, o.Version, o.Protocol = firstOf(p.Name, p.MachineID), true, p.Version, p.Protocol
-			o.LastSeen = rfc(time.UnixMilli(p.HeartbeatMs))
-		}
 	}
 	out := make([]machineOut, 0, len(byID))
 	for _, o := range byID {

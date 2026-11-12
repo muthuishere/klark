@@ -2,39 +2,18 @@ package store
 
 import (
 	"errors"
-	"os"
 	"testing"
 )
 
-// backends runs f against SQLite and, when HUB_TEST_POSTGRES is a postgres URL, against PostgreSQL too.
+// backends runs f against a fresh SQLite store directory.
 func backends(t *testing.T, f func(t *testing.T, open func() *Store)) {
-	t.Run("sqlite", func(t *testing.T) {
-		dir := t.TempDir()
-		f(t, func() *Store {
-			s, err := Open(dir)
-			if err != nil {
-				t.Fatal(err)
-			}
-			return s
-		})
-	})
-	t.Run("postgres", func(t *testing.T) {
-		base := os.Getenv("HUB_TEST_POSTGRES")
-		if base == "" {
-			t.Skip("HUB_TEST_POSTGRES is not set (e.g. postgres://postgres:pw@127.0.0.1:5432/db?sslmode=disable): PostgreSQL store tests skipped")
-		}
-		u, cleanup, err := TestSchema(base)
+	dir := t.TempDir()
+	f(t, func() *Store {
+		s, err := Open(dir)
 		if err != nil {
 			t.Fatal(err)
 		}
-		t.Cleanup(cleanup)
-		f(t, func() *Store {
-			s, err := OpenPostgres(u)
-			if err != nil {
-				t.Fatal(err)
-			}
-			return s
-		})
+		return s
 	})
 }
 
@@ -106,7 +85,7 @@ func usersMachinesMessagesSettings(t *testing.T, s *Store) {
 	}
 }
 
-func TestStatsAndPresence(t *testing.T) {
+func TestStats(t *testing.T) {
 	backends(t, func(t *testing.T, open func() *Store) {
 		s := open()
 		defer s.Close()
@@ -124,41 +103,6 @@ func TestStatsAndPresence(t *testing.T) {
 		}
 		if n, _ := s.PurgeStats(2500); n != 2 {
 			t.Fatalf("purged %d", n)
-		}
-		// presence: forced claims win; a heartbeat only refreshes its own row or takes an expired one
-		a := Presence{MachineID: "m", PodID: "A", PodURL: "http://a", SessionID: "s1", Name: "M", Version: "1", Protocol: 5}
-		b := Presence{MachineID: "m", PodID: "B", PodURL: "http://b", SessionID: "s2", Name: "M", Version: "1", Protocol: 5}
-		if err := s.UpsertPresence(a, 1000, true); err != nil {
-			t.Fatal(err)
-		}
-		_ = s.UpsertPresence(b, 1500, false) // fresh row of A: B's heartbeat must not steal it
-		if p, ok, _ := s.PresenceOf("m", 500); !ok || p.PodID != "A" {
-			t.Fatalf("%+v", p)
-		}
-		_ = s.UpsertPresence(b, 1600, true) // B's session opened: B wins
-		if p, _, _ := s.PresenceOf("m", 500); p.PodID != "B" || p.SessionID != "s2" {
-			t.Fatalf("%+v", p)
-		}
-		_ = s.UpsertPresence(a, 1700, false)
-		if p, _, _ := s.PresenceOf("m", 500); p.PodID != "B" {
-			t.Fatal("A's stale heartbeat took the row back")
-		}
-		if p, ok, _ := s.PresenceBySession("s2", 500); !ok || p.MachineID != "m" {
-			t.Fatal("by session")
-		}
-		if _, ok, _ := s.PresenceOf("m", 1700); ok {
-			t.Fatal("an old heartbeat is expired")
-		}
-		_ = s.UpsertPresence(a, 20000, false) // B expired: A may take it with a heartbeat
-		if p, _, _ := s.PresenceOf("m", 100); p.PodID != "A" {
-			t.Fatalf("%+v", p)
-		}
-		if all, _ := s.ListPresence(100); len(all) != 1 {
-			t.Fatal("list")
-		}
-		_ = s.DeletePresenceExcept("A", nil)
-		if all, _ := s.ListPresence(0); len(all) != 0 {
-			t.Fatal("delete")
 		}
 	})
 }

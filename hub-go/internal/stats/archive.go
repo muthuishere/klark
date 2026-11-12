@@ -205,13 +205,26 @@ func EncodeHour(hub string, rows []store.StatRow) ([]byte, error) {
 	zw, _ := gzip.NewWriterLevel(&buf, gzip.BestCompression)
 	enc := json.NewEncoder(zw)
 	for _, r := range rows {
+		if r.MachineID == HubID {
+			l := hubLatestOf(r)
+			obj := map[string]any{"kind": "hub", "ts_ms": r.TS, "ts": time.UnixMilli(r.TS).UTC().Format(time.RFC3339), "hub": hub, "machine_id": HubID,
+				"rss_bytes": l.RSSBytes, "peak_rss_bytes": l.PeakRSSBytes, "cpu_percent": l.CPUPercent, "heap_inuse_bytes": l.HeapInuseBytes,
+				"heap_sys_bytes": l.HeapSysBytes, "goroutines": l.Goroutines, "gc_count": l.GCCount, "gc_pause_total_ms": l.GCPauseTotalMs,
+				"uptime_s": l.UptimeSeconds, "version": l.Version, "machine_links": l.MachineLinks, "sse_streams": l.SSEStreams,
+				"pane_viewers": l.PaneViewers, "requests": l.Requests, "requests_per_minute": l.RequestsPerMinute,
+				"db_bytes": l.DBBytes, "db_wal_bytes": l.DBWALBytes, "assets_bytes": l.AssetsBytes}
+			if err := enc.Encode(obj); err != nil {
+				return nil, err
+			}
+			continue
+		}
 		var agents []AgentSample
 		_ = json.Unmarshal([]byte(r.AgentsJSON), &agents)
 		if agents == nil {
 			agents = []AgentSample{}
 		}
 		obj := map[string]any{
-			"ts_ms": r.TS, "ts": time.UnixMilli(r.TS).UTC().Format(time.RFC3339), "hub": hub, "machine": r.MachineName, "machine_id": r.MachineID,
+			"kind": "machine", "ts_ms": r.TS, "ts": time.UnixMilli(r.TS).UTC().Format(time.RFC3339), "hub": hub, "machine": r.MachineName, "machine_id": r.MachineID,
 			"klark_rss_bytes": r.RSSBytes, "klark_peak_rss_bytes": r.PeakRSSBytes, "klark_cpu_percent": r.CPUPercent,
 			"klark_uptime_s": r.UptimeSeconds, "klark_version": r.Version,
 			"host_mem_total_bytes": r.MemTotalBytes, "host_mem_available_bytes": r.MemAvailableBytes, "host_load1": r.Load1, "host_cpus": r.CPUs,

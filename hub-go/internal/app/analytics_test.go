@@ -192,3 +192,37 @@ func TestStatsAreLazyNoCallsWithoutAnAdminRequest(t *testing.T) {
 		t.Fatalf("%d calls", n)
 	}
 }
+
+func TestAdminAnalyticsHasTheHubItself(t *testing.T) {
+	_, ts := newApp(t, nil)
+	adm := newClient(t, ts.URL)
+	adm.login("admin", "adminadmin")
+	r, body := adm.do("GET", "/api/admin/analytics?range=1h", nil)
+	if r.StatusCode != 200 {
+		t.Fatal(r.StatusCode)
+	}
+	var rep struct {
+		Machines []struct{ ID string } `json:"machines"`
+		Hub      struct {
+			Latest *struct {
+				Requests   int64  `json:"requests"`
+				Goroutines int64  `json:"goroutines"`
+				DBBytes    int64  `json:"dbBytes"`
+				Version    string `json:"version"`
+			} `json:"latest"`
+			Series []map[string]any `json:"series"`
+		} `json:"hub"`
+	}
+	if err := json.Unmarshal(body, &rep); err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range rep.Machines {
+		if m.ID == "hub" {
+			t.Fatal("hub listed as a machine")
+		}
+	}
+	l := rep.Hub.Latest
+	if l == nil || l.Requests < 2 || l.Goroutines <= 0 || l.DBBytes <= 0 || l.Version != Version || len(rep.Hub.Series) != 1 {
+		t.Fatalf("hub %+v %s", l, body)
+	}
+}

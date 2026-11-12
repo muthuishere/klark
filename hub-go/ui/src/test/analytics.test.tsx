@@ -29,7 +29,33 @@ describe('units and sparkline', () => {
   });
 });
 
+const hub = {
+  latest: { ts: 1, rssBytes: 20971520, peakRssBytes: 31457280, cpuPercent: 2.5, heapInuseBytes: 8388608, heapSysBytes: 16777216, sysBytes: 1, goroutines: 42, gcCount: 7,
+    gcPauseTotalMs: 1, gcLastPauseMs: 0.1, uptimeSeconds: 3700, version: '1.2', goVersion: 'go1.25', os: 'linux/amd64', machineLinks: 3, sseStreams: 4, paneViewers: 1,
+    requests: 100, requestsPerMinute: 12, dbBytes: 1048576, dbWalBytes: 0, assetsBytes: 2048, lastBackupMs: 0, lastAnalyticsWriteMs: 0 },
+  peak: { rssBytes: 31457280, cpuPercent: 9, goroutines: 50, heapBytes: 8388608 },
+  series: [1, 2].map((i) => ({ t: i, rssBytes: i * 1048576, cpuPercent: i, heapBytes: i, goroutines: 40 + i, streams: i })),
+};
+
 describe('analytics page', () => {
+  beforeEach(() => setBase('/'));
+  it('shows the hub card and a dash, not 0 B, when no machine reports', async () => {
+    mockFetch((u) => {
+      if (u.endsWith('api/auth/me')) return { body: { username: 'a', admin: true } };
+      if (u.includes('api/admin/analytics')) return { body: { ...analytics, totals: { ...analytics.totals, klarkRssBytes: 0 }, machines: [analytics.machines[1]], hub } };
+      return { body: {} };
+    });
+    wrap(<AdminAnalytics />);
+    const card = await screen.findByRole('region', { name: 'Hub' });
+    expect(card).toHaveTextContent('20.0 MiB');
+    expect(card).toHaveTextContent('peak 30.0 MiB');
+    expect(card).toHaveTextContent('42');
+    expect(card).toHaveTextContent('1 terminal viewers');
+    expect(screen.getByRole('img', { name: /goroutines: now 42/ })).toBeInTheDocument();
+    expect(screen.getByText('no machine reports stats')).toBeInTheDocument();
+    expect(screen.queryByText('0 B')).not.toBeInTheDocument();
+  });
+
   beforeEach(() => setBase('/'));
   it('shows tiles, sorted agents, no-stats machines, changes range ', async () => {
     const calls = mockFetch((u) => {

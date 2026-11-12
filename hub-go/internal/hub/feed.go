@@ -80,6 +80,9 @@ func (f *Feed) State() ChatState {
 	defer f.mu.Unlock()
 	st := ChatState{Rows: append([]chat.Item{}, f.items...), Rev: f.version, Agent: firstNonEmpty(f.agent, f.paneAgent),
 		Status: f.status, Source: f.source, Reader: f.reader, Error: f.errMsg, Blocked: f.blocked}
+	if f.blocked != nil && len(f.blocked.Choices) > 0 {
+		st.Status = "blocked"
+	}
 	if !f.lastActivity.IsZero() {
 		st.LastActivity = f.lastActivity.UTC().Format(time.RFC3339)
 	}
@@ -209,12 +212,20 @@ func (f *Feed) PollOnce(ctx context.Context) {
 		f.readScreenText(ctx)
 	}
 
+	// A choice menu at the bottom of the pane means the agent waits for an answer, whatever status the machine
+	// reports (agy, for one, reads as idle while it asks). The screen already read serves; else the visible rows.
 	var blocked *chat.Blocked
 	f.mu.Lock()
 	isBlocked := f.status == "blocked"
+	text, have := f.screenText, f.source == "screen" && f.haveScreen
 	f.mu.Unlock()
-	if isBlocked {
-		if text, err := rt.readText(ctx, f.machine, "pane.read", map[string]any{"pane_id": f.id, "source": "visible", "format": "text", "strip_ansi": true}); err == nil {
+	if !have {
+		if t, err := rt.readText(ctx, f.machine, "pane.read", map[string]any{"pane_id": f.id, "source": "visible", "format": "text", "strip_ansi": true}); err == nil {
+			text, have = t, true
+		}
+	}
+	if have {
+		if blocked = chat.ChoicePrompt(text); blocked == nil && isBlocked {
 			if c := chat.Clean(text); c != "" {
 				b := chat.BlockedPrompt(c)
 				blocked = &b
@@ -242,7 +253,7 @@ func sameBlocked(a, b *chat.Blocked) bool {
 	if a == nil || b == nil {
 		return a == b
 	}
-	if a.Question != b.Question || len(a.Options) != len(b.Options) {
+	if a.Question != b.Question || a.Selected != b.Selected || len(a.Options) != len(b.Options) || len(a.Choices) != len(b.Choices) {
 		return false
 	}
 	for i := range a.Options {

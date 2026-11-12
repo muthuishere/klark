@@ -141,11 +141,7 @@ type Config struct {
 	SQLiteBackupEvery    time.Duration // HUB_SQLITE_BACKUP_EVERY, default 6h, min 5m
 	SQLiteBackupKeep     int           // HUB_SQLITE_BACKUP_KEEP, default 7
 
-	DB          string // HUB_DB: sqlite (default) or postgres
-	DatabaseURL string // HUB_DATABASE_URL (postgres); from the environment only, never logged or returned
-	PodID       string // HUB_POD_ID
-	PodURL      string // HUB_POD_URL: where other pods reach this one, e.g. http://10.0.0.5:7470 (postgres, several pods)
-	PodSecret   string // HUB_POD_SECRET: shared secret for pod-to-pod requests
+	PodID string // HUB_POD_ID: names this hub instance as the SQLite backup owner; random when empty
 }
 
 // NormalizeBase turns "klark/", "/klark" or "/" into "/klark" or "".
@@ -207,12 +203,7 @@ func FromEnv(getenv func(string) string) (Config, error) {
 	if c.SQLiteBackupKeep, err = envInt(getenv, "HUB_SQLITE_BACKUP_KEEP", 7, 1); err != nil {
 		return c, err
 	}
-	c.DB = strings.ToLower(orDefault(getenv("HUB_DB"), "sqlite"))
-	if c.DB != "sqlite" && c.DB != "postgres" {
-		return c, fmt.Errorf("HUB_DB: %q must be sqlite or postgres", c.DB)
-	}
-	c.DatabaseURL = strings.TrimSpace(getenv("HUB_DATABASE_URL"))
-	c.PodID, c.PodURL, c.PodSecret = strings.TrimSpace(getenv("HUB_POD_ID")), strings.TrimRight(strings.TrimSpace(getenv("HUB_POD_URL")), "/"), getenv("HUB_POD_SECRET")
+	c.PodID = strings.TrimSpace(getenv("HUB_POD_ID"))
 	if c.MockADFS {
 		c.MockUsers, err = parseMockUsers(getenv("HUB_MOCK_ADFS_USERS"))
 		if err != nil {

@@ -1,7 +1,6 @@
 package app
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -90,9 +89,6 @@ func (a *App) agents(ctx context.Context) []agentEntry {
 
 func (a *App) listAgents(w http.ResponseWriter, r *http.Request) {
 	out := append([]agentEntry{}, a.agents(r.Context())...)
-	if a.Cluster != nil && !isForwarded(r) {
-		out = append(out, a.Cluster.remoteAgents(r.Context())...)
-	}
 	jsonOut(w, http.StatusOK, out)
 }
 
@@ -150,15 +146,6 @@ func (a *App) postMessage(w http.ResponseWriter, r *http.Request) {
 	for _, in := range a.Runtime.Machines() {
 		if strings.EqualFold(in.ID, machine) {
 			machine = in.ID
-		}
-	}
-	if a.Cluster != nil && !isForwarded(r) { // the machine may be linked to another pod: it delivers and records
-		for _, p := range a.Cluster.others() {
-			if strings.EqualFold(p.MachineID, machine) {
-				r.Body = io.NopCloser(bytes.NewReader(raw))
-				a.Cluster.proxy(w, r, p.PodURL)
-				return
-			}
 		}
 	}
 	from := strings.TrimSpace(b.From)

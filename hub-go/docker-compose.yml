@@ -78,14 +78,6 @@ services:
       # analytics page open, and once when they connect. History is kept in /data/hub.db (SQLite).
       # HUB_STATS_INTERVAL_SECONDS: "30"      # least time between two calls to one machine (min 5)
       # HUB_STATS_RETENTION_DAYS: "14"
-      #
-      # Several active pods behind a load balancer need PostgreSQL (see README "Running several pods"; the `postgres`
-      # profile below runs two pods against a PostgreSQL container):
-      # HUB_DB: postgres
-      # HUB_DATABASE_URL: postgres://klark:pw@postgres:5432/klark?sslmode=disable   # environment only; never logged
-      # HUB_SESSION_KEY: "the same long random string on every pod"                 # required with postgres
-      # HUB_POD_URL: http://$(POD_IP):7470        # where the OTHER pods reach this one (k8s: from the downward API)
-      # HUB_POD_SECRET: "at least 16 random characters, the same on every pod"
 
   # Optional S3 for the storage target above: HUB_BACKUP=s3 HUB_BACKUP_PATH=klarkhub docker compose --profile s3 up -d
   # SeaweedFS (Apache-2.0), one container, one access key (the HUB_BACKUP_S3_* values above), bucket created by s3-init.
@@ -117,36 +109,6 @@ services:
     command:
       - until echo "s3.bucket.create -name klarkhub" | weed shell -master=seaweedfs:9333 2>&1 | tee /dev/stderr | grep -v -i -E "error|fail|connect" >/dev/null && echo "s3.bucket.list" | weed shell -master=seaweedfs:9333 2>&1 | grep -q klarkhub; do sleep 3; done
 
-  # Several active pods on PostgreSQL: docker compose --profile postgres up -d   (hub-pg-1 on :7471, hub-pg-2 on :7472; put a
-  # load balancer in front, or point machines and browsers at either: requests are forwarded to the pod holding the machine).
-  # These two are separate from the `hub` service above (stop it, or its port 7470 stays as the SQLite hub).
-  postgres:
-    profiles: ["postgres"]
-    image: postgres:17-alpine
-    environment: {POSTGRES_USER: klark, POSTGRES_PASSWORD: klark-pg-change-me, POSTGRES_DB: klark}
-    volumes: [pg-data:/var/lib/postgresql/data]
-    healthcheck: {test: ["CMD-SHELL", "pg_isready -U klark -d klark"], interval: 3s, timeout: 3s, retries: 20}
-  hub-pg-1: &hubpg
-    profiles: ["postgres"]
-    image: klarkhub:latest
-    ports: ["7471:7470"]
-    depends_on: {postgres: {condition: service_healthy}}
-    environment: &hubpg-env
-      HUB_DB: postgres
-      HUB_DATABASE_URL: postgres://klark:klark-pg-change-me@postgres:5432/klark?sslmode=disable
-      HUB_SESSION_KEY: change-me-a-long-random-string-shared-by-all-pods
-      HUB_POD_SECRET: change-me-pod-secret-16+
-      HUB_ADMIN_PASSWORD: change-me-please
-      HUB_POD_ID: hub-pg-1
-      HUB_POD_URL: http://hub-pg-1:7470
-  hub-pg-2:
-    <<: *hubpg
-    ports: ["7472:7470"]
-    environment:
-      <<: *hubpg-env
-      HUB_POD_ID: hub-pg-2
-      HUB_POD_URL: http://hub-pg-2:7470
 volumes:
   hub-data:
   s3-data:
-  pg-data:

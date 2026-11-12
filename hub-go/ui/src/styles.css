@@ -349,7 +349,7 @@ pre.out { margin: 0; padding: 10px 14px; background: var(--out-bg); color: var(-
 
 /* account and admin pages */
 .ok { color: var(--idle); }
-.admin { max-width: 640px; margin: 24px auto; display: grid; gap: 12px; align-content: start; }
+.admin { margin: 24px auto; display: grid; gap: 12px; align-content: start; }
 .admin h2 { font-size: 1.05rem; margin: 12px 0 0; }
 .stack { display: grid; gap: 12px; }
 .admin label { display: grid; gap: 4px; }
@@ -417,7 +417,12 @@ button:disabled { opacity: .6; cursor: default; }
 .subnav a { padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line); color: var(--fg); }
 .subnav a.active { background: var(--hover); font-weight: 600; }
 .tbl { overflow-x: auto; max-width: 100%; }
-.admin { max-width: 640px; margin: 0 auto; padding: 16px; width: 100%; }
+.admin { max-width: none; margin: 0; padding: 16px max(16px, env(safe-area-inset-right)) 24px max(16px, env(safe-area-inset-left)); width: 100%; min-width: 0; }
+/* admin pages use the full width; forms stay a readable column */
+.admin form.stack, .admin > p { max-width: 720px; }
+.admin .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 440px), 1fr)); gap: 12px; align-items: start; }
+.admin .card.wide { grid-column: 1 / -1; }
+.sparks { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 10px 16px; }
 .pane-app > .page:not(.admin) { padding: 8px 16px 24px; max-width: 760px; margin: 0 auto; }
 .admin textarea.json { font: 12.5px/1.5 var(--mono); padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); color: var(--fg); width: 100%; }
 .panes .ent { border-radius: 0; }
@@ -474,7 +479,8 @@ button:disabled { opacity: .6; cursor: default; }
 .tbl th, .tbl td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); word-break: break-all; }
 
 /* analytics */
-.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+.tile .hint { font-size: .75rem; }
 .tile { border: 1px solid var(--line); border-radius: 10px; background: var(--card); padding: 10px 12px; }
 .tile-v { font-size: 1.4rem; font-weight: 600; }
 .card { border: 1px solid var(--line); border-radius: 10px; background: var(--card); padding: 12px; display: grid; gap: 8px; }
@@ -482,7 +488,7 @@ button:disabled { opacity: .6; cursor: default; }
 .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
 .dot.on { background: var(--idle); } .dot.off { background: var(--bad); }
 .spark-head { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px; font-size: .85rem; }
-.spark svg { width: 100%; height: 48px; display: block; }
+.spark svg { width: 100%; height: 64px; display: block; }
 .agents { width: 100%; border-collapse: collapse; font-size: .85rem; }
 .agents th, .agents td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--line); }
 .subnav button { padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line); background: transparent; color: var(--fg); min-height: 36px; }

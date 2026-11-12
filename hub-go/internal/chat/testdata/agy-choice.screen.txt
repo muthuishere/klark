@@ -1,0 +1,31 @@
+      ▄▀▀▄        Antigravity CLI 1.5.3
+     ▀▀▀▀▀▀       user@example.com (Antigravity Starter Quota)
+    ▀▀▀▀▀▀▀▀      Gemini 3.8 Flash (Low)
+   ▄▀▀    ▀▀▄     /tmp
+  ▄▀▀      ▀▀▄
+
+> /model
+  ⎿  Model set to Gemini 3.8 Flash (Low)
+
+────────────────────────────────────────────────────────────
+> hi
+
+  Hello! How can I help you today?
+
+──────────────────────────────────────────────────────────────────────────────
+>
+> read /Users/me/notes/todo.md and summarise it
+
+──────────────────────────────────────────────────────────────────────────────
+ File access
+ Read: /Users/me/notes/todo.md
+ Reason: outside workspace
+
+ Allow access to this file?
+ > 1. Yes, allow access
+   2. Yes, and always allow non-workspace access
+   3. No, deny access
+
+ ↑/↓ Navigate · Enter Select · Esc Cancel
+──────────────────────────────────────────────────────────────────────────────
+? for shortcuts                                              Gemini 3.8 Flash (Low)

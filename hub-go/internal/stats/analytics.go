@@ -85,6 +85,7 @@ type Report struct {
 	BucketSeconds   int             `json:"bucketSeconds"`   // width of one series point (0 = raw samples)
 	Totals          Totals          `json:"totals"`
 	Machines        []MachineReport `json:"machines"`
+	Hub             *HubReport      `json:"hub"` // the hub process itself (machine id "hub" in the store)
 }
 
 func latestOf(r store.StatRow) *Latest {
@@ -107,7 +108,12 @@ func Build(st *store.Store, machines []MachineRef, rangeName string, d time.Dura
 		return Report{}, err
 	}
 	by := map[string][]store.StatRow{}
+	var hubRows []store.StatRow
 	for _, r := range rows {
+		if r.MachineID == HubID {
+			hubRows = append(hubRows, r)
+			continue
+		}
 		by[r.MachineID] = append(by[r.MachineID], r)
 	}
 	refs := append([]MachineRef(nil), machines...)
@@ -124,6 +130,9 @@ func Build(st *store.Store, machines []MachineRef, rangeName string, d time.Dura
 
 	rep := Report{Range: rangeName, IntervalSeconds: int(interval / time.Second), Machines: []MachineReport{}}
 	bucket := d / MaxPoints
+	if rep.Hub, err = buildHub(st, hubRows, from, bucket); err != nil {
+		return rep, err
+	}
 	for _, ref := range refs {
 		mr := MachineReport{ID: ref.ID, Name: ref.Name, Online: ref.Online, Series: []Point{}}
 		if mr.Name == "" {

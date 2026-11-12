@@ -21,9 +21,6 @@ type Server struct {
 	Registry *link.Registry
 	// UI, when set, serves the built React app for every path the API does not handle.
 	UI http.Handler
-	// Forward, when set, is asked about a request for a session this pod does not hold (several pods): it may serve
-	// the request itself (proxy it to the pod that holds the session) and report true.
-	Forward func(w http.ResponseWriter, r *http.Request, session string) bool
 }
 
 // Mount registers the machine link routes (ADR 0013) and /healthz on mux.
@@ -107,8 +104,6 @@ func (s *Server) session(w http.ResponseWriter, r *http.Request) *link.Conn {
 	}
 	if wrong {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "token does not match the session"})
-	} else if s.Forward != nil && s.Forward(w, r, r.URL.Query().Get("session")) {
-		return nil
 	} else {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "unknown session; open a new one"})
 	}
