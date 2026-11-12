@@ -1,11 +1,11 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
+import { useState, type FormEvent, type ReactNode } from 'react';
 import { NavLink } from 'react-router-dom';
 import { api } from '../lib/api';
 import { usePoll } from '../hooks';
 import { PageBar } from '../shell';
 import type { AdminMachine, AdminUser } from '../lib/types';
 
-function AdminFrame({ title, children }: { title: string; children: ReactNode }) {
+export function AdminFrame({ title, children }: { title: string; children: ReactNode }) {
   return (
     <main className="pane-app">
       <PageBar title={title} />
@@ -20,7 +20,7 @@ function AdminFrame({ title, children }: { title: string; children: ReactNode })
   );
 }
 
-function Notice({ ok, err }: { ok: string | null; err: string | null }) {
+export function Notice({ ok, err }: { ok: string | null; err: string | null }) {
   return <>{ok && <p className="ok" role="status">{ok}</p>}{err && <p className="error" role="alert">{err}</p>}</>;
 }
 
@@ -28,16 +28,16 @@ export function AdminUsers() {
   const { data, error, reload } = usePoll<AdminUser[]>('api/admin/users', 0);
   const [ok, setOk] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [f, setF] = useState({ username: '', displayName: '', password: '', admin: false });
+  const [f, setF] = useState({ username: '', displayName: '', password: '', admin: false, source: 'local', groups: '' });
   const act = async (p: Promise<unknown>, msg: string) => { setOk(null); setErr(null); try { await p; setOk(msg); reload(); } catch (e) { setErr((e as Error).message); } };
-  const add = async (e: FormEvent) => { e.preventDefault(); await act(api('api/admin/users', { method: 'POST', json: f }), `Saved ${f.username}.`); setF({ username: '', displayName: '', password: '', admin: false }); };
+  const add = async (e: FormEvent) => { e.preventDefault(); await act(api('api/admin/users', { method: 'POST', json: { ...f, groups: f.source === 'mockldap' ? f.groups.split(',').map((g) => g.trim()).filter(Boolean) : undefined } }), `Saved ${f.username}.`); setF({ username: '', displayName: '', password: '', admin: false, source: 'local', groups: '' }); };
   return (
     <AdminFrame title="Users">
       <Notice ok={ok} err={err ?? error} />
       <ul className="rows">
         {(data ?? []).map((u) => (
           <li className="row" key={u.username}>
-            <div><b>{u.username}</b> <span className="muted">{u.displayName} {u.admin ? '· admin' : ''} {u.source ? '· ' + u.source : ''}</span></div>
+            <div><b>{u.username}</b> <span className="muted">{u.displayName} {u.admin ? '· admin' : ''} {u.source ? '· ' + u.source : ''}{u.groups?.length ? ' · groups: ' + u.groups.join(', ') : ''}</span></div>
             <button type="button" className="danger" aria-label={'Delete ' + u.username} onClick={() => { if (confirm(`Delete ${u.username}?`)) void act(api(`api/admin/users/${encodeURIComponent(u.username)}`, { method: 'DELETE' }), `Deleted ${u.username}.`); }}>Delete</button>
           </li>
         ))}
@@ -46,7 +46,9 @@ export function AdminUsers() {
       <form className="stack" onSubmit={add}>
         <label>Name<input autoComplete="off" required value={f.username} onChange={(e) => setF({ ...f, username: e.target.value })} /></label>
         <label>Display name<input autoComplete="off" value={f.displayName} onChange={(e) => setF({ ...f, displayName: e.target.value })} /></label>
-        <label>Password<input type="password" autoComplete="new-password" minLength={8} required value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} /></label>
+        <label>Source<select value={f.source} onChange={(e) => setF({ ...f, source: e.target.value })}><option value="local">local</option><option value="mockldap">mockldap (test directory user)</option></select></label>
+        {f.source === 'mockldap' && <label>Groups (comma separated)<input autoComplete="off" value={f.groups} onChange={(e) => setF({ ...f, groups: e.target.value })} /></label>}
+        <label>Password<input type="password" autoComplete="new-password" minLength={f.source === 'mockldap' ? undefined : 8} required value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} /></label>
         <label className="check"><input type="checkbox" checked={f.admin} onChange={(e) => setF({ ...f, admin: e.target.checked })} /> Administrator</label>
         <button type="submit">Save user</button>
       </form>
@@ -71,30 +73,6 @@ export function AdminMachines() {
         ))}
       </ul>
       {data && data.length === 0 && <p className="muted">No machines yet.</p>}
-    </AdminFrame>
-  );
-}
-
-/** The sign-in directory is whatever shape the hub reports; edited as JSON and sent back whole (PUT). */
-export function AdminDirectory() {
-  const { data, error } = usePoll<Record<string, unknown>>('api/admin/directory', 0);
-  const [text, setText] = useState('');
-  const [ok, setOk] = useState<string | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  useEffect(() => { if (data) setText(JSON.stringify(data, null, 2)); }, [data]);
-  const save = async (e: FormEvent) => {
-    e.preventDefault(); setOk(null); setErr(null);
-    let body: unknown;
-    try { body = JSON.parse(text); } catch { setErr('That is not valid JSON.'); return; }
-    try { await api('api/admin/directory', { method: 'PUT', json: body }); setOk('Saved. Takes effect on the next sign-in.'); } catch (x) { setErr((x as Error).message); }
-  };
-  return (
-    <AdminFrame title="Sign-in directory">
-      <Notice ok={ok} err={err ?? error} />
-      <form className="stack" onSubmit={save}>
-        <label>Settings (JSON)<textarea className="json" rows={16} spellCheck={false} value={text} onChange={(e) => setText(e.target.value)} /></label>
-        <button type="submit">Save</button>
-      </form>
     </AdminFrame>
   );
 }

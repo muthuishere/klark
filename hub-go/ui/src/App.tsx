@@ -8,7 +8,8 @@ import { MachinePage } from './pages/MachinePage';
 import { PanePage } from './pages/PanePage';
 import { FileViewer } from './pages/FileViewer';
 import { Messages } from './pages/Messages';
-import { AdminDirectory, AdminMachines, AdminUsers } from './pages/Admin';
+import { AdminMachines, AdminUsers } from './pages/Admin';
+import { AdminDirectory } from './pages/Directory';
 import { Go } from './pages/Go';
 import { NotFound } from './pages/NotFound';
 

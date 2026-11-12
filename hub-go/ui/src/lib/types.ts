@@ -1,5 +1,16 @@
 export interface Me { username: string; displayName?: string; admin?: boolean }
-export interface Providers { static?: boolean; adfs?: { enabled: boolean; name?: string; loginUrl?: string } }
+export interface Providers {
+  static?: boolean;
+  directory?: { mode?: string; name?: string };
+  adfs?: { enabled: boolean; name?: string; loginUrl?: string };
+  oidc?: Array<{ id: string; name?: string; loginUrl?: string }>;
+}
+export interface DirectorySettings {
+  mode?: string; host?: string; port?: number; ssl?: boolean; startTls?: boolean; skipCertCheck?: boolean; timeoutSeconds?: number;
+  bindDn?: string; bindPasswordSet?: boolean; bindPassword?: string; userDnTemplate?: string; userSearchBase?: string; userFilter?: string;
+  groupSearchBase?: string; groupFilter?: string; useMemberOf?: boolean; displayNameAttr?: string; adminGroup?: string; allowedGroups?: string[] | string;
+  oidc?: Array<{ id: string; name?: string; redirectUri?: string; loginUrl?: string }>;
+}
 export interface MachineInfo { id: string; name: string; online: boolean; version?: string; protocol?: number; lastSeen?: string }
 
 // session.snapshot (snake_case, straight from the machine)
@@ -24,5 +35,5 @@ export interface FileMeta {
   path: string; name: string; view: string; size_label?: string; lines?: number; lang?: string; raw?: string; download?: string;
 }
 export interface HubMessage { ts: string; from: string; to: string; text: string; ok: boolean; error?: string; sender?: string }
-export interface AdminUser { username: string; displayName?: string; admin?: boolean; source?: string }
+export interface AdminUser { username: string; displayName?: string; admin?: boolean; source?: string; groups?: string[] }
 export interface AdminMachine { name: string; status?: string; approvedBy?: string; created?: string }

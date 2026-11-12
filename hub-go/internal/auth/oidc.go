@@ -107,7 +107,7 @@ type Identity struct {
 }
 
 // verifyIDToken checks signature (RS256/384/512 against the JWKS), issuer, audience, expiry and nonce.
-func (p *oidcProvider) verifyIDToken(ctx context.Context, raw, clientID, nonce string) (*Identity, error) {
+func (p *oidcProvider) verifyIDToken(ctx context.Context, raw, clientID, nonce, usernameClaim, groupsClaim string) (*Identity, error) {
 	claims := jwt.MapClaims{}
 	_, err := jwt.ParseWithClaims(raw, claims, func(t *jwt.Token) (any, error) {
 		kid, _ := t.Header["kid"].(string)
@@ -129,10 +129,19 @@ func (p *oidcProvider) verifyIDToken(ctx context.Context, raw, clientID, nonce s
 		return ""
 	}
 	id := &Identity{Name: str("preferred_username", "upn", "unique_name", "email", "sub"), Display: str("name", "unique_name")}
+	if usernameClaim != "" {
+		if n := str(usernameClaim); n != "" {
+			id.Name = n
+		}
+	}
 	if id.Name == "" {
 		return nil, errors.New("id token names no user")
 	}
-	for _, k := range []string{"groups", "roles", "group"} {
+	groupKeys := []string{"groups", "roles", "group"}
+	if groupsClaim != "" {
+		groupKeys = []string{groupsClaim}
+	}
+	for _, k := range groupKeys {
 		switch v := claims[k].(type) {
 		case []any:
 			for _, g := range v {

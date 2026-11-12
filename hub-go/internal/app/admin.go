@@ -31,6 +31,8 @@ func (a *App) adminSaveUser(w http.ResponseWriter, r *http.Request) {
 	var b struct {
 		Username, DisplayName, Password string
 		Admin                           bool
+		Source                          string   // new users only: local (default) or mockldap
+		Groups                          []string // mockldap users: directory groups; absent keeps them
 	}
 	if !decode(w, r, &b) {
 		return
@@ -50,9 +52,25 @@ func (a *App) adminSaveUser(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, 400, "password must be at least 8 characters")
 		return
 	}
-	u := store.User{Name: name, DisplayName: b.DisplayName, Admin: b.Admin, Source: "local"}
+	if b.Source != "" && b.Source != "local" && b.Source != auth.SourceMock {
+		jsonErr(w, 400, "source must be local or mockldap")
+		return
+	}
+	for _, g := range b.Groups {
+		if strings.TrimSpace(g) == "" || strings.Contains(g, "|") || len(g) > 128 {
+			jsonErr(w, 400, "group names must be 1-128 characters without '|'")
+			return
+		}
+	}
+	u := store.User{Name: name, DisplayName: b.DisplayName, Admin: b.Admin, Source: "local", Groups: b.Groups}
+	if b.Source != "" {
+		u.Source = b.Source
+	}
 	if exists {
 		u.Hash, u.Source = cur.Hash, cur.Source
+		if b.Groups == nil {
+			u.Groups = cur.Groups
+		}
 		if u.DisplayName == "" {
 			u.DisplayName = cur.DisplayName
 		}
@@ -80,7 +98,7 @@ func (a *App) adminDeleteUser(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, 409, "you cannot delete yourself")
 		return
 	}
-	if u, err := a.Store.User(name); err == nil && u.Source != "local" {
+	if u, err := a.Store.User(name); err == nil && u.Source != "local" && u.Source != auth.SourceMock {
 		jsonErr(w, 409, "this account comes from "+u.Source+" configuration and is recreated on start; change the environment instead")
 		return
 	}
@@ -186,27 +204,55 @@ func (a *App) adminRevokeMachine(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// adminDirectory holds a JSON object the admin edits whole (settings key "directory"), plus read-only sign-in info.
-func (a *App) adminDirectory(w http.ResponseWriter, _ *http.Request) {
-	v, ok := a.Store.Setting("directory")
-	if !ok {
-		v = "{}"
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-store")
-	_, _ = w.Write([]byte(v))
+// adminDirectory is the sign-in directory in force plus the redirect URIs of every OAuth/OIDC provider.
+func (a *App) adminDirectory(w http.ResponseWriter, r *http.Request) {
+	jsonOut(w, http.StatusOK, a.Auth.AdminView(r))
 }
 
+// adminPutDirectory stores the administrator's directory settings (they replace the environment's as a whole).
 func (a *App) adminPutDirectory(w http.ResponseWriter, r *http.Request) {
-	var obj map[string]any
-	if !decode(w, r, &obj) {
+	var in auth.DirectoryInput
+	if !decode(w, r, &in) {
 		return
 	}
-	b, _ := jsonMarshal(obj)
-	if err := a.Store.SetSetting("directory", string(b)); err != nil {
+	if err := a.Auth.SaveDirectory(in); err != nil {
+		jsonErr(w, 400, err.Error())
+		return
+	}
+	a.afterDirectoryChange()
+	a.adminDirectory(w, r)
+}
+
+// adminResetDirectory drops the stored settings so the environment applies again.
+func (a *App) adminResetDirectory(w http.ResponseWriter, r *http.Request) {
+	if err := a.Auth.ResetDirectory(); err != nil {
 		jsonErr(w, 500, err.Error())
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_, _ = w.Write(b)
+	a.afterDirectoryChange()
+	a.adminDirectory(w, r)
+}
+
+func (a *App) afterDirectoryChange() {
+	if a.Auth.DirectoryMode() == "mockldap" {
+		_ = a.Auth.SeedMock()
+	}
+}
+
+// adminTestDirectory signs a test user in against the given (or current) settings; nothing is stored.
+func (a *App) adminTestDirectory(w http.ResponseWriter, r *http.Request) {
+	var b struct {
+		Settings *auth.DirectoryInput `json:"settings"`
+		Username string               `json:"username"`
+		Password string               `json:"password"`
+	}
+	if !decode(w, r, &b) {
+		return
+	}
+	if b.Settings == nil && a.Auth.DirectoryMode() != "ldap" {
+		jsonOut(w, 200, map[string]any{"ok": false, "message": "The directory is " + a.Auth.DirectoryMode() + ", not ldap; send settings to test an LDAP server."})
+		return
+	}
+	ok, msg := a.Auth.TestDirectory(b.Settings, b.Username, b.Password)
+	jsonOut(w, 200, map[string]any{"ok": ok, "message": msg})
 }

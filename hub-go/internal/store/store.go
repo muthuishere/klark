@@ -100,8 +100,22 @@ type User struct {
 	DisplayName string `json:"displayName"`
 	Hash        string `json:"-"`
 	Admin       bool   `json:"admin"`
-	Source      string `json:"source"` // builtin, env, local
+	Source      string `json:"source"` // builtin, env, local, mockldap
 	Created     int64  `json:"created"`
+	// Groups are the directory groups of a mockldap user ("|" is not allowed in a name).
+	Groups []string `json:"groups"`
+}
+
+func joinGroups(g []string) string { return strings.Join(g, "|") }
+
+func splitGroups(s string) []string {
+	out := []string{}
+	for _, g := range strings.Split(s, "|") {
+		if g = strings.TrimSpace(g); g != "" {
+			out = append(out, g)
+		}
+	}
+	return out
 }
 
 // UpsertUser inserts a user or replaces its hash, display name, role and source.
@@ -109,9 +123,9 @@ func (s *Store) UpsertUser(u User) error {
 	if u.DisplayName == "" {
 		u.DisplayName = u.Name
 	}
-	_, err := s.db.Exec(`INSERT INTO users (name, display_name, hash, admin, source, created) VALUES (?,?,?,?,?,?)
-		ON CONFLICT(name) DO UPDATE SET display_name=excluded.display_name, hash=excluded.hash, admin=excluded.admin, source=excluded.source`,
-		u.Name, u.DisplayName, u.Hash, b2i(u.Admin), u.Source, time.Now().Unix())
+	_, err := s.db.Exec(`INSERT INTO users (name, display_name, hash, admin, source, created, groups) VALUES (?,?,?,?,?,?,?)
+		ON CONFLICT(name) DO UPDATE SET display_name=excluded.display_name, hash=excluded.hash, admin=excluded.admin, source=excluded.source, groups=excluded.groups`,
+		u.Name, u.DisplayName, u.Hash, b2i(u.Admin), u.Source, time.Now().Unix(), joinGroups(u.Groups))
 	return err
 }
 
@@ -120,8 +134,8 @@ func (s *Store) InsertUser(u User) (bool, error) {
 	if u.DisplayName == "" {
 		u.DisplayName = u.Name
 	}
-	r, err := s.db.Exec(`INSERT OR IGNORE INTO users (name, display_name, hash, admin, source, created) VALUES (?,?,?,?,?,?)`,
-		u.Name, u.DisplayName, u.Hash, b2i(u.Admin), u.Source, time.Now().Unix())
+	r, err := s.db.Exec(`INSERT OR IGNORE INTO users (name, display_name, hash, admin, source, created, groups) VALUES (?,?,?,?,?,?,?)`,
+		u.Name, u.DisplayName, u.Hash, b2i(u.Admin), u.Source, time.Now().Unix(), joinGroups(u.Groups))
 	if err != nil {
 		return false, err
 	}
@@ -132,12 +146,14 @@ func (s *Store) InsertUser(u User) (bool, error) {
 func scanUser(sc interface{ Scan(...any) error }) (User, error) {
 	var u User
 	var admin int
-	err := sc.Scan(&u.Name, &u.DisplayName, &u.Hash, &admin, &u.Source, &u.Created)
+	var groups string
+	err := sc.Scan(&u.Name, &u.DisplayName, &u.Hash, &admin, &u.Source, &u.Created, &groups)
 	u.Admin = admin != 0
+	u.Groups = splitGroups(groups)
 	return u, err
 }
 
-const userCols = `name, display_name, hash, admin, source, created`
+const userCols = `name, display_name, hash, admin, source, created, groups`
 
 func (s *Store) User(name string) (User, error) {
 	u, err := scanUser(s.db.QueryRow(`SELECT `+userCols+` FROM users WHERE name = ?`, name))

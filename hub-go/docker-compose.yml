@@ -1,5 +1,7 @@
 # Example: docker compose up -d   then open http://localhost:7470
 # Sign in with admin / adminadmin unless HUB_ADMIN_PASSWORD is set (set it).
+# With no other setting the hub runs a MOCK LDAP directory: user1/user1pass and user2/user2pass (development and
+# demos only; manage them in /admin/users, or set HUB_MOCK_USERS). Set HUB_LDAP_HOST for a real directory.
 services:
   hub:
     build: .
@@ -27,6 +29,28 @@ services:
       # HUB_OIDC_CLIENT_ID: klark
       # HUB_OIDC_CLIENT_SECRET: "..."
       # HUB_OIDC_ADMIN_GROUP: klark-admins
+      #
+      # Directory sign-in. HUB_AUTH_MODE: mockldap | ldap | local ("" = ldap when HUB_LDAP_HOST is set, else mockldap)
+      # HUB_MOCK_USERS: "ann=secretpw:admin:devs|ops,bo=otherpw"       # name=password[:admin][:group1|group2]
+      # Real LDAP (OpenLDAP, Active Directory, FreeIPA). The server checks the password by a bind as the user.
+      # HUB_LDAP_HOST: ldap.example.com
+      # HUB_LDAP_PORT: "636"                  # default 389, or 636 with HUB_LDAP_SSL
+      # HUB_LDAP_SSL: "true"                  # ldaps://   (or HUB_LDAP_STARTTLS: "true")
+      # HUB_LDAP_SKIP_CERT_CHECK: "false"
+      # HUB_LDAP_TIMEOUT_SECONDS: "10"
+      # direct bind: HUB_LDAP_USER_DN_TEMPLATE: "uid={0},ou=people,dc=example,dc=com"   (or "{0}@corp.example.com")
+      # search then bind: HUB_LDAP_USER_SEARCH_BASE: "ou=people,dc=example,dc=com", HUB_LDAP_USER_FILTER: "(uid={0})"
+      # HUB_LDAP_BIND_DN: "cn=svc,dc=example,dc=com"   # service account for the searches (else anonymous)
+      # HUB_LDAP_BIND_PASSWORD: "..."                  # or set it in /admin/directory
+      # groups: HUB_LDAP_USE_MEMBEROF: "true" and/or HUB_LDAP_GROUP_SEARCH_BASE + HUB_LDAP_GROUP_FILTER: "(member={0})"
+      # HUB_LDAP_DISPLAY_NAME_ATTR: displayName
+      # HUB_LDAP_ADMIN_GROUP: klark-admins
+      # HUB_LDAP_ALLOWED_GROUPS: "klark-admins,klark-users"   # empty = everyone who binds
+      # Settings saved in /admin/directory override these.
+      #
+      # More OAuth/OIDC sign-ins (each at auth/oidc/<id>/login; the callback URL is shown in /admin/directory):
+      # HUB_OIDC_PROVIDERS: '[{"id":"google","name":"Google","issuer":"https://accounts.google.com","clientId":"...","clientSecret":"env:GOOGLE_SECRET","scopes":"openid profile email","adminGroup":"","groupsClaim":"groups","usernameClaim":"email"}]'
+      # GOOGLE_SECRET: "..."
       #
       # Development only: the hub plays ADFS itself at /mock-adfs/
       # HUB_MOCK_ADFS: "1"

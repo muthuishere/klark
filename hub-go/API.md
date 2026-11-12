@@ -17,6 +17,16 @@ This file is what the server does today; the tests in `internal/app` pin it.
 | `HUB_ADMIN_PASSWORD` | the built-in `admin` account's password (default `adminadmin`) |
 | `HUB_SESSION_KEY` | cookie signing secret (else generated into the data dir) |
 | `HUB_OIDC_ISSUER` `_CLIENT_ID` `_CLIENT_SECRET` `_SCOPES` `_ADMIN_GROUP` `_NAME` | ADFS / OIDC (code + PKCE; ID token checked against the jwks, RS256/384/512) |
+| `HUB_AUTH_MODE` | directory mode: `mockldap`, `ldap` or `local` (none). Empty = `ldap` when `HUB_LDAP_HOST` is set, else `mockldap` |
+| `HUB_MOCK_USERS` | `name=password[:admin][:group1\|group2],...` seeds the mock LDAP (added when missing on each start; replaces the default `user1/user1pass`, `user2/user2pass`, which are seeded once). Passwords cannot contain `,` or `:` |
+| `HUB_LDAP_HOST` `_PORT` `_SSL` `_STARTTLS` `_SKIP_CERT_CHECK` `_TIMEOUT_SECONDS` | real LDAP connection (port default 389, 636 with SSL; timeout default 10) |
+| `HUB_LDAP_BIND_DN` `_BIND_PASSWORD` | service account for user/group searches (else anonymous). The password is never returned by any API |
+| `HUB_LDAP_USER_DN_TEMPLATE` | direct bind, `{0}` = user name, e.g. `uid={0},ou=people,dc=example,dc=com` or `{0}@corp.example.com` |
+| `HUB_LDAP_USER_SEARCH_BASE` `_USER_FILTER` | search-then-bind (wins over the template); filter default `(uid={0})`, must match exactly one entry |
+| `HUB_LDAP_GROUP_SEARCH_BASE` `_GROUP_FILTER` `_USE_MEMBEROF` | groups: filter `{0}` = the user's DN, `{1}` = user name (default `(\|(member={0})(uniqueMember={0})(memberUid={1}))`); and/or the user's `memberOf` |
+| `HUB_LDAP_DISPLAY_NAME_ATTR` | display name attribute, then `displayName`, then `cn` |
+| `HUB_LDAP_ADMIN_GROUP` `_ALLOWED_GROUPS` | members of the admin group are admins; allowed groups (comma list, empty = everyone who binds) gate sign-in |
+| `HUB_OIDC_PROVIDERS` | JSON array of more OAuth/OIDC providers: `[{"id","name","issuer","clientId","clientSecret","scopes","adminGroup","groupsClaim","usernameClaim"}]`. `id` is `[a-z0-9_-]{1,32}`, not `adfs`; `clientSecret` `"env:NAME"` reads that variable; defaults: name = id, scopes `openid profile email`; `usernameClaim` default `preferred_username`/`upn`/`unique_name`/`email`/`sub`; `groupsClaim` default `groups`/`roles`/`group`. Invalid JSON stops the start |
 | `HUB_MOCK_ADFS=1`, `HUB_MOCK_ADFS_USERS="alice=pw:admin,bob=pw"` | dev only: the hub serves an IdP at `/mock-adfs/` and uses it |
 
 `klarkhub healthcheck` (exit 0 when `/healthz` answers), `klarkhub hash-password`, `klarkhub hash-token` (read stdin).
@@ -47,14 +57,17 @@ per IP; then `429` + `Retry-After`).
 
 | request | reply |
 |---|---|
-| `GET /api/auth/providers` | `{"static":true,"adfs":{"enabled":true,"name":"ADFS","loginUrl":"auth/adfs/login"}}` (`adfs:{enabled:false}` when off) |
-| `POST /api/auth/login` `{username,password}` | `200 {username,displayName,admin}` + cookie, `401`, or `429` |
+| `GET /api/auth/providers` | `{"static":true,"directory":{"mode":"mockldap","name":"Mock LDAP"},"adfs":{"enabled":true,"name":"ADFS","loginUrl":"auth/adfs/login"},"oidc":[{"id":"google","name":"Google","loginUrl":"auth/oidc/google/login"}]}`. `directory.mode` is `mockldap` (name `Mock LDAP`), `ldap` (`LDAP`) or `local` (`Local`: no directory, only the built-in admin and `HUB_USERS`/admin-created accounts); `adfs:{enabled:false}` when off; `oidc` is `[]` when none. The login page shows the username/password form always, and a button per `adfs`/`oidc` entry (links are relative to the base tag) |
+| `POST /api/auth/login` `{username,password}` | `200 {username,displayName,admin}` + cookie, `401` (wrong name/password, empty password, or not in an allowed group), `429`, or `503 {"error"}` when the LDAP server cannot be reached (not counted as a failed attempt) |
 | `POST /api/auth/logout` | `204` |
 | `GET /api/auth/me` | `200 {username,displayName,admin}` or `401` |
 | `GET auth/adfs/login[?return=/path]` | 302 to the IdP (state, nonce, PKCE S256) |
+| `GET auth/oidc/{id}/login[?return=/path]`, `GET auth/oidc/{id}/callback` | the same flow for an `HUB_OIDC_PROVIDERS` entry (`404` for an unknown id); a state minted for one provider is refused by another; failure: 302 to `login?error=oidc_failed&provider={id}` (or `oidc_unavailable&provider={id}`) |
 | `GET auth/adfs/callback` | verifies state, exchanges the code, verifies the ID token, sets the cookie, 302 to `{base}/` (or `return`); on failure 302 to `login?error=adfs_failed` (or `adfs_unavailable`) |
 
-ADFS users are not stored; their session carries the name and `admin` (member of `HUB_OIDC_ADMIN_GROUP`; for the mock: group `klark-admins`).
+Sign-in order on `POST /api/auth/login`: the built-in `admin` and accounts in the users table with source `builtin`/`env`/`local` first (a wrong password there is final); otherwise the directory: `mockldap` checks the users table rows with source `mockldap` (bcrypt hashes); `ldap` asks the LDAP server (a bind as the user, so the hub never sees it stored); `local` has no directory. Mock rows are ignored while the mode is not `mockldap`. `allowedGroups` also gates mock users (their `groups`). The same rate limiter (per user and per IP) covers every path. Empty passwords are refused before any LDAP call. LDAP users are not stored: the session carries `username` (as typed), `displayName` and `admin` (member of the admin group), and lasts 12 h.
+
+ADFS and `oidc` users are not stored; their session carries the name and `admin` (member of `HUB_OIDC_ADMIN_GROUP`; for the mock: group `klark-admins`).
 
 ## Data API (all need the cookie; 401 otherwise)
 
@@ -109,10 +122,37 @@ code | markdown | csv | tsv | json | diff | image | pdf | binary and `raw`/`down
 
 | request | reply |
 |---|---|
-| `GET /api/admin/users` | `[{username,displayName,admin,source,created}]` (`source`: builtin, env, local) |
-| `POST /api/admin/users` `{username,displayName?,password?,admin}` | creates or updates (password >= 8 chars, required for a new user) |
-| `DELETE /api/admin/users/{username}` | `204`; not yourself, and not `env`/`builtin` accounts (`409`) |
+| `GET /api/admin/users` | `[{username,displayName,admin,source,created,groups}]` (`source`: builtin, env, local, mockldap; `groups` is `[]` unless a mockldap user has some) |
+| `POST /api/admin/users` `{username,displayName?,password?,admin,source?,groups?}` | creates or updates (password >= 8 chars, required for a new user). `source` (new users only): `local` (default) or `mockldap` (a user of the mock directory; it can sign in only while the mode is `mockldap`); an update keeps the source. `groups` (string array, names without `\|`) replaces a user's groups; absent keeps them. `400` for a bad source/group |
+| `DELETE /api/admin/users/{username}` | `204`; not yourself, and not `env`/`builtin` accounts (`409`); `local` and `mockldap` accounts can be deleted. Deleted default mock users are not re-seeded |
 | `GET /api/admin/machines` | `[{name,status,approvedBy,created?,source}]` (`status` online/offline; `source` env/admin) |
 | `POST /api/admin/machines` `{name,fleet?}` | `201 {name,token}`: the token is shown once, only its SHA-256 is stored |
 | `DELETE /api/admin/machines/{name}` | `204`: removes a stored token and drops the session at once (an `HUB_MACHINES` machine only loses its session) |
-| `GET /api/admin/directory`, `PUT /api/admin/directory` | any JSON object, stored and returned whole |
+| `GET /api/admin/directory` | the sign-in setup in force (below) |
+| `PUT /api/admin/directory` `{settings fields..., bindPassword?, clearBindPassword?}` | validates and stores the settings (they replace the environment's as a whole, `HUB_LDAP_BIND_PASSWORD` excepted: see below); `200` with the GET body, `400 {error}` when invalid |
+| `DELETE /api/admin/directory` | drops the stored settings so the environment applies again; `200` with the GET body |
+| `POST /api/admin/directory/test` `{settings?, username, password}` | `200 {ok, message}`; nothing is stored. With `settings` (the PUT shape; mode is taken as ldap; a missing `bindPassword` uses the current one) it tests those, else the current ones (when the current mode is not `ldap` and no settings are sent: `ok:false` with an explanation). With a `username`: a full sign-in check (bind, display name, groups, allowed groups, admin). Without: connect and bind the service account only |
+
+### Directory settings and the GET body
+
+```
+{
+ "mode": "mockldap|ldap|local", "name": "Mock LDAP|LDAP|Local",
+ "source": "env|admin",                      // admin = stored settings are in force
+ "settings": { "mode","host","port","ssl","startTls","skipCertCheck","timeoutSeconds",
+               "bindDn","bindPasswordSet":bool,"userDnTemplate","userSearchBase","userFilter",
+               "groupSearchBase","groupFilter","useMemberOf","displayNameAttr","adminGroup","allowedGroups":[..] },
+ "adfs": {"enabled":bool,"name","loginUrl","redirectUri"},   // name/loginUrl/redirectUri only when enabled
+ "oidc": [{"id","name","issuer","clientId","clientSecretSet":bool,"scopes","adminGroup","groupsClaim","usernameClaim",
+           "loginUrl":"auth/oidc/{id}/login","redirectUri":"https://host/base/auth/oidc/{id}/callback"}]
+}
+```
+
+- `settings` is the effective set (resolved mode, i.e. never empty). A PUT body is the same object (send `settings` back, change fields),
+  flat, plus `bindPassword` (string: replaces the secret; absent or empty keeps the current one) and `clearBindPassword:true` (removes the
+  stored secret; `HUB_LDAP_BIND_PASSWORD` still applies when the bind DN is unchanged). The secret is never returned by any API, only `bindPasswordSet`.
+- `mode` in a PUT may be empty (then `ldap` if `host` is set, else `mockldap`); switching to `mockldap` seeds the default mock users when the
+  directory never had them. `port` 0 = 389 (636 with `ssl`); `timeoutSeconds` 0 = 10; `userFilter` empty = `(uid={0})`; `userDnTemplate`/`userFilter` must contain `{0}`;
+  `ssl` and `startTls` are exclusive. LDAP needs `host` and `userDnTemplate` or `userSearchBase`. Group names match case-insensitively on the cn or the full DN.
+- `redirectUri` is `publicUrl + base path + path`: register it at the identity provider. The OIDC provider list itself comes from `HUB_OIDC_PROVIDERS` (read only here).
+- Every admin route needs the admin cookie and the same-origin check as the other state-changing routes (`403` otherwise).

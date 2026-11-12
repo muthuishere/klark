@@ -46,6 +46,8 @@ func (a *App) mountAPI(mux *http.ServeMux) {
 	mux.Handle("DELETE /api/admin/machines/{id}", admin(a.adminRevokeMachine))
 	mux.Handle("GET /api/admin/directory", admin(a.adminDirectory))
 	mux.Handle("PUT /api/admin/directory", admin(a.adminPutDirectory))
+	mux.Handle("DELETE /api/admin/directory", admin(a.adminResetDirectory))
+	mux.Handle("POST /api/admin/directory/test", admin(a.adminTestDirectory))
 }
 
 // failure turns an error from the machine link into an HTTP answer.

@@ -33,7 +33,7 @@ Checks reported by the coordinator: `go vet ./... && go test -race ./...` passes
 - Server-side slash-command lists (the UI carries its own list).
 - Syntax highlighting; quick-reply buttons for a blocked pane.
 - CLI token page and change-password page.
-- LDAP / Active Directory (the directory page stores a JSON blob only); per-machine access groups.
+- Per-machine access groups.
 - Browser approval for `klark hub connect`: not ported, so machines join with `HUB_MACHINES` tokens (or from
   `/admin/machines`) for now.
 - No load or soak test.
@@ -185,7 +185,7 @@ Derived from reading `hub/` (pages, endpoints, services), updated 2026-11-12 fro
 | Built-in `admin` account, static users, hashed | done |
 | Change password page (`Password.razor`) | not started |
 | OIDC / ADFS, mock ADFS (new, not in Blazor) | done; real ADFS / Entra untested |
-| LDAP / Active Directory, mock LDAP (`Directory.cs`) | not started (directory page is a JSON blob only) |
+| LDAP (direct bind / search-then-bind, groups, allowed groups, test), mock LDAP, extra OIDC providers | done; tested against a fake LDAP connection only, no real LDAP server yet |
 | Per-group machine visibility, read-only viewers (`HubAccess`) | not started |
 | Sign-in rate limit | not checked |
 | Machines and agents sidebar, status (`Sidebar.razor`, `Home.razor`) | done (short names truncate: UI nit) |
@@ -210,7 +210,7 @@ Derived from reading `hub/` (pages, endpoints, services), updated 2026-11-12 fro
 | User JWTs, `/token` page, `POST /api/token` (`ApiAuth.cs`, `Token.razor`) | not started |
 | Machine approval in the browser (`/connect`, `MachineConnect.cs`) | not started; machines join by `HUB_MACHINES` |
 | Admin users, machines | done |
-| Admin directory | stub (JSON blob) |
+| Admin directory | API done (`API.md`) |
 | Search (cmd-K) | not checked |
 | Brand name, tagline, logo options | not checked |
 | Themes | done (seven) |
