@@ -73,12 +73,13 @@ fn script(a: &[&str], b: &[&str]) -> Vec<(Op, usize, usize)> {
             ops.push((Op::Same, i, j));
             i += 1;
             j += 1;
-        } else if j < m && (i == n || lcs[i][j + 1] >= lcs[i + 1][j]) {
-            ops.push((Op::Add, i, j));
-            j += 1;
-        } else {
+        } else if i < n && (j == m || lcs[i + 1][j] >= lcs[i][j + 1]) {
+            // Removed lines first, like diff(1).
             ops.push((Op::Del, i, j));
             i += 1;
+        } else {
+            ops.push((Op::Add, i, j));
+            j += 1;
         }
     }
     ops
@@ -122,6 +123,14 @@ fn render(a: &[&str], b: &[&str], ops: &[(Op, usize, usize)]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_changed_line_shows_old_then_new() {
+        let d = unified(Some("status: ok\n"), "status: DEGRADED\n").unwrap();
+        let old = d.find("-status: ok").unwrap();
+        let new = d.find("+status: DEGRADED").unwrap();
+        assert!(old < new, "{d}");
+    }
 
     #[test]
     fn identical_output_sends_nothing() {
