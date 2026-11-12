@@ -39,6 +39,26 @@ klark msg login --hub https://hub.example.com --user alice      # asks for the p
 klark msg status                                                 # hub, token expiry, sessions
 ```
 
+## Feeds: a command's new output as messages (`klark feed`)
+
+A feed sends what a background command or a file newly prints to one or more agents, as a prompt, so the agent need not poll (ADR 0015):
+
+```sh
+klark feed add reviewer "An ERROR was logged; find the cause." --stream "tail -n0 -F app.log | grep --line-buffered ERROR"
+klark feed add reviewer "New mail; what needs an answer?" --poll "himalaya envelope list" --interval 300
+klark feed list                 # every feed: agents, state, last output, last sent, who created it
+klark feed leave <id>           # unsubscribe the calling pane
+klark feed stop <id>            # end it for everyone
+```
+
+It lands as `[klark feed <id> · <label>] <instruction>`, then the new lines marked as untrusted data, and a `klark feed leave <id>` line. Unlike `klark msg`:
+
+- it is sent only when the agent is idle (output piles up while it works), at most one message per `--message-gap` (default 30 s), and at most 4 KiB; `klark feed batch <id> <n>` prints a cut batch whole;
+- it is not written to `messages.jsonl` and does not become a `klark msg reply` target;
+- it is local: subscribers are agents on this machine, and nothing goes through the hub.
+
+The draft protection is the same as for `klark msg send`. Feeds survive restarts and stop themselves after too many messages in an hour (default 30) or 7 days of silence. See `klark feed --help` and the skill.
+
 ## History
 
 `klark msg log` shows the recent messages sent and received (`-n 50`, `--json`). The log lives in `~/.config/klark/messages.jsonl`.

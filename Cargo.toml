@@ -13,6 +13,7 @@ include = [
     "assets/sounds/*",
     "api/klark-api.schema.json",
     "skills/klark/SKILL.md",
+    "skills/klark/references/*.md",
     "distribution/install.ps1",
     "README.md",
     "LICENSE",

@@ -1,5 +1,6 @@
 use super::*;
 
+mod feeds_overlay;
 mod settings_overlay;
 mod worktree_overlays;
 
@@ -70,6 +71,7 @@ pub(crate) fn render_client_overlay(
         ClientShellOverlay::Settings(v) => {
             settings_overlay::render_settings_overlay(b, v, s.integration_updates_available, p)
         }
+        ClientShellOverlay::Feeds(v) => feeds_overlay::render_feeds_overlay(b, v, p),
         ClientShellOverlay::WorktreeCreate(v) => {
             worktree_overlays::render_worktree_create_overlay(b, v, p)
         }

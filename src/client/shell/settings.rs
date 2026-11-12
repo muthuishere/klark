@@ -31,6 +31,126 @@ pub(super) fn integration_needs_install(info: &crate::api::schema::IntegrationIn
         || info.available && info.state == crate::api::schema::IntegrationState::NotInstalled
 }
 
+/// The `feeds` tab's rows (ADR 0015): the `[feeds]` key, its label and its
+/// preset choices as (TOML value, shown text). Enter cycles through the
+/// presets; an exact value from `config.toml` or `klark feed set` is shown as
+/// is until then.
+/// A preset: (TOML value, shown text).
+type FeedPreset = (&'static str, &'static str);
+
+pub(super) const FEED_SETTING_ROWS: &[(&str, &str, &[FeedPreset])] = &[
+    ("restore", "restore", &[("true", "on"), ("false", "off")]),
+    (
+        "agents_may_create",
+        "agents may create",
+        &[("true", "on"), ("false", "off")],
+    ),
+    (
+        "message_gap_seconds",
+        "message gap",
+        &[
+            ("10", "10 s"),
+            ("30", "30 s"),
+            ("60", "60 s"),
+            ("120", "120 s"),
+        ],
+    ),
+    (
+        "poll_interval_seconds",
+        "poll interval",
+        &[
+            ("10", "10 s"),
+            ("30", "30 s"),
+            ("60", "60 s"),
+            ("300", "300 s"),
+        ],
+    ),
+    (
+        "max_per_hour",
+        "max per hour",
+        &[
+            ("10", "10"),
+            ("30", "30"),
+            ("60", "60"),
+            ("120", "120"),
+            ("0", "no limit"),
+        ],
+    ),
+    (
+        "idle_stop",
+        "idle stop",
+        &[
+            ("\"1d\"", "1 day"),
+            ("\"7d\"", "7 days"),
+            ("\"30d\"", "30 days"),
+            ("\"0\"", "never"),
+        ],
+    ),
+    (
+        "max_bytes",
+        "max bytes",
+        &[("2048", "2048"), ("4096", "4096"), ("16384", "16384")],
+    ),
+    (
+        "use_small_subagent",
+        "small subagent",
+        &[("true", "on"), ("false", "off")],
+    ),
+];
+
+/// Row `row`'s current value as TOML, to compare with the presets.
+fn feed_setting_toml(feeds: &crate::config::FeedsConfig, row: usize) -> String {
+    match FEED_SETTING_ROWS.get(row).map(|(key, _, _)| *key) {
+        Some("restore") => feeds.restore.to_string(),
+        Some("agents_may_create") => feeds.agents_may_create.to_string(),
+        Some("message_gap_seconds") => feeds.message_gap_seconds.to_string(),
+        Some("poll_interval_seconds") => feeds.poll_interval_seconds.to_string(),
+        Some("max_per_hour") => feeds.max_per_hour.to_string(),
+        // `7d`, `168h` and `604800` are the same: compare seconds.
+        Some("idle_stop") => match crate::feed::model::parse_duration(&feeds.idle_stop) {
+            Some(0) => "\"0\"".into(),
+            Some(86_400) => "\"1d\"".into(),
+            Some(604_800) => "\"7d\"".into(),
+            Some(2_592_000) => "\"30d\"".into(),
+            _ => format!("{:?}", feeds.idle_stop),
+        },
+        Some("max_bytes") => feeds.max_bytes.to_string(),
+        Some("use_small_subagent") => feeds.use_small_subagent.to_string(),
+        _ => String::new(),
+    }
+}
+
+/// What the `feeds` tab shows for row `row`: the preset's text, or the
+/// exact value when it is not a preset.
+pub(super) fn feed_setting_display(feeds: &crate::config::FeedsConfig, row: usize) -> String {
+    let current = feed_setting_toml(feeds, row);
+    let presets = FEED_SETTING_ROWS.get(row).map_or(&[][..], |(_, _, p)| *p);
+    presets
+        .iter()
+        .find(|(value, _)| *value == current)
+        .map(|(_, shown)| (*shown).to_string())
+        .unwrap_or_else(|| match FEED_SETTING_ROWS[row].0 {
+            "idle_stop" => feeds.idle_stop.clone(),
+            "message_gap_seconds" | "poll_interval_seconds" => format!("{current} s"),
+            _ => current,
+        })
+}
+
+/// The preset after row `row`'s current value (the first one when the
+/// current value is not a preset).
+fn next_feed_setting(
+    feeds: &crate::config::FeedsConfig,
+    row: usize,
+) -> Option<(&'static str, &'static str)> {
+    let (key, _, presets) = FEED_SETTING_ROWS.get(row)?;
+    let current = feed_setting_toml(feeds, row);
+    let next = presets
+        .iter()
+        .position(|(value, _)| *value == current)
+        .map_or(0, |index| (index + 1) % presets.len());
+    Some((key, presets[next].0))
+}
+
 impl ClientShellState {
     pub(super) fn open_settings_overlay(&mut self) {
         self.overlay = Some(ClientShellOverlay::Settings(ClientSettingsOverlay {
@@ -42,7 +162,15 @@ impl ClientShellState {
             integration_messages: Vec::new(),
             loading_integrations: false,
             installing_integrations: false,
+            feeds: self.config.feeds.clone(),
         }));
+    }
+
+    /// The settings dialog on its `feeds` tab (the feeds overlay's "open
+    /// settings").
+    pub(super) fn open_feed_settings(&mut self, outcome: &mut ClientShellInput) {
+        self.open_settings_overlay();
+        self.select_settings_section(ClientSettingsSection::Feeds, outcome);
     }
 
     fn selected_index_for_settings_section(&self, section: ClientSettingsSection) -> usize {
@@ -51,7 +179,7 @@ impl ClientShellState {
             ClientSettingsSection::Indicators => indicator_index(self.config.status_indicators),
             ClientSettingsSection::Sound => usize::from(!self.config.sound_enabled),
             ClientSettingsSection::Toast => toast_index(self.config.toast_delivery),
-            ClientSettingsSection::Integrations => 0,
+            ClientSettingsSection::Integrations | ClientSettingsSection::Feeds => 0,
         }
     }
 
@@ -100,6 +228,7 @@ impl ClientShellState {
                 ClientSettingsSection::Indicators | ClientSettingsSection::Sound => 2,
                 ClientSettingsSection::Toast => 4,
                 ClientSettingsSection::Integrations => settings.integrations.len(),
+                ClientSettingsSection::Feeds => FEED_SETTING_ROWS.len(),
             },
             _ => 0,
         }
@@ -223,6 +352,20 @@ impl ClientShellState {
                 );
             }
             ClientSettingsSection::Integrations => self.install_recommended_integrations(outcome),
+            ClientSettingsSection::Feeds => {
+                let Some((key, value)) = next_feed_setting(&self.config.feeds, selected) else {
+                    return;
+                };
+                if self.save_settings_edit(
+                    crate::config::ConfigEdit::FeedSetting { key, value },
+                    outcome,
+                ) {
+                    let feeds = self.config.feeds.clone();
+                    if let Some(ClientShellOverlay::Settings(settings)) = self.overlay.as_mut() {
+                        settings.feeds = feeds;
+                    }
+                }
+            }
         }
     }
 

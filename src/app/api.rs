@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 mod agent_view;
 mod agents;
 mod env;
+mod feeds;
 mod integrations;
 mod layouts;
 mod panes;
@@ -1217,6 +1218,13 @@ impl App {
                 };
             }
             Method::PaneSendKeys(params) => return self.handle_pane_send_keys(request.id, params),
+            Method::FeedList(_) | Method::FeedStop(_) | Method::FeedStart(_) => {
+                return responses::encode_error(
+                    request.id,
+                    "invalid_request",
+                    "feed methods are handled asynchronously by the app runtime",
+                );
+            }
             Method::IntegrationList(_) => {
                 return self.handle_integration_list(request.id);
             }

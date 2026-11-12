@@ -930,6 +930,10 @@ if ($resolvedKlarkKind -ne "release" -or
     Write-WarningStep "PowerShell still resolves klark to $resolvedKlark. Open a new PowerShell window or inspect PATH order manually."
 }
 
+# The agent skill for Claude Code and ~/.agents, where those exist.
+& $releaseKlark --install-skill *> $null
+if ($LASTEXITCODE -eq 0) { Write-Step "Installed the klark agent skill (skills\klark)" }
+
 Write-Step "Current PowerShell session: klark"
 Write-Step "Future PowerShell windows: open a new PowerShell window and run: klark"
 Write-Host "Klark $versionIdentity installed successfully."

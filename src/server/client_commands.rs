@@ -254,6 +254,23 @@ mod tests {
             actual.remove("pane.link.resolve").as_deref(),
             Some("f5e4a3e01453ae7b188f127ce951c12c20e0bebcc17cc364eeb6d1a01fd5bf81")
         );
+        // ADR 0015 (A1): the feeds overlay's methods.
+        for (method, digest) in [
+            (
+                "feed.list",
+                "51457594d498005e050d89f8262af100c92c4a8f81a2f2c5b68a249f0e63d2c0",
+            ),
+            (
+                "feed.start",
+                "df3a441639cf9d063387a2d292ef26404dfb2b8e4d68778a3041be6341028870",
+            ),
+            (
+                "feed.stop",
+                "861e893895e32b4a99c520521ff5cac0a6ff28c1f65fa7ad7b40e2a2512a8a7c",
+            ),
+        ] {
+            assert_eq!(actual.remove(method).as_deref(), Some(digest), "{method}");
+        }
 
         assert_eq!(
             actual, expected,

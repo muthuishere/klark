@@ -203,6 +203,90 @@ pub struct ToastConfig {
     pub clipboard: ClipboardToastConfig,
 }
 
+/// `[feeds]`: the defaults a new `klark feed add` takes (ADR 0015). A feed
+/// keeps the values it was added with; changing these never touches it.
+/// A value of the wrong type keeps its default (see the `Deserialize` impl):
+/// a hand-edited `[feeds]` never costs the rest of the config.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct FeedsConfig {
+    /// Run feeds again when the klark server starts.
+    pub restore: bool,
+    /// An agent pane may run `klark feed add`.
+    pub agents_may_create: bool,
+    /// `--stream` / `--follow`: least time between two messages to one agent.
+    pub message_gap_seconds: u64,
+    /// `--poll`: time between two runs.
+    pub poll_interval_seconds: u64,
+    /// Stop a subscription above this many messages an hour; 0 = no limit.
+    pub max_per_hour: u32,
+    /// Stop a feed that delivered nothing for this long (`7d`, `12h`; `0` = never).
+    pub idle_stop: String,
+    /// The largest message an agent receives from a feed.
+    pub max_bytes: usize,
+    /// Add the "let a small subagent judge first" line to each message.
+    pub use_small_subagent: bool,
+}
+
+impl Default for FeedsConfig {
+    fn default() -> Self {
+        Self {
+            restore: true,
+            agents_may_create: true,
+            message_gap_seconds: 30,
+            poll_interval_seconds: 30,
+            max_per_hour: 30,
+            idle_stop: "7d".into(),
+            max_bytes: 4096,
+            use_small_subagent: true,
+        }
+    }
+}
+
+/// Each key on its own: one that is missing or of the wrong type keeps its
+/// default, unknown keys are ignored, and a `feeds` that is not a table is
+/// all defaults.
+impl<'de> Deserialize<'de> for FeedsConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let mut c = Self::default();
+        let toml::Value::Table(t) = toml::Value::deserialize(deserializer)? else {
+            return Ok(c);
+        };
+        let int = |k: &str| t.get(k).and_then(toml::Value::as_integer);
+        let flag = |k: &str| t.get(k).and_then(toml::Value::as_bool);
+        if let Some(v) = flag("restore") {
+            c.restore = v;
+        }
+        if let Some(v) = flag("agents_may_create") {
+            c.agents_may_create = v;
+        }
+        if let Some(v) = flag("use_small_subagent") {
+            c.use_small_subagent = v;
+        }
+        if let Some(v) = int("message_gap_seconds").and_then(|n| u64::try_from(n).ok()) {
+            c.message_gap_seconds = v;
+        }
+        if let Some(v) = int("poll_interval_seconds").and_then(|n| u64::try_from(n).ok()) {
+            c.poll_interval_seconds = v;
+        }
+        if let Some(v) = int("max_per_hour").and_then(|n| u32::try_from(n).ok()) {
+            c.max_per_hour = v;
+        }
+        if let Some(v) = int("max_bytes").and_then(|n| usize::try_from(n).ok()) {
+            c.max_bytes = v;
+        }
+        // `idle_stop = "7d"`, and also a bare number of seconds (`= 0`).
+        match t.get("idle_stop") {
+            Some(toml::Value::String(v)) => c.idle_stop = v.clone(),
+            Some(toml::Value::Integer(n)) if *n >= 0 => c.idle_stop = n.to_string(),
+            _ => {}
+        }
+        Ok(c)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct KlarkToastConfig {
@@ -323,6 +407,7 @@ pub struct Config {
     pub advanced: AdvancedConfig,
     pub experimental: ExperimentalConfig,
     pub remote: RemoteConfig,
+    pub feeds: FeedsConfig,
 }
 
 #[derive(Debug)]
@@ -1333,6 +1418,25 @@ impl Default for AdvancedConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A bad `[feeds]` value (hand-edited) must not cost the rest of the
+    /// config: that value keeps its default, everything else loads.
+    #[test]
+    fn bad_feeds_values_keep_the_rest_of_the_config() {
+        let toml = "[feeds]\nrestore = false\nmax_bytes = -1\nagents_may_create = \"no\"\n\
+                    idle_stop = true\nmax_per_hour = 5\n\n[terminal]\ndefault_shell = \"/bin/zsh\"\n";
+        let c = toml::from_str::<Config>(toml).expect("config loads");
+        assert_eq!(c.terminal.default_shell, "/bin/zsh");
+        assert!(!c.feeds.restore);
+        assert_eq!(c.feeds.max_per_hour, 5);
+        assert_eq!(c.feeds.max_bytes, FeedsConfig::default().max_bytes);
+        assert!(c.feeds.agents_may_create);
+        assert_eq!(c.feeds.idle_stop, "7d");
+        let c = toml::from_str::<Config>("feeds = 3\n").expect("config loads");
+        assert_eq!(c.feeds, FeedsConfig::default());
+        let c = toml::from_str::<Config>("[feeds]\nidle_stop = 0\n").unwrap();
+        assert_eq!(c.feeds.idle_stop, "0");
+    }
 
     #[test]
     fn update_config_defaults_and_parses() {

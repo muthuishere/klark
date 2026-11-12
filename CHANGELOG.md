@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+- `klark feed`: a background command's new output goes to your agents, with no pane and no loop of the agent's own. `klark feed add <agent> "<instruction>" --stream "<command>"` (a command that keeps running, e.g. `tail -n0 -F app.log | grep --line-buffered ERROR`), `--follow <file>` (lines appended to a file, rotation and truncation followed) or `--poll "<command>"` (run every `--interval` seconds; only what is new is sent, `--diff lines|unified|"<script>"`). A message reaches an agent only when it is idle, at most one per `--message-gap` (default 30 s), at most 4 KiB (`klark feed batch` prints the rest), framed as untrusted data, and never over the user's unsent typing. `--filter "<command>"` judges a batch first (e.g. a `jevx` call) so a dull one costs no agent turn. Several agents share one command; `feed list`, `show`, `logs`, `leave`, `stop`, `start`, `agent add|remove`; defaults in `[feeds]` (`klark feed set`, a Feeds settings tab). Feeds survive a server restart and a reboot, and stop themselves after too many messages in an hour or 7 days of nothing to say. A Feeds entry in the global menu lists them, with stop and start. Local only: nothing goes through the hub. Not yet on Windows (needs the named pipe client). The klark skill teaches it (ADR 0015).
+- The klark skill is now a folder: a short `SKILL.md` plus `references/operations.md`, `messaging.md`, `feed.md` and `hub.md`, read only when needed. `install.sh`, `install.cmd` and `install.ps1` install it right away (`klark --install-skill`; `klark server` still keeps it current, and removes references an older release shipped). `klark --skill <name>` prints one reference.
+
 ## [0.9.5.6] - 2026-11-12
 
 ### Added

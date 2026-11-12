@@ -95,6 +95,8 @@ pub fn run_server() -> io::Result<()> {
         );
         print_ready_message(&api::socket_path(), &client_socket_path());
         server.app.run_plugin_startup_hooks();
+        // The session is restored: bring its feeds back (ADR 0015).
+        crate::feed_cmd::spawn_resume();
 
         server.run().await
     });
@@ -208,6 +210,7 @@ fn run_handoff_import_server(socket_path: &Path, token: &str) -> io::Result<()> 
         info!("handoff import server started");
         print_ready_message(&api::socket_path(), &client_socket_path());
         server.app.run_plugin_startup_hooks();
+        crate::feed_cmd::spawn_resume();
         server.run().await
     });
 

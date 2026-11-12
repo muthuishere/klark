@@ -217,6 +217,16 @@ pub enum ResponseResult {
         target: IntegrationTarget,
         details: IntegrationUninstallResult,
     },
+    FeedList {
+        feeds: Vec<super::feeds::FeedInfo>,
+    },
+    FeedStopped {
+        id: String,
+    },
+    FeedStarted {
+        id: String,
+        state: String,
+    },
     AgentManifestReload {
         manifests: Vec<AgentManifestInfo>,
     },

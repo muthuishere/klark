@@ -4,6 +4,11 @@ pub(crate) enum ConfigEdit<'a> {
     StatusIndicators(super::StatusIndicatorStyle),
     Sound(bool),
     ToastDelivery(super::ToastDelivery),
+    /// One `[feeds]` key and its value, already written as TOML.
+    FeedSetting {
+        key: &'a str,
+        value: &'a str,
+    },
 }
 
 impl ConfigEdit<'_> {
@@ -13,6 +18,7 @@ impl ConfigEdit<'_> {
             Self::StatusIndicators(_) => "status indicators",
             Self::Sound(_) => "sound setting",
             Self::ToastDelivery(_) => "toast setting",
+            Self::FeedSetting { .. } => "feed setting",
         }
     }
 
@@ -42,6 +48,9 @@ impl ConfigEdit<'_> {
                 let content = super::upsert_section_value(content, "ui.toast", "delivery", value);
                 super::remove_section_key(&content, "ui.toast", "enabled")
             }
+            Self::FeedSetting { key, value } => {
+                super::upsert_section_value(content, "feeds", key, value)
+            }
         }
     }
 }
@@ -68,15 +77,58 @@ pub(crate) fn update_file_at(
     std::fs::write(path, updated).map_err(|error| format!("failed to save {description}: {error}"))
 }
 
+impl ConfigEdit<'_> {
+    /// `apply`, refused when it would turn a valid file invalid (a `[feeds]`
+    /// written as dotted keys or an inline table, which the line editor does
+    /// not recognise): an invalid file costs every setting, not just this one.
+    fn checked_apply(&self, content: &str) -> Result<String, String> {
+        let updated = self.apply(content);
+        if matches!(self, Self::FeedSetting { .. })
+            && toml::from_str::<toml::Table>(content).is_ok()
+            && toml::from_str::<toml::Table>(&updated).is_err()
+        {
+            return Err(format!(
+                "cannot save {}: [feeds] in {} is written in a form this command does not edit; change it by hand",
+                self.description(),
+                super::config_path().display()
+            ));
+        }
+        Ok(updated)
+    }
+}
+
 pub(crate) fn write_edit(edit: ConfigEdit<'_>) -> Result<(), String> {
     update_file_at(&super::config_path(), edit.description(), |content| {
-        Ok(edit.apply(content))
+        edit.checked_apply(content)
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn feed_set(content: &str, key: &str, value: &str) -> Result<String, String> {
+        ConfigEdit::FeedSetting { key, value }.checked_apply(content)
+    }
+
+    /// `feed set` keeps comments, other sections, and valid TOML: a header
+    /// with a comment is the same section, not a second `[feeds]`.
+    #[test]
+    fn feed_setting_keeps_the_file_valid() {
+        let src = "# mine\n[feeds] # defaults\nrestore = true # keep\n\n[terminal] # shell\ndefault_shell = \"/bin/zsh\"\n";
+        let out = feed_set(src, "max_bytes", "300").unwrap();
+        let t: toml::Table = toml::from_str(&out).expect(&out);
+        assert_eq!(t["feeds"]["max_bytes"].as_integer(), Some(300), "{out}");
+        assert_eq!(t["feeds"]["restore"].as_bool(), Some(true), "{out}");
+        assert!(t["terminal"].get("max_bytes").is_none(), "{out}");
+        assert!(out.contains("# mine") && out.contains("# keep"), "{out}");
+        let out = feed_set(&out, "restore", "false").unwrap();
+        let t: toml::Table = toml::from_str(&out).expect(&out);
+        assert_eq!(t["feeds"]["restore"].as_bool(), Some(false), "{out}");
+        // A form the line editor does not know: refused, not corrupted.
+        assert!(feed_set("feeds.restore = true\n", "restore", "false").is_err());
+        assert!(feed_set("feeds = { restore = true }\n", "restore", "false").is_err());
+    }
 
     #[test]
     fn update_file_at_does_not_move_a_leading_bom_into_the_file() {

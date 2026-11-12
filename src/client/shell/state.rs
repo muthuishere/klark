@@ -26,6 +26,7 @@ pub(crate) struct ClientShellConfig {
     pub(super) agent_panel_sort: crate::config::AgentPanelSortConfig,
     pub(super) status_indicators: crate::config::StatusIndicatorStyle,
     pub(super) sound_enabled: bool,
+    pub(super) feeds: crate::config::FeedsConfig,
     pub(super) toast_delivery: crate::config::ToastDelivery,
     pub(super) toast_delay_seconds: u64,
     pub(super) toast_position: crate::config::ToastKlarkPosition,
@@ -291,6 +292,7 @@ pub(super) enum ClientShellOverlayKind {
     ContextMenu,
     GlobalMenu,
     Settings,
+    Feeds,
 }
 
 #[derive(Debug)]
@@ -388,6 +390,7 @@ pub(super) enum ClientSettingsSection {
     Sound,
     Toast,
     Integrations,
+    Feeds,
 }
 
 impl ClientSettingsSection {
@@ -397,6 +400,7 @@ impl ClientSettingsSection {
         Self::Sound,
         Self::Toast,
         Self::Integrations,
+        Self::Feeds,
     ];
 
     pub(super) fn label(self) -> &'static str {
@@ -406,6 +410,7 @@ impl ClientSettingsSection {
             Self::Sound => "sound",
             Self::Toast => "toasts",
             Self::Integrations => "integrations",
+            Self::Feeds => "feeds",
         }
     }
 }
@@ -420,6 +425,22 @@ pub(super) struct ClientSettingsOverlay {
     pub(super) integration_messages: Vec<String>,
     pub(super) loading_integrations: bool,
     pub(super) installing_integrations: bool,
+    /// `[feeds]` as last loaded, for the `feeds` tab.
+    pub(super) feeds: crate::config::FeedsConfig,
+}
+
+/// The global menu's `feeds` overlay (ADR 0015): the endpoint's feeds,
+/// fetched with `feed.list`, with stop and start on the highlighted one.
+#[derive(Debug, Default)]
+pub(super) struct ClientFeedsOverlay {
+    pub(super) feeds: Vec<crate::api::schema::FeedInfo>,
+    pub(super) selected: usize,
+    pub(super) loading: bool,
+    /// A `feed.stop` or `feed.start` is in flight.
+    pub(super) busy: bool,
+    /// The feed a first stop key asked about; a second one stops it.
+    pub(super) confirm_stop: Option<String>,
+    pub(super) message: Option<String>,
 }
 
 #[derive(Debug)]
@@ -594,6 +615,7 @@ pub(super) enum ClientShellOverlay {
     ContextMenu(ClientContextMenuOverlay),
     GlobalMenu(ClientGlobalMenuOverlay),
     Settings(ClientSettingsOverlay),
+    Feeds(ClientFeedsOverlay),
 }
 
 impl ClientShellOverlay {
@@ -612,6 +634,7 @@ impl ClientShellOverlay {
             Self::ContextMenu(_) => ClientShellOverlayKind::ContextMenu,
             Self::GlobalMenu(_) => ClientShellOverlayKind::GlobalMenu,
             Self::Settings(_) => ClientShellOverlayKind::Settings,
+            Self::Feeds(_) => ClientShellOverlayKind::Feeds,
         }
     }
 }
@@ -628,6 +651,9 @@ pub(super) enum PendingEndpointKind {
     ReloadConfig,
     IntegrationList,
     IntegrationInstall,
+    FeedList,
+    FeedStop,
+    FeedStart,
     PrepareWorktreeCreate {
         workspace_id: String,
     },

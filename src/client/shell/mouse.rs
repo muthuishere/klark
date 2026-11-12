@@ -1542,7 +1542,8 @@ impl ClientShellState {
                         Some(ClientShellOverlay::Settings(ClientSettingsOverlay {
                             section: ClientSettingsSection::Indicators
                                 | ClientSettingsSection::Sound
-                                | ClientSettingsSection::Toast,
+                                | ClientSettingsSection::Toast
+                                | ClientSettingsSection::Feeds,
                             ..
                         }))
                     );
@@ -1567,6 +1568,23 @@ impl ClientShellState {
                         outcome.repaint = true;
                     }
                 }
+            }
+            return;
+        }
+        if matches!(self.overlay, Some(ClientShellOverlay::Feeds(_))) {
+            if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+                if let Some((_, index)) = self
+                    .hits
+                    .settings_choices
+                    .iter()
+                    .find(|(rect, _)| super::contains(*rect, point))
+                    .copied()
+                {
+                    self.select_feed_row(index);
+                } else if !super::contains(self.hits.settings_popup, point) {
+                    self.overlay = None;
+                }
+                outcome.repaint = true;
             }
             return;
         }

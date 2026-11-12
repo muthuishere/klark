@@ -3,34 +3,44 @@ title: The klark skill
 description: Teach Claude Code (or any agent with skills) to drive klark.
 ---
 
-klark ships one agent skill, `skills/klark/SKILL.md`. It teaches an agent
+klark ships one agent skill, `skills/klark/`: a short `SKILL.md` that the
+agent always reads, and one file per kind of work under `references/` that it
+reads only when needed (`operations.md`, `messaging.md`, `feed.md`, `hub.md`).
+It teaches an agent
 running inside a klark pane to:
 
 - list and start agents in panes next to it, prompt them and wait;
 - see agents in other sessions and message them (`klark msg`);
+- have a background command's new output (a log, an inbox, a URL) sent to an
+  agent (`klark feed`);
 - hand back a hub link for its own pane ("share this" → `klark expose url`);
 - offer a file to the person on the hub (`klark offer`);
 - read the common errors and fix them.
 
-The same file is compiled into the binary, so it always matches your klark.
+The same files are compiled into the binary, so it always matches your klark.
 
 ## Installed automatically
 
-klark installs the skill when `klark server` starts. It writes to:
+klark installs the skill when you install klark with `install.sh`,
+`install.cmd` or `install.ps1`, and again whenever `klark server` starts (so an
+update brings the new skill). It writes the whole folder to:
 
-- `~/.claude/skills/klark/SKILL.md` (Claude Code)
-- `~/.agents/skills/klark/SKILL.md` (the shared agents folder)
+- `~/.claude/skills/klark/` (Claude Code)
+- `~/.agents/skills/klark/` (the shared agents folder)
 
 It writes only where that folder already exists. It installs when `SKILL.md` is
-missing or out of date. Each install is recorded in `versions.txt` in klark's
+or any reference is missing or out of date, and removes references
+an older release shipped. Each install is recorded in `versions.txt` in klark's
 config directory (`~/.config/klark/versions.txt`), so you can see which klark
 version installed the skill. It never replaces a `SKILL.md` that is not
 klark's own. Set `KLARK_NO_SKILL_INSTALL=1` to turn this off.
 
-To install it by hand, or to see the exact file this binary ships:
+To install it by hand, or to read what this binary ships:
 
 ```sh
-klark --skill > ~/.claude/skills/klark/SKILL.md
+klark --install-skill     # the same install, now
+klark --skill             # print SKILL.md
+klark --skill feed        # print one reference: operations, messaging, feed, hub
 ```
 
 Restart Claude Code. The skill triggers on phrases such as "share this",

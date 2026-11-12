@@ -74,6 +74,7 @@ The released hub is still the Blazor one in `hub/`. The rewrite in `hub-go/` is 
 | S-24 | Hub guest links: one pane, time-boxed, pairing code / QR, no account needed (idea from herdr-expose `share`) | ADR 0008 |
 | S-26 | Hub admin: disconnect a machine, revoke its token (idea from herdr-expose `panic`) | with S-08 |
 | S-27 | `klark expose` as an autostart service (systemd user unit, launchd agent) + `klark expose doctor` | |
+| S-30 | `klark feed add <agent> "<instruction>" --stream|--follow|--poll …`: only the new output of a background command or file goes to the subscribed agents, when they are idle; survives restarts; stops itself; `--diff`, `--filter`; settings tab, menu overlay, socket API `feed.list|stop|start`; in `skills/klark` | ADR 0015 (accepted). Built M1–M6: unit tests, `tests/feed_sessions.rs` (headless server, fake agent; I16 runs every skill example), Windows target clippy clean. Left: M-1 (one manual run with a real Claude Code and Codex agent); Windows delivery waits for S-16 (`klark feed` says "not supported yet"), Job Object test compiled, not run on Windows |
 | S-21 | Hub: notify (browser notification or sound) when a visible pane turns `blocked` | part of S-19 |
 | S-19 | Pane search, filters and "blocked first" notifications (sound or push) in the hub | |
 

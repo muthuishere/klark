@@ -1464,3 +1464,72 @@ fn read_choices_cover_every_api_value() {
     crate::cli::projection::assert_choices_cover_api_enum(READ_SOURCES);
     crate::cli::projection::assert_choices_cover_api_enum(READ_FORMATS);
 }
+
+/// A1 (ADR 0015): `feed.list | stop | start` keep their wire shape, and the
+/// hub link never forwards them (they are not on its allow-list).
+#[test]
+fn feed_methods_round_trip_and_are_not_callable_through_the_hub_link() {
+    let request = Request {
+        id: "req_feeds".into(),
+        method: Method::FeedList(EmptyParams::default()),
+    };
+    let json = serde_json::to_value(&request).unwrap();
+    assert_eq!(json["method"], "feed.list");
+    assert_eq!(serde_json::from_value::<Request>(json).unwrap(), request);
+    for (method, name) in [
+        (
+            Method::FeedStop(FeedTarget { id: "f1".into() }),
+            "feed.stop",
+        ),
+        (
+            Method::FeedStart(FeedTarget { id: "f1".into() }),
+            "feed.start",
+        ),
+    ] {
+        let request = Request {
+            id: "req_feed".into(),
+            method,
+        };
+        let json = serde_json::to_value(&request).unwrap();
+        assert_eq!(json["method"], name);
+        assert_eq!(json["params"]["id"], "f1");
+        assert_eq!(serde_json::from_value::<Request>(json).unwrap(), request);
+    }
+
+    let response = SuccessResponse {
+        id: "req_feeds".into(),
+        result: ResponseResult::FeedList {
+            feeds: vec![FeedInfo {
+                id: "app-errors".into(),
+                label: "app".into(),
+                kind: "stream".into(),
+                agents: vec!["default/claude".into()],
+                state: "running".into(),
+                running: true,
+                last_delivery: Some(1_700_000_000),
+            }],
+        },
+    };
+    let json = serde_json::to_value(&response).unwrap();
+    assert_eq!(json["result"]["type"], "feed_list");
+    assert_eq!(json["result"]["feeds"][0]["last_delivery"], 1_700_000_000);
+    assert_eq!(
+        serde_json::from_value::<SuccessResponse>(json).unwrap(),
+        response
+    );
+    let json = serde_json::to_value(ResponseResult::FeedStarted {
+        id: "f1".into(),
+        state: "running".into(),
+    })
+    .unwrap();
+    assert_eq!(json["type"], "feed_started");
+    let json = serde_json::to_value(ResponseResult::FeedStopped { id: "f1".into() }).unwrap();
+    assert_eq!(json["type"], "feed_stopped");
+
+    for name in ["feed.list", "feed.stop", "feed.start"] {
+        assert!(
+            !klark_link::protocol::call_allowed(name),
+            "{name} must not be callable through the hub link"
+        );
+    }
+}

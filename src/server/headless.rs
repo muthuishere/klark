@@ -3035,6 +3035,15 @@ impl HeadlessServer {
             return changed;
         }
         let alt_screen_read_spec = self.alt_screen_read_spec(&msg.request);
+        if matches!(
+            &msg.request.method,
+            api::schema::Method::FeedList(_)
+                | api::schema::Method::FeedStop(_)
+                | api::schema::Method::FeedStart(_)
+        ) {
+            crate::app::App::handle_deferred_feed_api_request(msg.request, msg.respond_to);
+            return changed;
+        }
         if matches!(&msg.request.method, api::schema::Method::AgentPrompt(_)) {
             let deferred_changed = self
                 .app

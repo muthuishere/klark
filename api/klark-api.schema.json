@@ -2151,6 +2151,17 @@
           ],
           "type": "object"
         },
+        "FeedTarget": {
+          "properties": {
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "type": "object"
+        },
         "IntegrationInstallParams": {
           "properties": {
             "target": {
@@ -6140,6 +6151,54 @@
         {
           "properties": {
             "method": {
+              "const": "feed.list",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/EmptyParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "feed.stop",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/FeedTarget"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "feed.start",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/FeedTarget"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
               "const": "plugin.link",
               "type": "string"
             },
@@ -7484,6 +7543,52 @@
             "layout_updated"
           ],
           "type": "string"
+        },
+        "FeedInfo": {
+          "description": "One feed as `feed.list` reports it (ADR 0015). Times are unix seconds.",
+          "properties": {
+            "agents": {
+              "description": "One line per subscriber: `session/agent`, with its own state.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "description": "`stream`, `follow` or `poll`.",
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            },
+            "last_delivery": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "running": {
+              "type": "boolean"
+            },
+            "state": {
+              "description": "What `klark feed list` shows under STATE.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "label",
+            "kind",
+            "agents",
+            "state",
+            "running"
+          ],
+          "type": "object"
         },
         "InstalledPluginInfo": {
           "properties": {
@@ -10072,6 +10177,61 @@
                 "type",
                 "target",
                 "details"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "feeds": {
+                  "items": {
+                    "$ref": "#/schemas/success_response/$defs/FeedInfo"
+                  },
+                  "type": "array"
+                },
+                "type": {
+                  "const": "feed_list",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "feeds"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "type": {
+                  "const": "feed_stopped",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "id"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "state": {
+                  "type": "string"
+                },
+                "type": {
+                  "const": "feed_started",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "id",
+                "state"
               ],
               "type": "object"
             },

@@ -81,6 +81,8 @@ fi
 
 say "Installed: $dest/klark"
 "$dest/klark" --version || true
+# The agent skill for Claude Code (~/.claude) and ~/.agents, where those exist.
+"$dest/klark" --install-skill 2>/dev/null && say "Installed the klark agent skill (skills/klark)" || true
 
 case ":$PATH:" in
   *":$dest:"*) ;;

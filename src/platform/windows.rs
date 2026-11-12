@@ -15,8 +15,10 @@ use std::{
 
 mod clipboard_image;
 mod config_backup;
+mod feed_job;
 mod notifications;
 mod power;
+pub(crate) use feed_job::{attach_feed_job, close_feed_job, prepare_feed_command};
 pub(crate) use notifications::{
     foreground_desktop_notification_host, maybe_activate_desktop_notification,
     show_actionable_desktop_notification, show_desktop_notification,

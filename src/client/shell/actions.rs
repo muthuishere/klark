@@ -834,6 +834,11 @@ impl ClientShellState {
             | PendingEndpointKind::IntegrationInstall) => {
                 return self.handle_settings_endpoint_result(kind, result);
             }
+            kind @ (PendingEndpointKind::FeedList
+            | PendingEndpointKind::FeedStop
+            | PendingEndpointKind::FeedStart) => {
+                return self.handle_feeds_endpoint_result(kind, result);
+            }
             kind => {
                 let mut outcome = ClientShellInput::default();
                 let repaint = self.handle_worktree_endpoint_result(kind, result, &mut outcome);

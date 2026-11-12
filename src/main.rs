@@ -25,20 +25,23 @@ mod copy_mode;
 mod detect;
 mod events;
 mod expose_cmd;
+mod feed;
+mod feed_cmd;
+mod feed_worker;
 mod hub_cmd;
 mod msg_cmd;
 mod offer_cmd;
 mod transcript_cmd;
 use ghostty_vt as ghostty;
+mod fda_notice;
 mod handoff_runtime;
+mod herdr_session;
 mod input;
 mod integration;
 mod ipc;
 mod kitty_graphics;
 mod layout;
 mod logging;
-mod fda_notice;
-mod herdr_session;
 mod metadata_tokens;
 mod noninteractive_process;
 mod pane;
@@ -457,6 +460,41 @@ pane_history = false
 // Bundled at build time so the printed skill always matches this binary's release.
 const SKILL: &str = include_str!("../skills/klark/SKILL.md");
 
+/// Every file of the skill, by its path inside the skill folder. SKILL.md is
+/// the entry point; each reference covers one kind of work.
+const SKILL_FILES: &[(&str, &str)] = &[
+    ("SKILL.md", SKILL),
+    (
+        "references/operations.md",
+        include_str!("../skills/klark/references/operations.md"),
+    ),
+    (
+        "references/messaging.md",
+        include_str!("../skills/klark/references/messaging.md"),
+    ),
+    (
+        "references/feed.md",
+        include_str!("../skills/klark/references/feed.md"),
+    ),
+    (
+        "references/hub.md",
+        include_str!("../skills/klark/references/hub.md"),
+    ),
+];
+
+/// The text `klark --skill [name]` prints: SKILL.md, or one reference by name
+/// (`feed`, `references/feed.md`).
+fn skill_text(name: Option<&str>) -> Option<&'static str> {
+    let Some(name) = name else {
+        return Some(SKILL);
+    };
+    let name = name.trim_end_matches(".md");
+    SKILL_FILES.iter().find_map(|(path, text)| {
+        let stem = path.trim_end_matches(".md");
+        (stem == name || stem.strip_prefix("references/") == Some(name)).then_some(*text)
+    })
+}
+
 /// Read `key=value` lines from klark's versions file. Missing file means empty.
 fn read_versions(path: &std::path::Path) -> std::collections::BTreeMap<String, String> {
     let Ok(text) = std::fs::read_to_string(path) else {
@@ -495,7 +533,10 @@ fn install_skill() {
     if std::env::var_os("KLARK_NO_SKILL_INSTALL").is_some() {
         return;
     }
-    let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) else {
+    let Some(home) = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(std::path::PathBuf::from)
+    else {
         return;
     };
     install_skill_in(
@@ -511,9 +552,7 @@ fn install_skill_in(home: &std::path::Path, versions_path: &std::path::Path, ver
     // Where the last run left off. Upgrade steps (config migrations) go here, keyed
     // on `previous` being older than `version`; none exist yet.
     let previous = versions.get("klark").cloned();
-    let _direction = previous
-        .as_deref()
-        .map(|p| compare_versions(p, version));
+    let _direction = previous.as_deref().map(|p| compare_versions(p, version));
     for (key, root) in [
         ("skill.claude", home.join(".claude")),
         ("skill.agents", home.join(".agents")),
@@ -529,15 +568,31 @@ fn install_skill_in(home: &std::path::Path, versions_path: &std::path::Path, ver
                 continue;
             }
         }
-        let current = existing.as_deref() == Some(SKILL)
-            && versions
-                .get(key)
-                .is_some_and(|recorded| compare_versions(recorded, version).is_eq());
+        let current = SKILL_FILES.iter().all(|(path, text)| {
+            std::fs::read_to_string(dir.join(path)).ok().as_deref() == Some(*text)
+        }) && versions
+            .get(key)
+            .is_some_and(|recorded| compare_versions(recorded, version).is_eq());
         if current {
             continue;
         }
-        let _ = std::fs::create_dir_all(&dir);
-        if std::fs::write(&file, SKILL).is_ok() {
+        // A reference this release no longer ships would be read as current.
+        if let Ok(entries) = std::fs::read_dir(dir.join("references")) {
+            for e in entries.flatten() {
+                let rel = format!("references/{}", e.file_name().to_string_lossy());
+                if !SKILL_FILES.iter().any(|(path, _)| *path == rel) {
+                    let _ = std::fs::remove_file(e.path());
+                }
+            }
+        }
+        let written = SKILL_FILES.iter().all(|(path, text)| {
+            let target = dir.join(path);
+            target
+                .parent()
+                .is_some_and(|p| std::fs::create_dir_all(p).is_ok())
+                && std::fs::write(&target, text).is_ok()
+        });
+        if written {
             versions.insert(key.to_string(), version.to_string());
         }
     }
@@ -646,7 +701,13 @@ fn main() -> io::Result<()> {
         && !args.iter().any(|a| {
             matches!(
                 a.as_str(),
-                "--help" | "-h" | "--version" | "-V" | "--default-config" | "--skill"
+                "--help"
+                    | "-h"
+                    | "--version"
+                    | "-V"
+                    | "--default-config"
+                    | "--skill"
+                    | "--install-skill"
             )
         })
     {
@@ -688,6 +749,10 @@ fn main() -> io::Result<()> {
 
     if args.get(1).map(|s| s.as_str()) == Some("msg") {
         msg_cmd::run(&args[2..]);
+    }
+
+    if args.get(1).map(|s| s.as_str()) == Some("feed") {
+        feed_cmd::run(&args[2..]);
     }
 
     if args.get(1).map(|s| s.as_str()) == Some("offer") {
@@ -744,6 +809,7 @@ fn main() -> io::Result<()> {
             "       klark hub <connect|ls|use|rm|status>   (connect this machine to a klarkhub)"
         );
         println!("       klark msg <whoami|ls|send|reply|log|name|login|status> ...");
+        println!("       klark feed <add|list|show|set|stop|start|leave|agent|batch|logs> ...");
         println!("       klark channel set <stable|preview>");
         println!("       klark machine <subcommand> ...");
         println!("       klark server stop");
@@ -839,7 +905,9 @@ fn main() -> io::Result<()> {
         println!("                      Keybindings for --remote app attach (default: local)");
         println!("  --handoff           Opt into live handoff for update or remote attach");
         println!("  --default-config    Print default configuration and exit");
-        println!("  --skill             Print the agent skill file and exit");
+        println!("  --skill [name]      Print the agent skill (or one reference: operations,");
+        println!("                      messaging, feed, hub) and exit");
+        println!("  --install-skill     Install the agent skill for Claude Code and ~/.agents");
         println!("  --version, -V       Print version and exit");
         println!("  --help, -h          Show this help");
         println!();
@@ -864,9 +932,25 @@ fn main() -> io::Result<()> {
         return Ok(());
     }
 
-    if args.iter().any(|a| a == "--skill") {
+    if let Some(i) = args.iter().position(|a| a == "--skill") {
         platform::begin_cli_output();
-        print!("{SKILL}");
+        let name = args.get(i + 1).map(String::as_str);
+        match skill_text(name) {
+            Some(text) => print!("{text}"),
+            None => {
+                eprintln!(
+                    "error: no skill reference {:?} (have: operations, messaging, feed, hub)",
+                    name.unwrap_or_default()
+                );
+                std::process::exit(2);
+            }
+        }
+        return Ok(());
+    }
+
+    if args.iter().any(|a| a == "--install-skill") {
+        platform::begin_cli_output();
+        install_skill();
         return Ok(());
     }
 
@@ -880,6 +964,7 @@ fn main() -> io::Result<()> {
         "-V",
         "--default-config",
         "--skill",
+        "--install-skill",
         "--help",
         "-h",
     ];
@@ -1029,10 +1114,8 @@ mod tests {
         const V: &str = "0.9.5+4";
 
         fn scratch(name: &str) -> PathBuf {
-            let dir = std::env::temp_dir().join(format!(
-                "klark-skill-test-{}-{name}",
-                std::process::id()
-            ));
+            let dir = std::env::temp_dir()
+                .join(format!("klark-skill-test-{}-{name}", std::process::id()));
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(&dir).unwrap();
             dir
@@ -1080,8 +1163,14 @@ mod tests {
 
             install_skill_in(&home, &versions, V);
 
-            assert_eq!(std::fs::read_to_string(skill_file(&home, ".claude")).unwrap(), SKILL);
-            assert_eq!(std::fs::read_to_string(skill_file(&home, ".agents")).unwrap(), SKILL);
+            assert_eq!(
+                std::fs::read_to_string(skill_file(&home, ".claude")).unwrap(),
+                SKILL
+            );
+            assert_eq!(
+                std::fs::read_to_string(skill_file(&home, ".agents")).unwrap(),
+                SKILL
+            );
             let recorded = read_versions(&versions);
             assert_eq!(recorded.get("klark").map(String::as_str), Some(V));
             assert_eq!(recorded.get("skill.claude").map(String::as_str), Some(V));
@@ -1126,7 +1215,10 @@ mod tests {
             install_skill_in(&home, &versions, V);
 
             assert_eq!(std::fs::read_to_string(&file).unwrap(), SKILL);
-            assert_eq!(read_versions(&versions).get("klark").map(String::as_str), Some(V));
+            assert_eq!(
+                read_versions(&versions).get("klark").map(String::as_str),
+                Some(V)
+            );
         }
 
         #[test]
@@ -1144,6 +1236,43 @@ mod tests {
         }
 
         #[test]
+        fn installs_every_reference_and_removes_stale_ones() {
+            let home = scratch("refs");
+            std::fs::create_dir_all(home.join(".claude")).unwrap();
+            let versions = home.join("config/versions.txt");
+            install_skill_in(&home, &versions, V);
+            let dir = home.join(".claude/skills/klark");
+            for (path, text) in SKILL_FILES {
+                assert_eq!(
+                    std::fs::read_to_string(dir.join(path)).unwrap(),
+                    *text,
+                    "{path}"
+                );
+            }
+            // A reference from an older release goes; a missing one comes back.
+            std::fs::write(dir.join("references/old.md"), "gone").unwrap();
+            std::fs::remove_file(dir.join("references/feed.md")).unwrap();
+            install_skill_in(&home, &versions, V);
+            assert!(!dir.join("references/old.md").exists());
+            assert!(dir.join("references/feed.md").exists());
+        }
+
+        #[test]
+        fn skill_text_finds_references_by_name() {
+            assert_eq!(skill_text(None), Some(SKILL));
+            assert!(skill_text(Some("feed")).unwrap().contains("klark feed add"));
+            assert_eq!(
+                skill_text(Some("references/hub.md")),
+                skill_text(Some("hub"))
+            );
+            assert_eq!(skill_text(Some("nope")), None);
+            // SKILL.md names every reference it ships.
+            for (path, _) in &SKILL_FILES[1..] {
+                assert!(SKILL.contains(path), "{path}");
+            }
+        }
+
+        #[test]
         fn installs_when_skill_is_missing_even_with_a_record() {
             let home = scratch("missing");
             std::fs::create_dir_all(home.join(".claude")).unwrap();
@@ -1153,7 +1282,10 @@ mod tests {
 
             install_skill_in(&home, &versions, V);
 
-            assert_eq!(std::fs::read_to_string(skill_file(&home, ".claude")).unwrap(), SKILL);
+            assert_eq!(
+                std::fs::read_to_string(skill_file(&home, ".claude")).unwrap(),
+                SKILL
+            );
         }
     }
 }

@@ -7,6 +7,7 @@ use super::{model::LoadedConfig, Config, CONFIG_PATH_ENV_VAR};
 const KNOWN_TOP_LEVEL_CONFIG_KEYS: &[&str] = &[
     "advanced",
     "experimental",
+    "feeds",
     "keys",
     "onboarding",
     "remote",
@@ -377,6 +378,14 @@ fn load_live_config_from_str(content: &str) -> Result<LoadedConfig, Vec<String>>
         &mut invalid_sections,
         |section| config.remote = section,
     );
+    load_live_section(
+        table,
+        "feeds",
+        "feeds config",
+        &mut diagnostics,
+        &mut invalid_sections,
+        |section| config.feeds = section,
+    );
 
     diagnostics.extend(config.theme.diagnostics());
 
@@ -689,6 +698,15 @@ fn is_top_level_keys_assignment(trimmed: &str) -> bool {
     trimmed.starts_with("keys ") || trimmed.starts_with("keys=") || trimmed.starts_with("keys.")
 }
 
+/// A `[section]` line without a trailing `# comment`.
+fn header_text(trimmed: &str) -> &str {
+    if trimmed.starts_with('[') {
+        trimmed.split('#').next().unwrap_or(trimmed).trim_end()
+    } else {
+        trimmed
+    }
+}
+
 fn upsert_section_raw(content: &str, section: &str, key: &str, value: &str) -> String {
     let header = format!("[{section}]");
     let assignment = format!("{key} = {value}");
@@ -702,14 +720,14 @@ fn upsert_section_raw(content: &str, section: &str, key: &str, value: &str) -> S
         let line = lines[i];
         let trimmed = line.trim();
 
-        if trimmed == header {
+        if header_text(trimmed) == header {
             found_section = true;
             result.push(line.to_string());
             i += 1;
 
             while i < lines.len() {
                 let current = lines[i];
-                let current_trimmed = current.trim();
+                let current_trimmed = header_text(current.trim());
                 if current_trimmed.starts_with('[') && current_trimmed.ends_with(']') {
                     if !inserted {
                         result.push(assignment.clone());

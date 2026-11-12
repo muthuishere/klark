@@ -76,6 +76,8 @@ if errorlevel 1 goto :copyfail
 :installed
 echo Installed: %DEST%\klark.exe
 "%DEST%\klark.exe" --version
+rem The agent skill for Claude Code (%USERPROFILE%\.claude) and %USERPROFILE%\.agents, where those exist.
+"%DEST%\klark.exe" --install-skill >nul 2>&1 && echo Installed the klark agent skill ^(skills\klark^)
 
 rem Add the folder to the user PATH (not the machine PATH) unless it is there already.
 set "UPATH="

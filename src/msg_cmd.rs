@@ -835,15 +835,49 @@ pub fn hub_error(to: &str, raw: &str) -> String {
 /// Prompt a local agent; returns its pane id. Records the sender for reply and
 /// logs the receipt.
 fn deliver(session: &str, agent: &str, from: &str, text: &str) -> Result<String, String> {
-    let socket = session_socket(session);
     // Someone mid-edit in that agent's input: wait (up to a minute) rather
     // than mix this message into their half-written text.
-    let typing_deadline = std::time::Instant::now() + Duration::from_secs(60);
+    let result = prompt_agent(
+        session,
+        agent,
+        &format_prompt(from, text),
+        Duration::from_secs(60),
+    );
+    let pane = result
+        .as_ref()
+        .map(|(_, pane)| pane.clone())
+        .unwrap_or_else(|_| agent.to_string());
+    let result = result.map(|(r, _)| r);
+    let to = received_address(&my_machine(), session, agent, result.as_ref().ok());
+    if result.is_ok() {
+        if let Err(e) = record_sender(&data_dir(), session, &pane, from) {
+            eprintln!("klark msg: could not record sender: {e}");
+        }
+    }
+    let err = result.as_ref().err().cloned();
+    log("received", from, &to, text, err.as_deref());
+    result.map(|_| pane)
+}
+
+/// Prompt a local agent with `prompt` exactly as given, without losing the
+/// person's draft: `agent.prompt` lifts an unsent draft out, and it is typed
+/// back afterwards. While someone is mid-edit the server refuses with
+/// `agent_user_typing`; that is retried for up to `typing_wait`, then
+/// returned. Returns the `agent.prompt` result and the agent's pane id.
+/// Used by `klark msg` (which adds its own frame and logging) and `klark feed`.
+pub(crate) fn prompt_agent(
+    session: &str,
+    agent: &str,
+    prompt: &str,
+    typing_wait: Duration,
+) -> Result<(Value, String), String> {
+    let socket = session_socket(session);
+    let typing_deadline = std::time::Instant::now() + typing_wait;
     let result = loop {
         let r = call(
             &socket,
             "agent.prompt",
-            json!({"target": agent, "text": format_prompt(from, text)}),
+            json!({"target": agent, "text": prompt}),
         );
         match &r {
             Err(e)
@@ -884,15 +918,7 @@ fn deliver(session: &str, agent: &str, from: &str, text: &str) -> Result<String,
             );
         }
     }
-    let to = received_address(&my_machine(), session, agent, result.as_ref().ok());
-    if result.is_ok() {
-        if let Err(e) = record_sender(&data_dir(), session, &pane, from) {
-            eprintln!("klark msg: could not record sender: {e}");
-        }
-    }
-    let err = result.as_ref().err().cloned();
-    log("received", from, &to, text, err.as_deref());
-    result.map(|_| pane)
+    result.map(|r| (r, pane))
 }
 
 /// A prompt counts as sent once the agent starts working. Some agents swallow

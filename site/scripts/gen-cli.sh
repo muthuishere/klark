@@ -15,6 +15,7 @@ cmds=(
   "klark --help|--help"
   "klark hub|hub --help"
   "klark msg|msg --help"
+  "klark feed|feed --help"
   "klark expose|expose --help"
   "klark offer|offer --help"
   "klark transcript|transcript --help"
@@ -50,7 +51,8 @@ cmds=(
     echo
     echo '```text'
     # shellcheck disable=SC2086
-    "$klark" $args 2>&1 | sed -e 's/[[:space:]]*$//' || true
+    # The home directory is the builder's own: print it as ~.
+    "$klark" $args 2>&1 | sed -e 's/[[:space:]]*$//' -e "s|$HOME/|~/|g" || true
     echo '```'
   done
 } > "$out"

@@ -197,6 +197,9 @@ pub(super) fn render_settings_overlay(
         ClientSettingsSection::Integrations => {
             render_integrations(buffer, content, settings, palette);
         }
+        ClientSettingsSection::Feeds => {
+            render_feed_settings(buffer, content, settings, palette, &mut choice_hits);
+        }
     }
 
     let installable = settings
@@ -213,6 +216,8 @@ pub(super) fn render_settings_overlay(
             primary,
             if settings.section == ClientSettingsSection::Integrations {
                 " ↵ install "
+            } else if settings.section == ClientSettingsSection::Feeds {
+                " ↵ change "
             } else {
                 " ↵ apply "
             },
@@ -291,6 +296,53 @@ fn render_choice_section(
         }
         let rect = Rect::new(area.x, y, area.width, 1);
         draw_choice(buffer, rect, choice, index == selected, false, palette);
+        hits.push((rect, index));
+    }
+}
+
+/// The `feeds` tab: one row per `[feeds]` default, Enter cycles its value.
+fn render_feed_settings(
+    buffer: &mut Buffer,
+    area: Rect,
+    settings: &ClientSettingsOverlay,
+    palette: &Palette,
+    hits: &mut Vec<(Rect, usize)>,
+) {
+    put_text(
+        buffer,
+        area.x,
+        area.y,
+        area.width,
+        "feed defaults",
+        Style::default()
+            .fg(palette.text)
+            .bg(palette.panel_bg)
+            .add_modifier(Modifier::BOLD),
+    );
+    put_text(
+        buffer,
+        area.x,
+        area.y + 1,
+        area.width,
+        "for new klark feed add; exact values via klark feed set",
+        Style::default().fg(palette.overlay1).bg(palette.panel_bg),
+    );
+    let rows = super::super::settings::FEED_SETTING_ROWS;
+    for (index, (_, label, _)) in rows.iter().enumerate() {
+        let y = area.y + 3 + index as u16;
+        if y >= area.bottom() {
+            break;
+        }
+        let rect = Rect::new(area.x, y, area.width, 1);
+        let value = super::super::settings::feed_setting_display(&settings.feeds, index);
+        draw_choice(
+            buffer,
+            rect,
+            &format!("{label:<18} {value}"),
+            index == settings.selected,
+            false,
+            palette,
+        );
         hits.push((rect, index));
     }
 }

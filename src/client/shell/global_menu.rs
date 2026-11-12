@@ -4,6 +4,7 @@ use super::*;
 pub(super) enum ClientGlobalMenuAction {
     Binding(crate::input::KeybindAction),
     WhatsNew,
+    Feeds,
 }
 
 pub(super) fn global_menu_attention(snapshot: &ClientShellSnapshot) -> bool {
@@ -27,6 +28,7 @@ pub(super) fn global_menu_items(
             "settings",
             ClientGlobalMenuAction::Binding(crate::input::KeybindAction::Settings),
         ),
+        ("feeds", ClientGlobalMenuAction::Feeds),
         (
             "theme",
             ClientGlobalMenuAction::Binding(crate::input::KeybindAction::Settings),
@@ -108,6 +110,7 @@ impl ClientShellState {
                 self.record_binding(crate::input::KeybindMatch::Action(binding), outcome)
             }
             ClientGlobalMenuAction::WhatsNew => self.open_release_notes(),
+            ClientGlobalMenuAction::Feeds => self.open_feeds_overlay(outcome),
         }
         outcome.repaint = true;
     }

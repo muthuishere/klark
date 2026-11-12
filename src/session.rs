@@ -144,6 +144,7 @@ const COMMAND_WORDS: &[&str] = &[
     "integration",
     "agent",
     "msg",
+    "feed",
     "transcript",
     "help",
 ];
@@ -896,7 +897,10 @@ mod tests {
 
         let cleaned = configure_from_args(&["klark".to_string(), "--session".to_string()]).unwrap();
 
-        assert_eq!(std::env::var(SESSION_ENV_VAR).as_deref(), Ok(folder.as_str()));
+        assert_eq!(
+            std::env::var(SESSION_ENV_VAR).as_deref(),
+            Ok(folder.as_str())
+        );
         assert!(explicit_session_requested());
         assert_eq!(cleaned, vec!["klark"]);
         std::env::remove_var(SESSION_ENV_VAR);
@@ -917,7 +921,10 @@ mod tests {
 
             let cleaned = configure_from_args(&args).unwrap();
 
-            assert_eq!(std::env::var(SESSION_ENV_VAR).as_deref(), Ok(folder.as_str()));
+            assert_eq!(
+                std::env::var(SESSION_ENV_VAR).as_deref(),
+                Ok(folder.as_str())
+            );
             assert_eq!(cleaned[1..], args[2..]);
         }
         std::env::remove_var(SESSION_ENV_VAR);

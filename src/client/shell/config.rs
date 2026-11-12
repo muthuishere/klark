@@ -126,6 +126,7 @@ impl ClientShellConfig {
             agent_panel_sort: config.ui.agent_panel_sort,
             status_indicators: config.ui.status_indicators,
             sound_enabled: config.ui.sound.enabled,
+            feeds: config.feeds.clone(),
             toast_delivery: config.ui.toast.delivery,
             toast_delay_seconds: config.ui.toast.delay_seconds,
             toast_position: config.ui.toast.klark.position,
@@ -373,6 +374,9 @@ impl ClientShellConfig {
             self.theme_runtime = crate::app::client_theme_runtime_from_config(config);
             self.theme_name = self.theme_runtime.manual_name.clone();
             self.palette = crate::app::client_palette_from_config(config);
+        }
+        if !invalid_section("feeds") {
+            self.feeds = config.feeds.clone();
         }
         if !invalid_section("experimental") {
             self.switch_ascii_input_source_in_prefix =

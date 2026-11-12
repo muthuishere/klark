@@ -2199,6 +2199,47 @@ fn pane_shell_command_builder_for_target(
     Ok(cmd)
 }
 
+/// `command` run by the shell a new pane would get, with a new pane's
+/// environment (minus the pane identity): `[terminal] default_shell` and
+/// `shell_mode`, the login argv0 convention included. A resumed feed runs its
+/// command this way (ADR 0015), so it sees what an agent in a fresh pane sees.
+#[cfg(unix)]
+pub(crate) fn pane_shell_run_command(
+    shell_config: PaneShellConfig<'_>,
+    command: &str,
+) -> io::Result<std::process::Command> {
+    use std::os::unix::process::CommandExt;
+    let shell = pane_shell(shell_config.default_shell);
+    let mut cmd = if shell_mode_uses_login_shell(shell_config.mode, ShellLaunchTarget::current()) {
+        let resolved = resolve_shell_for_login_mode(&shell)?;
+        let base = resolved.rsplit('/').next().unwrap_or(&resolved).to_string();
+        let mut cmd = std::process::Command::new(&resolved);
+        cmd.arg0(format!("-{base}"));
+        // With `-c`, bash ignores the login argv0; the flag it honours.
+        // csh and tcsh refuse `-l` beside other flags and honour the argv0.
+        if !matches!(base.as_str(), "csh" | "tcsh") {
+            cmd.args(windows_login_shell_args(&resolved));
+        }
+        cmd
+    } else {
+        std::process::Command::new(&shell)
+    };
+    cmd.arg("-c").arg(command);
+    // The environment exactly as a pane's shell gets it.
+    let mut env = CommandBuilder::new(&shell);
+    apply_pane_terminal_env(&mut env);
+    apply_pane_launch_env(&mut env, &PaneLaunchEnv::default().without_pane_identity());
+    // No pane at all: ids inherited from a pane the server was started in
+    // would name someone else's workspace and tab.
+    env.env_remove(crate::integration::KLARK_WORKSPACE_ID_ENV_VAR);
+    env.env_remove(crate::integration::KLARK_TAB_ID_ENV_VAR);
+    cmd.env_clear();
+    for (key, value) in env.iter_full_env_as_str() {
+        cmd.env(key, value);
+    }
+    Ok(cmd)
+}
+
 fn pane_shell_command_builder(shell_config: PaneShellConfig<'_>) -> io::Result<CommandBuilder> {
     pane_shell_command_builder_for_target(shell_config, ShellLaunchTarget::current())
 }
@@ -5037,6 +5078,29 @@ mod tests {
                 windows_login_shell_args(shell),
                 &["-l"],
                 "shell {shell:?} should get the login flag"
+            );
+        }
+    }
+
+    /// A resumed feed's command through a login shell: csh and tcsh refuse
+    /// `-l` next to `-c` ("Unknown option"), so they rely on the argv0.
+    #[cfg(unix)]
+    #[test]
+    fn pane_shell_run_command_runs_in_every_login_shell() {
+        for shell in ["/bin/sh", "/bin/bash", "/bin/zsh", "/bin/csh", "/bin/tcsh"] {
+            if !Path::new(shell).exists() {
+                continue;
+            }
+            let config = PaneShellConfig::new(shell, crate::config::ShellModeConfig::Login);
+            let out = pane_shell_run_command(config, "echo \"ran 'q'\"")
+                .unwrap()
+                .output()
+                .unwrap();
+            let text = String::from_utf8_lossy(&out.stdout);
+            assert!(
+                out.status.success() && text.contains("ran 'q'"),
+                "{shell}: {text} {}",
+                String::from_utf8_lossy(&out.stderr)
             );
         }
     }

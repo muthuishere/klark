@@ -15,14 +15,15 @@ so neither is listed here. A command group run without a subcommand prints its u
 klark — terminal workspace manager for AI coding agents
 
 Usage: klark [options]
-       klark --session <name> [options]
+       klark --session [name] [options]
        klark --machine <label-or-id> <command>
        klark --remote <ssh-target> [--session <name>]
        klark session attach <name>
        klark completion zsh
        klark expose --hub <url> --token <token>
-       klark hub <up|connect|status|down|logs>   (a local hub in Docker)
+       klark hub <connect|ls|use|rm|status>   (connect this machine to a klarkhub)
        klark msg <whoami|ls|send|reply|log|name|login|status> ...
+       klark feed <add|list|show|set|stop|start|leave|agent|batch|logs> ...
        klark channel set <stable|preview>
        klark machine <subcommand> ...
        klark server stop
@@ -64,7 +65,7 @@ Advanced commands:
   klark server                     Run as headless server
 
 Options:
-  --session <name>    Use or create a named persistent session
+  --session [name]    Use or create a named persistent session; no name = named after this folder
   -s [name|folder]    Create or attach; no value = named after this folder, a folder = named after it and started there
   --machine <label-or-id>  Run an API command on a saved SSH machine
   --remote <target>   Attach through SSH to a remote Klark server
@@ -72,14 +73,16 @@ Options:
                       Keybindings for --remote app attach (default: local)
   --handoff           Opt into live handoff for update or remote attach
   --default-config    Print default configuration and exit
-  --skill             Print the agent skill file and exit
+  --skill [name]      Print the agent skill (or one reference: operations,
+                      messaging, feed, hub) and exit
+  --install-skill     Install the agent skill for Claude Code and ~/.agents
   --version, -V       Print version and exit
   --help, -h          Show this help
 
-Config: /Users/muthuishere/.config/klark-dev/config.toml
-Logs:   /Users/muthuishere/.config/klark-dev/klark.log (plus klark-client.log, klark-server.log)
+Config: ~/.config/klark-dev/config.toml
+Logs:   ~/.config/klark-dev/klark.log (plus klark-client.log, klark-server.log)
 Env:    KLARK_CONFIG_PATH overrides config file path
-Home:   https://muthuishere.github.io/klark/
+Home:   https://github.com/muthuishere/klark
 
 Are you an AI? Use these resources ONLY IF your task specifically asks you to:
   Control Klark panes, agents, or workspaces:
@@ -92,12 +95,14 @@ Are you an AI? Use these resources ONLY IF your task specifically asks you to:
 
 ```text
 usage: klark hub connect [--url http://host[:port]] [--as <name>] [<name>] [--agents a,b]
-                         [--token <machine-token> | --token-stdin] [--no-browser]
+                         [--token <machine-token> | --token-stdin] [--no-browser] [--foreground]
+       klark hub stop                   ends the connection (alias: disconnect)
        klark hub ls | use <name> | rm <name> | status [<name>]
        connect --url adds (or refreshes) a hub: approve this machine in the browser and the hub
        issues its token. With a <name>, connects to that saved hub; with nothing, the default.
        Saved in <config dir>/hubs.json (0600). --token / --token-stdin / KLARK_HUB_TOKEN skip the
-       browser (scripts).
+       browser (scripts). The connection keeps running in the background (log: <config dir>/hub-<name>.log);
+       --foreground keeps it in this terminal. `stop` ends it.
 ```
 
 ## `klark msg`
@@ -115,9 +120,12 @@ Addresses: <agent> | <session>/<agent> | <machine>/<session>/<agent>
 
 commands:
   whoami [--json]                        this agent's own address
-  ls [--local] [--json]                  agents in every running session (+ the hub's, unless --local)
+  ls [--local] [--json]                  agents in every running session, worktrees included (+ the hub's, unless --local)
   send [--from <addr>] [--json] <to> <text...>
                                          deliver a message as a prompt to another agent
+  send --wait <secs> <to> <text...>      wait until the agent is idle (not working, not on a dialog), then send
+  send --all [--json] <text...>          every other agent in this session (worktrees included)
+  send --all-sessions [--json] <text...> every other agent in every running session on this machine
   reply <text...>                        answer the last agent that messaged this pane
   log [-n N] [--json]                    recent sent/received messages
   name <new-name>                        rename this pane's agent (its address)
@@ -132,6 +140,52 @@ Options go before <to>; everything after <to> is the message, verbatim
 (so the text may contain --json or --from).
 
 env: KLARK_HUB_URL, KLARK_HUB_JWT, KLARK_HUB_TOKEN (machine token), KLARK_MACHINE_NAME
+```
+
+## `klark feed`
+
+```text
+klark feed: send a background command's new output to agents (ADR 0015)
+
+usage:
+  klark feed add <agent> "<instruction>" --stream "<command>" [--message-gap <secs>] [options]
+  klark feed add <agent> "<instruction>" --follow <path>      [--message-gap <secs>] [options]
+  klark feed add <agent> "<instruction>" --poll "<command>"   [--interval <secs>] [options]
+  klark feed list [--json]                    every feed: agents, state, last output, last sent, creator
+  klark feed show <id>                        everything about one feed, including its settings
+  klark feed set [<setting> [<value>]]        show or change the defaults for new feeds ([feeds] in config.toml)
+  klark feed agent add <id> <agent> ["<instruction>"]   subscribe another agent
+  klark feed agent remove <id> <agent>        unsubscribe an agent
+  klark feed leave <id>                       unsubscribe myself (the calling pane)
+  klark feed stop <id|--all>                  end a feed for everyone, for good
+  klark feed start <id>                       run a feed again after it stopped itself
+  klark feed batch <id> <n>                   print a batch that was cut in a message
+  klark feed logs <id>                        the worker's own log
+  klark feed resume [--session <name>]        run the session's feeds again (the server does this at start)
+
+sources (exactly one):
+  --stream "<command>"   a command that keeps running; its new lines are sent
+  --follow <path>        a file klark follows itself (rotation, truncation, restarts)
+  --poll "<command>"     a command run again and again; only what is new is sent
+
+options (defaults from klark feed set):
+  --message-gap <secs>   least time between two messages to one agent (stream, follow; default 30, min 5)
+  --interval <secs>      time between two runs (poll; default 30, min 5)
+  --diff lines|unified|"<command>"   what is new in a poll (default lines)
+  --filter "<command>"   judge each batch first: prints true/false or exits 0/1
+  --max-bytes <n>        largest message an agent receives (default 4096)
+  --max-per-hour <n>     stop a subscription above this many messages an hour (default 30; 0 = no limit)
+  --idle-stop <duration> stop a feed that delivered nothing for this long (default 7d; 0 = never)
+  --stale <secs>         one notice when the source printed nothing for this long
+  --label <text>         name shown in messages (default: the command's first word)
+  --name <id>            the feed's id (default: derived from the command)
+  --cwd <dir>            where the command runs (default: here)
+  --no-restore           do not run it again when klark restarts
+  --no-small-subagent    leave out the "let a small subagent judge first" line
+  --foreground           run in this terminal until the command ends or Ctrl-C
+
+Filtering is the command's job: --stream "tail -n0 -F app.log | grep --line-buffered ERROR".
+Output is sent as untrusted data; do not feed text an outsider can write to an agent that acts without approval.
 ```
 
 ## `klark expose`
@@ -169,6 +223,8 @@ klark session commands:
   klark session attach <name>
   klark session stop <name> [--json]
   klark session delete <name> [--json]
+  klark session import-herdr [--from <dir>] [--cwd <folder>] [--name <session>] [--force]
+  klark session export-herdr [--name <session>] [--out <file>]
   use 'default' as <name> to target the default session for stop
 ```
 
