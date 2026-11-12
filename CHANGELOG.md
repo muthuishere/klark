@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Added
+- `klark stats [--json]` shows memory and CPU use of the klark server, the host (memory, load, CPUs) and each agent pane (resident memory and CPU of the process tree under its shell). It is backed by the new read-only API method `system.stats`, which the hub can also call through a linked machine. A number the OS cannot give is left out; CPU is the share of one core since the previous call.
+
 ## [0.9.5.6] - 2026-11-12
 
 ### Added

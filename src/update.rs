@@ -22,8 +22,10 @@ use std::time::{Duration, Instant};
 use interprocess::local_socket::traits::Stream as _;
 use serde::{Deserialize, Deserializer};
 
-const STABLE_UPDATE_MANIFEST_URL: &str = "https://github.com/muthuishere/klark/releases/latest/download/latest.json";
-const PREVIEW_UPDATE_MANIFEST_URL: &str = "https://github.com/muthuishere/klark/releases/latest/download/preview.json";
+const STABLE_UPDATE_MANIFEST_URL: &str =
+    "https://github.com/muthuishere/klark/releases/latest/download/latest.json";
+const PREVIEW_UPDATE_MANIFEST_URL: &str =
+    "https://github.com/muthuishere/klark/releases/latest/download/preview.json";
 const HOMEBREW_FORMULA_API_URL: &str = "https://formulae.brew.sh/api/formula/klark.json";
 const KLARK_UPDATE_COMMAND: &str = "klark update";
 const HOMEBREW_UPDATE_COMMAND: &str = "brew update && brew upgrade klark";

@@ -358,7 +358,9 @@ pub fn run(args: &[String]) -> ! {
     let result = match args.first().map(String::as_str) {
         Some("connect") => parse_connect(rest).map(connect),
         Some("ls") if rest.is_empty() => Ok(ls()),
-        Some("disconnect" | "stop") if rest.len() <= 1 => Ok(disconnect(rest.first().map(String::as_str))),
+        Some("disconnect" | "stop") if rest.len() <= 1 => {
+            Ok(disconnect(rest.first().map(String::as_str)))
+        }
         Some("use") => {
             one_name(rest).map(|n| edit(|h| h.use_default(&n).map(|_| format!("default hub: {n}"))))
         }
@@ -553,7 +555,9 @@ fn disconnect(name: Option<&str>) {
     let hubs = Hubs::load();
     // No name: whatever is connected.
     let names: Vec<String> = match name {
-        Some(n) if !hubs.hubs.contains_key(n) => fail(format!("no saved hub named {n} (see `klark hub ls`)")),
+        Some(n) if !hubs.hubs.contains_key(n) => {
+            fail(format!("no saved hub named {n} (see `klark hub ls`)"))
+        }
         Some(n) => vec![n.to_string()],
         None => hubs.hubs.keys().cloned().collect(),
     };

@@ -4700,6 +4700,22 @@
         {
           "properties": {
             "method": {
+              "const": "system.stats",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/EmptyParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
               "const": "server.stop",
               "type": "string"
             },
@@ -9202,6 +9218,43 @@
             },
             {
               "properties": {
+                "agents": {
+                  "items": {
+                    "$ref": "#/schemas/success_response/$defs/SystemStatsAgent"
+                  },
+                  "type": "array"
+                },
+                "host": {
+                  "$ref": "#/schemas/success_response/$defs/SystemStatsHost"
+                },
+                "klark": {
+                  "$ref": "#/schemas/success_response/$defs/SystemStatsKlark"
+                },
+                "panes": {
+                  "$ref": "#/schemas/success_response/$defs/SystemStatsPanes"
+                },
+                "ts_ms": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "type": {
+                  "const": "system_stats",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "ts_ms",
+                "klark",
+                "host",
+                "panes",
+                "agents"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
                 "snapshot": {
                   "$ref": "#/schemas/success_response/$defs/SessionSnapshot"
                 },
@@ -10540,6 +10593,143 @@
             "down"
           ],
           "type": "string"
+        },
+        "SystemStatsAgent": {
+          "description": "One agent pane's resource use: the process tree under its shell.",
+          "properties": {
+            "cpu_percent": {
+              "description": "CPU use since the previous call, in percent of one core; 0 on the first call.",
+              "format": "double",
+              "type": "number"
+            },
+            "name": {
+              "description": "Detected agent name (for example `claude`).",
+              "type": "string"
+            },
+            "pane_id": {
+              "type": "string"
+            },
+            "rss_bytes": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "state": {
+              "$ref": "#/schemas/success_response/$defs/AgentStatus"
+            }
+          },
+          "required": [
+            "pane_id",
+            "name",
+            "state",
+            "cpu_percent"
+          ],
+          "type": "object"
+        },
+        "SystemStatsHost": {
+          "description": "The machine klark runs on. A field is left out when the OS cannot tell.",
+          "properties": {
+            "cpus": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "load1": {
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "mem_available_bytes": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "mem_total_bytes": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "SystemStatsKlark": {
+          "description": "This klark server process.",
+          "properties": {
+            "cpu_percent": {
+              "description": "CPU use since the previous `system.stats` call, in percent of one core; 0 on the first call.",
+              "format": "double",
+              "type": "number"
+            },
+            "peak_rss_bytes": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "pid": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "rss_bytes": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "uptime_s": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "version": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "pid",
+            "cpu_percent",
+            "uptime_s",
+            "version"
+          ],
+          "type": "object"
+        },
+        "SystemStatsPanes": {
+          "properties": {
+            "agents": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "count": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "count",
+            "agents"
+          ],
+          "type": "object"
         },
         "TabInfo": {
           "properties": {

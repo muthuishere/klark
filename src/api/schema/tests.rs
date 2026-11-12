@@ -258,6 +258,46 @@ fn request_round_trips_for_server_agent_manifests() {
 }
 
 #[test]
+fn request_round_trips_for_system_stats() {
+    let request = Request {
+        id: "req_stats".into(),
+        method: Method::SystemStats(EmptyParams::default()),
+    };
+
+    let json = serde_json::to_value(&request).unwrap();
+    assert_eq!(json["method"], "system.stats");
+    let restored: Request = serde_json::from_value(json).unwrap();
+    assert_eq!(restored, request);
+}
+
+#[test]
+fn system_stats_result_omits_unknown_numbers() {
+    let result = ResponseResult::SystemStats {
+        ts_ms: 5,
+        klark: SystemStatsKlark {
+            pid: 1,
+            rss_bytes: None,
+            peak_rss_bytes: None,
+            cpu_percent: 0.0,
+            uptime_s: 2,
+            version: "x".into(),
+        },
+        host: SystemStatsHost::default(),
+        panes: SystemStatsPanes {
+            count: 1,
+            agents: 0,
+        },
+        agents: Vec::new(),
+    };
+    let json = serde_json::to_value(&result).unwrap();
+    assert_eq!(json["type"], "system_stats");
+    assert!(json["klark"].get("rss_bytes").is_none());
+    assert_eq!(json["host"], serde_json::json!({}));
+    let restored: ResponseResult = serde_json::from_value(json).unwrap();
+    assert_eq!(restored, result);
+}
+
+#[test]
 fn request_round_trips_for_agent_explain() {
     let request = Request {
         id: "req_agent_explain".into(),

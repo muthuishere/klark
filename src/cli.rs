@@ -32,6 +32,7 @@ mod protocol_guard;
 mod server;
 mod server_not_running;
 mod spec;
+mod stats;
 mod status;
 pub(crate) mod tab;
 mod target;
@@ -120,6 +121,7 @@ pub fn maybe_run(args: &[String]) -> std::io::Result<CommandOutcome> {
         }
         "api" => api::run_api_command(&args[2..])?,
         "status" => status::run_status_command(&args[2..])?,
+        "stats" => stats::run_stats_command(&args[2..])?,
         "completion" | "completions" => completion::run_completion_command(&args[2..])?,
         "config" => run_config_command(&args[2..])?,
         "channel" => run_channel_command(&args[2..])?,
@@ -1030,7 +1032,9 @@ fn print_session_help() {
     eprintln!("  klark session attach <name>");
     eprintln!("  klark session stop <name> [--json]");
     eprintln!("  klark session delete <name> [--json]");
-    eprintln!("  klark session import-herdr [--from <dir>] [--cwd <folder>] [--name <session>] [--force]");
+    eprintln!(
+        "  klark session import-herdr [--from <dir>] [--cwd <folder>] [--name <session>] [--force]"
+    );
     eprintln!("  klark session export-herdr [--name <session>] [--out <file>]");
     eprintln!("  use 'default' as <name> to target the default session for stop");
 }

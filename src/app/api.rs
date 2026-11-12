@@ -9,6 +9,7 @@ mod panes;
 pub(crate) mod plugins;
 pub(super) mod responses;
 mod session;
+mod stats;
 mod tabs;
 mod workspaces;
 mod worktrees;
@@ -976,6 +977,7 @@ impl App {
                     },
                 }
             }
+            Method::SystemStats(_) => return self.handle_system_stats(request.id),
             Method::ServerAgentManifests(_) => {
                 self.state.refresh_agent_manifest_summaries();
                 let update_status = crate::detect::manifest_update::load_status();
@@ -1672,6 +1674,42 @@ mod tests {
             .is_err(),
             "status request should not reset detection runtimes"
         );
+    }
+
+    #[tokio::test]
+    async fn system_stats_reports_this_process_and_counts_panes() {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &crate::config::Config::default(),
+            crate::app::AppPolicy::TEST,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        app.state.workspaces = vec![crate::workspace::Workspace::test_new("stats")];
+        app.state.ensure_test_terminals();
+
+        let call = |app: &mut App| {
+            let response = app.handle_api_request(crate::api::schema::Request {
+                id: "stats".into(),
+                method: crate::api::schema::Method::SystemStats(
+                    crate::api::schema::EmptyParams::default(),
+                ),
+            });
+            serde_json::from_str::<serde_json::Value>(&response).unwrap()
+        };
+        let first = call(&mut app);
+        let result = &first["result"];
+        assert_eq!(result["type"], "system_stats");
+        assert!(result["ts_ms"].as_u64().unwrap() > 1_600_000_000_000);
+        assert_eq!(result["klark"]["pid"], std::process::id());
+        assert_eq!(result["panes"]["count"], 1);
+        assert_eq!(result["panes"]["agents"], 0);
+        assert!(result["agents"].as_array().unwrap().is_empty());
+        assert!(result["klark"]["version"].as_str().is_some());
+        assert!(result["klark"]["cpu_percent"].as_f64().unwrap() >= 0.0);
+        // A second call must also succeed and keep the same shape.
+        assert_eq!(call(&mut app)["result"]["type"], "system_stats");
     }
 
     #[tokio::test]

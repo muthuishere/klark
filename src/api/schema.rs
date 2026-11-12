@@ -44,6 +44,7 @@ pub struct Request {
 // The two flags are independent: presentation impact, then client-shell admission.
 operations::define_operations! {
     Ping(PingParams) => "ping", false, false;
+    SystemStats(EmptyParams) => "system.stats", false, false;
     ServerStop(EmptyParams) => "server.stop", false, false;
     ServerLiveHandoff(ServerLiveHandoffParams) => "server.live_handoff", false, false;
     ServerReloadConfig(EmptyParams) => "server.reload_config", true, true;

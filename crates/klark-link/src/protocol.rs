@@ -161,6 +161,7 @@ pub enum HubMessage {
 /// so a hub can never drive arbitrary klark commands.
 pub const ALLOWED_CALLS: &[&str] = &[
     "ping",
+    "system.stats",
     "session.snapshot",
     "pane.read",
     "agent.read",
@@ -192,6 +193,12 @@ mod tests {
         let raw = r#"{"type":"call","id":"1","method":"pane.read"}"#;
         let msg: HubMessage = serde_json::from_str(raw).unwrap();
         assert!(matches!(msg, HubMessage::Call { params, .. } if params.is_null()));
+    }
+
+    #[test]
+    fn system_stats_is_an_allowed_read_only_call() {
+        assert!(call_allowed("system.stats"));
+        assert!(!call_allowed("server.stop"));
     }
 
     #[test]

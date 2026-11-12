@@ -573,11 +573,17 @@ mod tests {
         assert_eq!(a.len(), 1);
         assert_eq!(a[0]["id"], "s1");
         assert_eq!(a[0]["role"], "user");
-        assert!(a[0]["text"].as_str().unwrap().contains("<command-name>/context"));
+        assert!(a[0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("<command-name>/context"));
         assert_eq!(a[0]["ts"], "2026-11-10T00:00:00Z");
         let b = claude_items(out, 10);
         assert_eq!(b[0]["id"], "s2");
-        assert!(b[0]["text"].as_str().unwrap().contains("<local-command-stdout>"));
+        assert!(b[0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("<local-command-stdout>"));
         assert!(claude_items(empty, 20).is_empty());
         assert!(claude_items(other, 30).is_empty());
     }

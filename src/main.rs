@@ -30,15 +30,15 @@ mod msg_cmd;
 mod offer_cmd;
 mod transcript_cmd;
 use ghostty_vt as ghostty;
+mod fda_notice;
 mod handoff_runtime;
+mod herdr_session;
 mod input;
 mod integration;
 mod ipc;
 mod kitty_graphics;
 mod layout;
 mod logging;
-mod fda_notice;
-mod herdr_session;
 mod metadata_tokens;
 mod noninteractive_process;
 mod pane;
@@ -511,9 +511,7 @@ fn install_skill_in(home: &std::path::Path, versions_path: &std::path::Path, ver
     // Where the last run left off. Upgrade steps (config migrations) go here, keyed
     // on `previous` being older than `version`; none exist yet.
     let previous = versions.get("klark").cloned();
-    let _direction = previous
-        .as_deref()
-        .map(|p| compare_versions(p, version));
+    let _direction = previous.as_deref().map(|p| compare_versions(p, version));
     for (key, root) in [
         ("skill.claude", home.join(".claude")),
         ("skill.agents", home.join(".agents")),
@@ -609,6 +607,7 @@ fn finish_cli(outcome: io::Result<cli::CommandOutcome>) -> io::Result<()> {
 }
 
 fn main() -> io::Result<()> {
+    platform::sysstats::mark_started();
     let raw_args: Vec<String> = match args_as_utf8(std::env::args_os()) {
         Ok(args) => args,
         Err(err) => {
@@ -901,6 +900,7 @@ fn main() -> io::Result<()> {
                 "offer",
                 "link",
                 "status",
+                "stats",
                 "config",
                 "channel",
                 "machine",
@@ -1029,10 +1029,8 @@ mod tests {
         const V: &str = "0.9.5+4";
 
         fn scratch(name: &str) -> PathBuf {
-            let dir = std::env::temp_dir().join(format!(
-                "klark-skill-test-{}-{name}",
-                std::process::id()
-            ));
+            let dir = std::env::temp_dir()
+                .join(format!("klark-skill-test-{}-{name}", std::process::id()));
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(&dir).unwrap();
             dir
@@ -1080,8 +1078,14 @@ mod tests {
 
             install_skill_in(&home, &versions, V);
 
-            assert_eq!(std::fs::read_to_string(skill_file(&home, ".claude")).unwrap(), SKILL);
-            assert_eq!(std::fs::read_to_string(skill_file(&home, ".agents")).unwrap(), SKILL);
+            assert_eq!(
+                std::fs::read_to_string(skill_file(&home, ".claude")).unwrap(),
+                SKILL
+            );
+            assert_eq!(
+                std::fs::read_to_string(skill_file(&home, ".agents")).unwrap(),
+                SKILL
+            );
             let recorded = read_versions(&versions);
             assert_eq!(recorded.get("klark").map(String::as_str), Some(V));
             assert_eq!(recorded.get("skill.claude").map(String::as_str), Some(V));
@@ -1126,7 +1130,10 @@ mod tests {
             install_skill_in(&home, &versions, V);
 
             assert_eq!(std::fs::read_to_string(&file).unwrap(), SKILL);
-            assert_eq!(read_versions(&versions).get("klark").map(String::as_str), Some(V));
+            assert_eq!(
+                read_versions(&versions).get("klark").map(String::as_str),
+                Some(V)
+            );
         }
 
         #[test]
@@ -1153,7 +1160,10 @@ mod tests {
 
             install_skill_in(&home, &versions, V);
 
-            assert_eq!(std::fs::read_to_string(skill_file(&home, ".claude")).unwrap(), SKILL);
+            assert_eq!(
+                std::fs::read_to_string(skill_file(&home, ".claude")).unwrap(),
+                SKILL
+            );
         }
     }
 }
