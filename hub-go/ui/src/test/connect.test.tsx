@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { AuthProvider } from '../auth';
 import { AppRoutes } from '../App';
-import { Composer } from '../components/Composer';
+import { Composer } from '@muthuishere/klark-hub-ui';
 import { chatFor, machines, trees } from '../../mock/fixtures';
 import { mockFetch, setBase } from './helpers';
 

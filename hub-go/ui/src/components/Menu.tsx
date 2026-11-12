@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { IconMore } from './Icons';
+import { IconMore } from '@muthuishere/klark-hub-ui';
 
 /** Overflow menu: a button that opens a popup; closes on Escape, outside click, or choosing an item. */
 export function Menu({ label, up, children }: { label: string; up?: boolean; children: ReactNode }) {

@@ -18,9 +18,9 @@ import (
 
 	"github.com/muthuishere/klark/hub-go/internal/auth"
 	"github.com/muthuishere/klark/hub-go/internal/backup"
-	"github.com/muthuishere/klark/hub-go/internal/chat"
 	"github.com/muthuishere/klark/hub-go/internal/config"
 	"github.com/muthuishere/klark/hub-go/internal/hub"
+	"github.com/muthuishere/klark/hub-go/internal/hubchat"
 	"github.com/muthuishere/klark/hub-go/internal/link"
 	"github.com/muthuishere/klark/hub-go/internal/server"
 	"github.com/muthuishere/klark/hub-go/internal/stats"
@@ -50,7 +50,7 @@ type App struct {
 	traffic  hubTraffic
 	// UI is the built app; nil uses the one embedded in the binary.
 	UI fs.FS
-	// AgentNote is appended to what people send from the hub (see chat.AppendNote); empty turns it off.
+	// AgentNote is appended to what people send from the hub (see hubchat.AppendNote); empty turns it off.
 	AgentNote string
 
 	// Now is the clock of connect requests (tests move it); nil is time.Now.
@@ -91,7 +91,7 @@ func New(cfg config.Config, uiFS fs.FS) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	a := &App{Cfg: cfg, Store: st, UI: uiFS, AgentNote: chat.DefaultNote, files: newFileCache(),
+	a := &App{Cfg: cfg, Store: st, UI: uiFS, AgentNote: hubchat.DefaultNote, files: newFileCache(),
 		connectStartLimit: auth.NewLimiter(20, 10*time.Minute), connectPollLimit: auth.NewLimiter(120, time.Minute)}
 	a.Auth = auth.New(st, cfg, auth.NewSigner(key))
 	if err := a.Auth.Seed(); err != nil {

@@ -1,5 +1,6 @@
 // Generated from hub/Services/SlashCommands.cs (per-agent built-in commands for the composer popup).
-export interface SlashCommand { name: string; description: string }
+import type { SlashCommand } from '@muthuishere/klark-hub-ui';
+export type { SlashCommand };
 const L: Record<string, SlashCommand[]> = {
   claude: [
     { name: "/add-dir", description: "Add a working directory" },

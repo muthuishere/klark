@@ -1,7 +1,7 @@
 import { Link, useParams } from 'react-router-dom';
 import { PageBar, useMachines } from '../shell';
-import { paneHref } from '../components/Sidebar';
-import { agentIcon, agentKey, displayName, paneAgent, paneCwd, paneStatus } from '../lib/panes';
+import { paneHref } from '../components/AppSidebar';
+import { agentIcon, agentKey, displayName, paneAgent, paneCwd, paneStatus } from '@muthuishere/klark-hub-ui';
 
 /** One machine's session tree: workspaces, their tabs, their panes. */
 export function MachinePage() {

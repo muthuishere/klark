@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/muthuishere/klark/hub-go/internal/auth"
-	"github.com/muthuishere/klark/hub-go/internal/chat"
 	"github.com/muthuishere/klark/hub-go/internal/hub"
+	"github.com/muthuishere/klark/hub-go/internal/hubchat"
 )
 
 func (a *App) mountAPI(mux *http.ServeMux) {
@@ -323,7 +323,7 @@ func (a *App) postSend(w http.ResponseWriter, r *http.Request) {
 	}
 	pane := r.PathValue("pane")
 	feed := a.Runtime.Feed(id, pane)
-	if chat.IsSlashCommand(text) && feed.State().Source != "jsonl" {
+	if hubchat.IsSlashCommand(text) && feed.State().Source != "jsonl" {
 		if err := feed.SendLocalCommand(r.Context(), text); err != nil {
 			failure(w, err)
 			return
@@ -331,7 +331,7 @@ func (a *App) postSend(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	if err := a.Runtime.Input(id, pane, chat.AppendNote(text, a.AgentNote)); err != nil {
+	if err := a.Runtime.Input(id, pane, hubchat.AppendNote(text, a.AgentNote)); err != nil {
 		failure(w, err)
 		return
 	}

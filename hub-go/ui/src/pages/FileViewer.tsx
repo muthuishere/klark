@@ -4,7 +4,7 @@ import { ApiError, api } from '../lib/api';
 import { url } from '../lib/base';
 import { filesApi, imageExt } from '../lib/files';
 import type { FileMeta } from '../lib/types';
-import { IconBack } from '../components/Icons';
+import { IconBack } from '@muthuishere/klark-hub-ui';
 
 type Json = null | boolean | number | string | Json[] | { [k: string]: Json };
 

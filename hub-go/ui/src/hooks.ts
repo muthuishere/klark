@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from './lib/api';
-import type { MachineInfo, Tree } from './lib/types';
+import type { MachineTree } from '@muthuishere/klark-hub-ui';
+import { transport } from './lib/transport';
 
 /** Poll a JSON endpoint; keeps the last good value while a refresh is in flight or failing. */
 export function usePoll<T>(path: string | null, every = 5000): { data: T | undefined; error: string | null; reload: () => void } {
@@ -21,7 +22,7 @@ export function usePoll<T>(path: string | null, every = 5000): { data: T | undef
   return { data, error, reload: useCallback(() => setN((x) => x + 1), []) };
 }
 
-export interface MachineTree { machine: MachineInfo; tree?: Tree }
+export type { MachineTree };
 
 /** Machines and their session trees, for the sidebar and the home page. */
 export function useMachineTrees(every = 4000): { items: MachineTree[]; loaded: boolean; error: string | null } {
@@ -32,9 +33,9 @@ export function useMachineTrees(every = 4000): { items: MachineTree[]; loaded: b
     let live = true;
     const run = async () => {
       try {
-        const ms = await api<MachineInfo[]>('api/machines');
+        const ms = await transport.machines();
         const out = await Promise.all(ms.map(async (machine) => {
-          try { return { machine, tree: await api<Tree>(`api/machines/${encodeURIComponent(machine.id)}/tree`) }; } catch { return { machine } as MachineTree; }
+          try { return { machine, tree: await transport.tree(machine.id) }; } catch { return { machine } as MachineTree; }
         }));
         if (live) { setItems(out); setLoaded(true); setError(null); }
       } catch (e) { if (live) setError((e as Error).message); }

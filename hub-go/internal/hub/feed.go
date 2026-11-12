@@ -7,23 +7,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/muthuishere/klark/hub-go/internal/chat"
+	"github.com/muthuishere/klark/hub-go/chat"
+	"github.com/muthuishere/klark/hub-go/feed"
+	"github.com/muthuishere/klark/hub-go/internal/hubchat"
 )
 
 const callTimeout = 8 * time.Second
 
-// ChatState is what the chat view draws for one pane.
-type ChatState struct {
-	Rows         []chat.Item   `json:"rows"`
-	Rev          int64         `json:"rev"`
-	Agent        string        `json:"agent"`
-	Status       string        `json:"status"`
-	Source       string        `json:"source"` // jsonl | screen | ""
-	Reader       string        `json:"reader"`
-	Error        string        `json:"error,omitempty"`
-	Blocked      *chat.Blocked `json:"blocked,omitempty"`
-	LastActivity string        `json:"lastActivity,omitempty"`
-}
+// ChatState is what the chat view draws for one pane (the public feed package's type).
+type ChatState = feed.ChatState
 
 // Feed is the chat data for one pane. It is kept in memory after the last viewer leaves so coming back paints at
 // once; one ~1 Hz poll per pane runs only while someone watches (lazy rule).
@@ -311,11 +303,11 @@ func linkItems(items []chat.Item, machine, pane string) {
 	for i := range items {
 		it := &items[i]
 		if it.HTML != "" {
-			it.HTML = chat.Linkify(it.HTML, machine, pane)
+			it.HTML = chat.Linkify(it.HTML, chat.KlarkHref(machine, pane))
 		}
 		for j := range it.Segments {
 			if it.Segments[j].HTML != "" {
-				it.Segments[j].HTML = chat.Linkify(it.Segments[j].HTML, machine, pane)
+				it.Segments[j].HTML = chat.Linkify(it.Segments[j].HTML, chat.KlarkHref(machine, pane))
 			}
 		}
 	}
@@ -418,8 +410,8 @@ func (f *Feed) apply(raw json.RawMessage) {
 		linkItems(one, f.machine, f.id)
 		list = append(list, one[0])
 	}
-	if len(list) > chat.MaxItems {
-		list = list[len(list)-chat.MaxItems:]
+	if len(list) > hubchat.MaxItems {
+		list = list[len(list)-hubchat.MaxItems:]
 	}
 	f.source, f.reader, f.cursor = "jsonl", source, cursor
 	if replace || len(list) != oldCount {
@@ -468,14 +460,14 @@ func (f *Feed) SendLocalCommand(ctx context.Context, command string) error {
 				continue
 			}
 			after = now
-			if time.Since(stableSince) >= 700*time.Millisecond && chat.ExtractCommandOutput(before, now, command) != "" {
+			if time.Since(stableSince) >= 700*time.Millisecond && hubchat.ExtractCommandOutput(before, now, command) != "" {
 				break
 			}
 		}
 		if after == "" {
 			after = last
 		}
-		f.addCommand(seq, command, chat.ExtractCommandOutput(before, after, command), ts)
+		f.addCommand(seq, command, hubchat.ExtractCommandOutput(before, after, command), ts)
 	}()
 	return nil
 }
