@@ -185,9 +185,3 @@ func (a *App) fileRaw(w http.ResponseWriter, r *http.Request) {
 	}
 	_, _ = w.Write(f.bytes)
 }
-
-// postUpload would hand a file to the pane's agent (the machine downloads it with fetch_asset). The hub's asset
-// store is not ported yet.
-func (a *App) postUpload(w http.ResponseWriter, r *http.Request) {
-	jsonErr(w, http.StatusNotImplemented, "uploads are not available in the Go hub yet")
-}

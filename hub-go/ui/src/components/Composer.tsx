@@ -2,7 +2,8 @@ import { useEffect, useId, useMemo, useRef, useState, type ClipboardEvent, type 
 import type { SlashCommand } from '../lib/slash';
 import { IconPlus, IconUp } from './Icons';
 
-export interface Attachment { name: string; path: string }
+/** An image the machine already stored: its name, the absolute path the agent gets, and a local preview URL. */
+export interface Attachment { name: string; path: string; preview?: string }
 interface Props {
   draftKey: string;
   commands: SlashCommand[];
@@ -72,7 +73,7 @@ export function Composer({ draftKey, commands, terminal, attachments, uploading,
       <div className="composer">
         {attachments.length > 0 && (
           <div className="attachments">
-            {attachments.map((a) => <span className="attachment" key={a.path} title={a.path}>{a.name}<button type="button" aria-label={'Remove ' + a.name} onClick={() => onRemoveAttachment(a)}>×</button></span>)}
+            {attachments.map((a) => <span className="attachment" key={a.path} title={a.path}>{a.preview && <img className="thumb" src={a.preview} alt="" />}{a.name}<button type="button" aria-label={'Remove ' + a.name} onClick={() => onRemoveAttachment(a)}>×</button></span>)}
           </div>
         )}
         <textarea

@@ -110,12 +110,14 @@ export function PanePage() {
   const send = async (text: string) => {
     const lines = attachments.map((a) => `[image from hub] ${a.path}`);
     const full = [...lines, ...(text ? [text] : [])].join(' ');
+    attachments.forEach(dropPreview);
     setAttachments([]);
     if (!full) return;
     await post('input', { text: full });
     await post('keys', { keys: ['enter'] });
     list.current?.scrollToBottom();
   };
+  const dropPreview = (a: Attachment) => { if (a.preview) try { URL.revokeObjectURL(a.preview); } catch { /* ignore */ } };
   const upload = async (files: File[]) => {
     setUploading(true);
     for (const f of files) {
@@ -123,7 +125,8 @@ export function PanePage() {
         const fd = new FormData();
         fd.append('file', f, f.name);
         const r = await api<{ name?: string; path: string }>(`${paneBase(machine, pane)}/upload`, { method: 'POST', body: fd });
-        setAttachments((cur) => [...cur, { name: r.name || f.name, path: r.path }]);
+        const preview = typeof URL.createObjectURL === 'function' ? URL.createObjectURL(f) : undefined;
+        setAttachments((cur) => [...cur, { name: r.name || f.name, path: r.path, preview }]);
       } catch (e) { setToast({ text: `Not uploaded: ${(e as Error).message}`, bad: true }); }
     }
     setUploading(false);
@@ -216,7 +219,7 @@ export function PanePage() {
         ? <div className="composer-wrap"><div className="composer ro muted">Machine offline: run <code>klark hub connect</code> on it to send messages</div></div>
         : readOnly ? <div className="composer-wrap"><div className="composer ro muted">Read-only</div></div>
         : <Composer key={machine + '/' + pane} draftKey={machine + '/' + pane} commands={info && isAgent(info) ? slashCommandsFor(agent) : []} terminal={view === 'terminal'}
-            attachments={attachments} uploading={uploading} onRemoveAttachment={(a) => setAttachments((c) => c.filter((x) => x !== a))} onFiles={(f) => void upload(f)} onSend={send}
+            attachments={attachments} uploading={uploading} onRemoveAttachment={(a) => { dropPreview(a); setAttachments((c) => c.filter((x) => x !== a)); }} onFiles={(f) => void upload(f)} onSend={send}
             onKey={(k) => void post('keys', { keys: [k] })} />}
     </main>
   );

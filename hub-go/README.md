@@ -28,14 +28,12 @@ Checks reported by the coordinator: `go vet ./... && go test -race ./...` passes
 
 ### Not done (stubbed or missing)
 
-- Image upload (`501`; the asset store is not ported).
+- Agent-to-person files (`PUT /api/assets`, `klark offer`) are not ported; only person-to-agent images are.
 - `offers` and the `offer` event (`klark offer`).
 - Server-side slash-command lists (the UI carries its own list).
 - Syntax highlighting; quick-reply buttons for a blocked pane.
 - CLI token page and change-password page.
 - Per-machine access groups.
-- Browser approval for `klark hub connect`: not ported, so machines join with `HUB_MACHINES` tokens (or from
-  `/admin/machines`) for now.
 - No load or soak test.
 - Known UI nit: a short machine name is truncated to "m..." in the sidebar.
 
@@ -220,7 +218,7 @@ HUB_MACHINES="mac=$(printf %s "$T" | shasum -a 256 | cut -d' ' -f1)" go run ./cm
 ```
 
 `klarkhub hash-token` and `klarkhub hash-password` read stdin and print the hash to use in `HUB_MACHINES` and
-`HUB_USERS`. Machine approval in the browser (`klark hub connect`) is not ported yet.
+`HUB_USERS`. Machines can also join with `klark hub connect --url <hub>` and a browser approval at `/connect`.
 
 ## Tests
 
@@ -327,11 +325,11 @@ Derived from reading `hub/` (pages, endpoints, services), updated 2026-11-12 fro
 | Slash-command popup | stub: the UI carries its own list; server-side `SlashCommands` not ported |
 | Hub note to agents (`HubNote.cs`, `Hub:AgentNote`) | not checked |
 | File viewer, markdown, raw, 10 MB limit, secrets refused (`FileEndpoints.cs`, `FileLinks.cs`) | done |
-| Image upload from the phone, assets store (`Assets.cs`) | not started (returns 501) |
+| Image upload from the phone, assets store (`Assets.cs`) | done: images (png/jpeg/gif/webp/heic/avif by magic bytes, 10 MB) stored in hub.db / Postgres by SHA-256, kept 24 h, `fetch_asset` to the machine; paste / drop / pick with preview. Verified end to end with klark 0.9.5 (file landed at `<klark dir>/uploads/<sha>.png`, 0600, same sha256) |
 | `klark offer`: `offers`, `offer` event | not started |
 | Agent messages page and API (`Messaging.cs`, `Messages.razor`) | done |
 | User JWTs, `/token` page, `POST /api/token` (`ApiAuth.cs`, `Token.razor`) | not started |
-| Machine approval in the browser (`/connect`, `MachineConnect.cs`) | not started; machines join by `HUB_MACHINES` |
+| Machine approval in the browser (`/connect`, `MachineConnect.cs`) | done: same `/api/connect/start` + `/poll` contract; requests in the database (any pod), 10 min expiry, rate-limited; token minted on collection, only its SHA-256 stored. Verified with an unmodified `klark hub connect` and a real browser approval, then revoke |
 | Admin users, machines | done |
 | Admin directory | API done (`API.md`) |
 | Search (cmd-K) | not checked |

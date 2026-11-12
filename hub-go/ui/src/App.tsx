@@ -13,12 +13,14 @@ import { AdminDirectory } from './pages/Directory';
 import { AdminAnalytics } from './pages/Analytics';
 import { AdminStorage } from './pages/Storage';
 import { Go } from './pages/Go';
+import { Connect } from './pages/Connect';
 import { NotFound } from './pages/NotFound';
 
 export function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/connect" element={<RequireAuth><Connect /></RequireAuth>} />
       <Route element={<RequireAuth><Shell /></RequireAuth>}>
         <Route path="/" element={<Home />} />
         <Route path="/go" element={<Go />} />

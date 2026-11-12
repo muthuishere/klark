@@ -30,6 +30,15 @@ func (a *App) mountAPI(mux *http.ServeMux) {
 	mux.Handle("POST /api/machines/{id}/panes/{pane}/send", user(a.owned(a.postSend)))
 	mux.Handle("POST /api/machines/{id}/panes/{pane}/upload", user(a.owned(a.postUpload)))
 
+	mux.Handle("GET /api/assets/{sha}", http.HandlerFunc(a.getAsset)) // machine token or cookie, checked inside
+
+	// `klark hub connect` (ADR 0012): start and poll need no sign-in (rate limited); the decision does.
+	mux.HandleFunc("POST /api/connect/start", a.connectStart)
+	mux.HandleFunc("POST /api/connect/poll", a.connectPoll)
+	mux.Handle("GET /api/connect/requests/{code}", user(a.connectGet))
+	mux.Handle("POST /api/connect/requests/{code}/approve", user(a.connectDecide(true)))
+	mux.Handle("POST /api/connect/requests/{code}/deny", user(a.connectDecide(false)))
+
 	mux.Handle("GET /api/files/{id}", user(a.owned(a.fileInfo)))
 	mux.Handle("GET /api/files/{id}/markdown", user(a.owned(a.fileMarkdown)))
 	mux.Handle("GET /api/files/{id}/raw", user(a.owned(a.fileRaw)))

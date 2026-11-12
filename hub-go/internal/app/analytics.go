@@ -17,6 +17,7 @@ func (a *App) StartBackground(ctx context.Context) {
 	}
 	go a.Stats.Run(ctx) // only purges old samples; it never calls a machine
 	go a.Archive.Run(ctx)
+	go a.sweepAssets(ctx)
 	if a.Backup != nil {
 		go a.Backup.Run(ctx)
 	}

@@ -66,3 +66,5 @@ export interface StorageInfo {
   sqlite?: { enabled?: boolean; every?: string; keep?: number; owner?: string; backups?: number };
   lastSqliteBackupMs?: number; lastAnalyticsWriteMs?: number; lastError?: string; filesWritten?: number;
 }
+
+export interface ConnectRequest { code: string; machine: string; status: 'pending' | 'approved' | 'denied'; expiresAt: string; existing: boolean; owner?: string }

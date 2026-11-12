@@ -392,6 +392,7 @@ a.banner { animation: banner-away .4s ease 5s forwards; }
 /* images uploaded to the machine, waiting for Send */
 .attachments { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
 .attachment { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 4px 4px 4px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bubble); font-size: .8rem; overflow-wrap: anywhere; }
+.attachment .thumb { width: 40px; height: 40px; object-fit: cover; border-radius: 6px; margin-left: -6px; }
 .attachment button { border: 0; background: none; color: var(--muted); cursor: pointer; font: inherit; min-width: 24px; min-height: 24px; border-radius: 6px; }
 .attachment button:hover { background: var(--hover); color: var(--fg); }
 
@@ -488,3 +489,5 @@ button:disabled { opacity: .6; cursor: default; }
 .subnav button.sel { background: var(--hover); border-color: var(--accent); }
 .admin .row-actions { display: flex; gap: 8px; }
 .admin pre.code { background: var(--code-bg); padding: 10px; border-radius: 10px; overflow-x: auto; font: 12.5px/1.5 var(--mono); }
+
+.connect .code { font: 600 1.8rem/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .12em; text-align: center; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); }

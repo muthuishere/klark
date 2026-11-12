@@ -52,6 +52,12 @@ type App struct {
 	// AgentNote is appended to what people send from the hub (see chat.AppendNote); empty turns it off.
 	AgentNote string
 
+	// Now is the clock of connect requests (tests move it); nil is time.Now.
+	Now func() time.Time
+
+	connectStartLimit *auth.Limiter // `klark hub connect` starts per client address
+	connectPollLimit  *auth.Limiter // and polls
+
 	agentCache   agentCacheT
 	files        *fileCache
 	scriptHashes []string
@@ -98,7 +104,8 @@ func New(cfg config.Config, uiFS fs.FS) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	a := &App{Cfg: cfg, Store: st, UI: uiFS, AgentNote: chat.DefaultNote, files: newFileCache()}
+	a := &App{Cfg: cfg, Store: st, UI: uiFS, AgentNote: chat.DefaultNote, files: newFileCache(),
+		connectStartLimit: auth.NewLimiter(20, 10*time.Minute), connectPollLimit: auth.NewLimiter(120, time.Minute)}
 	a.Auth = auth.New(st, cfg, auth.NewSigner(key))
 	if err := a.Auth.Seed(); err != nil {
 		return nil, err

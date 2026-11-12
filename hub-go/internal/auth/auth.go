@@ -128,6 +128,9 @@ func (s *Service) ExternalBase(r *http.Request) string {
 	return scheme + "://" + reqHost(r) + s.Cfg.BasePath
 }
 
+// ClientIP is the caller's address (X-Forwarded-For only from a loopback or private peer).
+func ClientIP(r *http.Request) string { return clientIP(r) }
+
 func clientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {

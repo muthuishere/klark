@@ -52,7 +52,7 @@ to it. Responses carry `X-Content-Type-Options`, `X-Frame-Options: DENY`, `Refer
 Text responses are gzipped; event streams and the machine link never are.
 
 Browser routes (served as `index.html`): `/`, `/login`, `/m/:machine`, `/m/:machine/p/:pane`,
-`/m/:machine/f?path=&pane=`, `/go?machine=&pane=`, `/messages`, `/admin/users`, `/admin/machines`, `/admin/directory`, `/admin/analytics`, `/admin/storage` (UI routes; the API is below).
+`/m/:machine/f?path=&pane=`, `/go?machine=&pane=`, `/connect?code=`, `/messages`, `/admin/users`, `/admin/machines`, `/admin/directory`, `/admin/analytics`, `/admin/storage` (UI routes; the API is below).
 
 ## Machine link (ADR 0013 protocol v4/5, unchanged)
 
@@ -94,7 +94,7 @@ Errors from the machine link: offline `503`, no answer `504`, the machine's own 
 | `POST .../panes/{pane}/input` `{text,enter?}` | `204`, types text |
 | `POST .../panes/{pane}/keys` `{keys:[..]}` | `204` (1-32 keys: `enter`, `esc`, `ctrl+c`...) |
 | `POST .../panes/{pane}/send` `{text}` | `204`, the chat composer: adds the hub note (agents name files by absolute path) and presses enter; a slash command to an agent whose log does not record commands is chatted locally with its output read off the screen |
-| `POST .../panes/{pane}/upload` (multipart `file`) | **`501`: not implemented yet** (the asset store is not ported) |
+| `POST .../panes/{pane}/upload` (multipart `file`, optional field `caption`, `?prompt=1`) | `200 {name,path,sha256,size,mime}`: the image (png, jpeg, gif, webp, heic, avif, decided from its bytes; at most 10 MB) is stored by SHA-256 in the database, the machine is sent `fetch_asset {sha256,name,mime,size,pane_id,caption,prompt}` and `path` is where it wrote the file. By default the machine only stores it (the composer then sends `[image from hub] <path> <text>`); `prompt=1` makes the machine prompt the pane. `400` no file, `413` over 10 MB, `415` not an image, `503` offline, `409` protocol < 3, `504` not fetched within 60 s |
 | `GET /api/agents` | `[{machine,session,agent,name,pane_id,status,address}]` |
 | `GET /api/messages[?limit=]` | `[{ts,from,to,text,ok,error?,sender,id}]` newest first, `ts` RFC 3339 |
 | `POST /api/messages` `{to:"machine/session/agent",text,from?}` | `200 {id,ok}`; `400` bad address/empty, `404` machine not linked, `413` over 16 KB, `502/504` delivery failed. Every attempt is recorded |
@@ -119,6 +119,27 @@ Errors from the machine link: offline `503`, no answer `504`, the machine's own 
   a slow client lost output), `size {cols,rows}`, `closed {reason}`. The machine streams the pane only while at least one
   `frames=1` stream is open (first viewer subscribes, last one out unsubscribes; chat-only streams never do).
 - A `: ping` comment every 15 s.
+
+## Assets
+
+`GET /api/assets/{sha256}`: with `Authorization: Bearer <machine token>` only an asset addressed to that machine (what
+`fetch_asset` downloads); otherwise a signed-in cookie. `401` no credentials or unknown token, `403` not yours or past the
+24 h retention. Sent with `nosniff`, `Content-Security-Policy: default-src 'none'; sandbox`, `Content-Disposition: inline`.
+Records older than 24 h, and then bytes no record names, are swept every 10 minutes.
+
+## Machine approval (`klark hub connect`, ADR 0012)
+
+| request | reply |
+|---|---|
+| `POST /api/connect/start` `{name}` (no sign-in) | `{code:"ABCD-EFGH",poll_id,url:"{public base}/connect?code=..",expires_in:600,interval:2}`; `400` bad name (`[A-Za-z0-9._-]{1,64}`), `429` + `Retry-After` past 20 starts per address per 10 min, `503` over 1000 pending |
+| `POST /api/connect/poll` `{poll_id}` (no sign-in) | `{status:"pending"\|"denied"\|"expired"}` or, once, `{status:"approved",token,machine}`; `404 {status:"unknown"}` afterwards; `429` past 120 polls per address per minute |
+| `GET /api/connect/requests/{code}` (cookie) | `{code,machine,status,expiresAt,existing,owner?}`; `404` unknown or expired |
+| `POST /api/connect/requests/{code}/approve` \| `/deny` (cookie) | `200 {status,machine}`; `404` unknown/expired, `409` already decided or a `HUB_MACHINES`/fleet name, `403` re-keying a machine someone else approved (admins may) |
+
+Anyone signed in may approve and is recorded as `approvedBy`. Only the SHA-256 of the poll id is stored; the token
+(`km_` + 64 hex) is minted when the approved request is collected and only its SHA-256 is kept (`machines` table, listed
+in `/api/admin/machines`, revoked with `DELETE /api/admin/machines/{name}`). `HUB_MACHINES` tokens work as before.
+Browser route: `/connect?code=` (sign-in required, returns there after login).
 
 ## Files (viewer)
 
