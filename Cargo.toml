@@ -1,6 +1,6 @@
 [package]
 name = "klark"
-version = "0.10.0"
+version = "0.10.1"
 edition = "2021"
 build = "build.rs"
 description = "klark — terminal workspace manager for AI coding agents, with a built-in hub link"
