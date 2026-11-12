@@ -20,6 +20,8 @@ export interface SidebarProps {
   store?: Storage;
   /** Extra content in a group's header (after its count). */
   renderGroupExtra?: (g: Group) => ReactNode;
+  /** A row's second line. Default: "needs you · kind · machine · session". The "needs you" mark stays in front either way. */
+  renderSubtitle?: (r: Row) => ReactNode;
   header?: ReactNode;
   /** Right side of the footer (account menu, theme...). */
   footer?: ReactNode;
@@ -30,7 +32,7 @@ export interface SidebarProps {
 const plainClick = (e: MouseEvent) => e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey;
 
 /** Agents grouped by project folder, needs-you first; search with ⌘K. */
-export function Sidebar({ items, loaded = true, current, hrefFor, onOpen, filter: filterProp, onFilterChange, store = defaultStorage, renderGroupExtra, header, footer, empty }: SidebarProps) {
+export function Sidebar({ items, loaded = true, current, hrefFor, onOpen, filter: filterProp, onFilterChange, store = defaultStorage, renderGroupExtra, renderSubtitle, header, footer, empty }: SidebarProps) {
   const [own, setOwn] = useState('');
   const filter = filterProp ?? own;
   const setFilter = (f: string) => { if (filterProp === undefined) setOwn(f); onFilterChange?.(f); };
@@ -91,8 +93,10 @@ export function Sidebar({ items, loaded = true, current, hrefFor, onOpen, filter
                     <span className="ent-time">{st === 'blocked' ? '!' : ''}</span>
                     <span className="ent-sub">
                       {st === 'blocked' && <b className="needs">needs you · </b>}
-                      {agent && <><b className="kind">{agent.toLowerCase()}</b> · </>}
-                      {r.machineName} · {r.session}
+                      {renderSubtitle ? renderSubtitle(r) : <>
+                        {agent && <><b className="kind">{agent.toLowerCase()}</b> · </>}
+                        {r.machineName} · {r.session}
+                      </>}
                     </span>
                   </a>
                 );
