@@ -119,11 +119,21 @@ impl Env {
 
     fn call(&self, method: &str, params: Value) -> Value {
         let mut s = connect(&self.socket()).expect("connect to the server's pipe");
-        let mut line = json!({"id": "t", "method": method, "params": params}).to_string();
+        let mut line = json!({"id": "t", "method": method, "params": params.clone()}).to_string();
         line.push('\n');
-        s.write_all(line.as_bytes()).unwrap();
-        let mut out = String::new();
-        BufReader::new(s).read_line(&mut out).unwrap();
+        // A server that never answers must fail the test, not hang the job.
+        let (tx, rx) = std::sync::mpsc::channel();
+        thread::spawn(move || {
+            let r = s.write_all(line.as_bytes()).and_then(|_| {
+                let mut out = String::new();
+                BufReader::new(s).read_line(&mut out).map(|_| out)
+            });
+            let _ = tx.send(r);
+        });
+        let out = match rx.recv_timeout(Duration::from_secs(20)) {
+            Ok(r) => r.unwrap_or_else(|e| panic!("{method}: {e}")),
+            Err(_) => panic!("{method}: no answer from the server in 20 s ({params})"),
+        };
         serde_json::from_str(&out).unwrap_or_else(|e| panic!("{method}: {e}: {out}"))
     }
 

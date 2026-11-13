@@ -58,6 +58,7 @@ jobs:
           cargo test --locked --bin klark -- feed
           cargo test --locked -p klark-link --lib  # tests/tls.rs fails on Windows (pre-existing, unrelated to feed)
       - name: Feed end to end
+        timeout-minutes: 20
         run: cargo test --locked --test feed_windows -- --test-threads=1 --nocapture
 
   binaries:
