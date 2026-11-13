@@ -57,6 +57,7 @@ type App struct {
 	Now func() time.Time
 
 	connectStartLimit *auth.Limiter // `klark hub connect` starts per client address
+	redeemLimit       *auth.Limiter // failed pairing-code redemptions per client address
 	connectPollLimit  *auth.Limiter // and polls
 
 	agentCache   agentCacheT
@@ -92,7 +93,8 @@ func New(cfg config.Config, uiFS fs.FS) (*App, error) {
 		return nil, err
 	}
 	a := &App{Cfg: cfg, Store: st, UI: uiFS, AgentNote: hubchat.DefaultNote, files: newFileCache(),
-		connectStartLimit: auth.NewLimiter(20, 10*time.Minute), connectPollLimit: auth.NewLimiter(120, time.Minute)}
+		connectStartLimit: auth.NewLimiter(20, 10*time.Minute), connectPollLimit: auth.NewLimiter(120, time.Minute),
+		redeemLimit: auth.NewLimiter(10, 15*time.Minute)}
 	a.Auth = auth.New(st, cfg, auth.NewSigner(key))
 	if err := a.Auth.Seed(); err != nil {
 		return nil, err

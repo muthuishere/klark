@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -121,7 +122,7 @@ func (a *App) provDeleteTenant(w http.ResponseWriter, r *http.Request) {
 	}
 	a.Tokens.Invalidate()
 	for _, m := range machines {
-		a.dropMachine(m.Name)
+		a.forgetMachine(m.Name)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -189,7 +190,7 @@ func (a *App) provRevokeMachine(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := r.PathValue("name")
-	if !strings.EqualFold(a.Store.MachineTenant(name), id) {
+	if !strings.EqualFold(a.machineTenant(name), id) {
 		jsonErr(w, http.StatusNotFound, "no such machine")
 		return
 	}
@@ -198,24 +199,32 @@ func (a *App) provRevokeMachine(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.Tokens.Invalidate()
-	a.dropMachine(name)
+	a.forgetMachine(name)
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// dropMachine ends a machine's live link (and its fleet members') at once.
-func (a *App) dropMachine(name string) {
-	for _, in := range a.Runtime.Machines() {
-		if strings.EqualFold(in.ID, name) || strings.HasPrefix(strings.ToLower(in.ID), strings.ToLower(name)+":") {
-			a.Runtime.Revoke(in.ID)
-		}
-	}
-}
-
-// connectRedeem trades a pairing code for a machine token, once. The machine
-// keeps its name unless another tenant has it.
+// connectRedeem trades a pairing code for a machine token, once, for a name
+// nobody on the hub uses. The code is checked first and every failure of the
+// code answers the same, so the route tells nothing about names to someone
+// without a valid code; failures count toward a per-address limit.
 func (a *App) connectRedeem(w http.ResponseWriter, r *http.Request) {
+	ip := auth.ClientIP(r)
+	if blocked, wait := a.redeemLimit.Blocked(ip); blocked {
+		w.Header().Set("Retry-After", strconv.Itoa(int(wait.Seconds())+1))
+		jsonErr(w, http.StatusTooManyRequests, "too many requests; try again later")
+		return
+	}
 	var b struct{ Code, Name string }
 	if !decode(w, r, &b) {
+		return
+	}
+	refuse := func() {
+		a.redeemLimit.Fail(ip)
+		jsonErr(w, http.StatusForbidden, "this pairing code cannot be used")
+	}
+	codeSHA := tokens.Sha256Hex(strings.ToUpper(strings.TrimSpace(b.Code)))
+	if _, live := a.Store.LivePairingCode(codeSHA, time.Now().UnixMilli()); !live {
+		refuse()
 		return
 	}
 	name := strings.TrimSpace(b.Name)
@@ -223,23 +232,14 @@ func (a *App) connectRedeem(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusBadRequest, "name must be 1-64 characters without spaces, '/', ':', '*', ',' or '='")
 		return
 	}
-	for _, m := range a.Cfg.Machines {
-		if strings.EqualFold(m.Name, name) {
-			jsonErr(w, http.StatusConflict, name+" is taken on this hub; pick another name (KLARK_MACHINE_NAME)")
-			return
-		}
-	}
-	codeSHA := tokens.Sha256Hex(strings.ToUpper(strings.TrimSpace(b.Code)))
-	if m := a.storedMachine(name); m != nil {
-		// Same name in another tenant (or a fleet): refuse before using up the code.
-		if m.Fleet || !a.Store.PairingCodeTenantIs(codeSHA, m.Tenant) {
-			jsonErr(w, http.StatusConflict, name+" is taken on this hub; pick another name (KLARK_MACHINE_NAME)")
-			return
-		}
+	// A code pairs a new machine; it never replaces one (any tenant, any source).
+	if a.machineTenant(name) != "" || a.storedMachine(name) != nil {
+		jsonErr(w, http.StatusConflict, name+" is taken on this hub; pick another name (KLARK_MACHINE_NAME)")
+		return
 	}
 	tenant, err := a.Store.TakePairingCode(codeSHA, time.Now().UnixMilli())
 	if err != nil {
-		jsonErr(w, http.StatusForbidden, "unknown, used or expired pairing code")
+		refuse()
 		return
 	}
 	raw := make([]byte, 24)
@@ -250,6 +250,7 @@ func (a *App) connectRedeem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.Tokens.Invalidate()
+	a.forgetMachine(name)
 	jsonOut(w, http.StatusOK, map[string]string{"token": token, "machine": name, "tenant": tenant})
 }
 
@@ -274,7 +275,10 @@ func (a *App) adminServiceTokens(w http.ResponseWriter, _ *http.Request) {
 
 // adminAddServiceToken mints a service token and returns it once.
 func (a *App) adminAddServiceToken(w http.ResponseWriter, r *http.Request) {
-	var b struct{ Name string }
+	var b struct {
+		Name        string
+		ExpiresDays int `json:"expires_days"` // 0 = never
+	}
 	if !decode(w, r, &b) {
 		return
 	}
@@ -283,11 +287,18 @@ func (a *App) adminAddServiceToken(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusBadRequest, "name must be 1-64 characters")
 		return
 	}
+	if b.ExpiresDays < 0 || b.ExpiresDays > 3650 {
+		jsonErr(w, http.StatusBadRequest, "expires_days must be 0 (never) to 3650")
+		return
+	}
 	raw := make([]byte, 32)
 	_, _ = rand.Read(raw)
 	token := "khs_" + hex.EncodeToString(raw)
 	me, _ := auth.FromContext(r.Context())
 	t := store.ServiceToken{ID: uuid.NewString(), Name: name, SHA256: tokens.Sha256Hex(token), CreatedBy: me.Name}
+	if b.ExpiresDays > 0 {
+		t.Expires = time.Now().AddDate(0, 0, b.ExpiresDays).Unix()
+	}
 	if err := a.Store.AddServiceToken(t); err != nil {
 		jsonErr(w, 500, "could not store the token")
 		return

@@ -159,6 +159,7 @@ func (a *App) connectPoll(w http.ResponseWriter, r *http.Request) {
 		raw := make([]byte, 32)
 		_, _ = rand.Read(raw)
 		token := "km_" + hex.EncodeToString(raw)
+		a.forgetMachine(req.Machine) // a new token for this name: the old link (if any) ends now
 		if err := a.Store.UpsertMachine(req.Machine, tokens.Sha256Hex(token), req.DecidedBy, req.Tenant); err != nil {
 			jsonErr(w, 500, "could not store the machine")
 			return

@@ -16,19 +16,21 @@ type ServiceToken struct {
 	Created   int64  `json:"created"`
 	CreatedBy string `json:"createdBy"`
 	Revoked   bool   `json:"revoked"`
+	Expires   int64  `json:"expires"` // unix seconds; 0 = never
 }
 
 func (s *Store) AddServiceToken(t ServiceToken) error {
-	_, err := s.db.Exec(`INSERT INTO service_tokens (id, name, sha256, created, created_by) VALUES (?,?,?,?,?)`,
-		t.ID, t.Name, strings.ToLower(t.SHA256), time.Now().Unix(), t.CreatedBy)
+	_, err := s.db.Exec(`INSERT INTO service_tokens (id, name, sha256, created, created_by, expires) VALUES (?,?,?,?,?,?)`,
+		t.ID, t.Name, strings.ToLower(t.SHA256), time.Now().Unix(), t.CreatedBy, t.Expires)
 	return err
 }
 
-// ServiceTokenBySHA is the live (not revoked) token with this hash.
+// ServiceTokenBySHA is the live (not revoked, not expired) token with this hash.
 func (s *Store) ServiceTokenBySHA(sha string) (ServiceToken, error) {
 	var t ServiceToken
-	err := s.db.QueryRow(`SELECT id, name, created, created_by FROM service_tokens WHERE sha256 = ? AND revoked = 0`,
-		strings.ToLower(sha)).Scan(&t.ID, &t.Name, &t.Created, &t.CreatedBy)
+	err := s.db.QueryRow(`SELECT id, name, created, created_by, expires FROM service_tokens
+		WHERE sha256 = ? AND revoked = 0 AND (expires = 0 OR expires > ?)`,
+		strings.ToLower(sha), time.Now().Unix()).Scan(&t.ID, &t.Name, &t.Created, &t.CreatedBy, &t.Expires)
 	if errors.Is(err, sql.ErrNoRows) {
 		return t, ErrNotFound
 	}
@@ -36,7 +38,7 @@ func (s *Store) ServiceTokenBySHA(sha string) (ServiceToken, error) {
 }
 
 func (s *Store) ServiceTokens() ([]ServiceToken, error) {
-	rows, err := s.db.Query(`SELECT id, name, created, created_by, revoked FROM service_tokens ORDER BY created`)
+	rows, err := s.db.Query(`SELECT id, name, created, created_by, revoked, expires FROM service_tokens ORDER BY created`)
 	if err != nil {
 		return nil, err
 	}
@@ -45,7 +47,7 @@ func (s *Store) ServiceTokens() ([]ServiceToken, error) {
 	for rows.Next() {
 		var t ServiceToken
 		var rev int
-		if err := rows.Scan(&t.ID, &t.Name, &t.Created, &t.CreatedBy, &rev); err != nil {
+		if err := rows.Scan(&t.ID, &t.Name, &t.Created, &t.CreatedBy, &rev, &t.Expires); err != nil {
 			return nil, err
 		}
 		t.Revoked = rev != 0
@@ -144,6 +146,7 @@ func (s *Store) DeleteTenant(id string) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 	for _, q := range []string{
+		`DELETE FROM assets WHERE lower(machine) IN (SELECT lower(name) FROM machines WHERE lower(tenant) = lower(?))`,
 		`DELETE FROM machines WHERE lower(tenant) = lower(?)`,
 		`DELETE FROM users WHERE lower(tenant) = lower(?)`,
 		`DELETE FROM messages WHERE lower(tenant) = lower(?)`,
@@ -158,11 +161,10 @@ func (s *Store) DeleteTenant(id string) error {
 	return tx.Commit()
 }
 
-// PairingCodeTenantIs reports whether a live code belongs to tenant (used to
-// refuse a name clash before the code is spent).
-func (s *Store) PairingCodeTenantIs(codeSHA, tenant string) bool {
-	var n int
-	_ = s.db.QueryRow(`SELECT count(*) FROM pairing_codes WHERE code_sha = ? AND used = 0 AND lower(tenant) = lower(?)`,
-		strings.ToLower(codeSHA), tenant).Scan(&n)
-	return n > 0
+// LivePairingCode is the tenant of an unused, unexpired code, without using it.
+func (s *Store) LivePairingCode(codeSHA string, nowMs int64) (string, bool) {
+	var t string
+	err := s.db.QueryRow(`SELECT tenant FROM pairing_codes WHERE code_sha = ? AND used = 0 AND expires_ms > ?`,
+		strings.ToLower(codeSHA), nowMs).Scan(&t)
+	return t, err == nil
 }

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/muthuishere/klark/hub-go/internal/auth"
 	"github.com/muthuishere/klark/hub-go/internal/config"
@@ -187,4 +188,64 @@ func mustHash(t *testing.T, pw string) string {
 		t.Fatal(err)
 	}
 	return h
+}
+
+// A pairing code adds a new machine; it never replaces an existing one, and
+// without a valid code the route says the same thing whatever the name.
+func TestRedeemNeverReplacesAndRevealsNothing(t *testing.T) {
+	a, ts := newApp(t, nil)
+	op := newClient(t, ts.URL)
+	op.login("admin", "adminadmin")
+	_, b := op.do("POST", "/api/admin/service-tokens", map[string]string{"name": "p"})
+	var minted map[string]string
+	_ = json.Unmarshal(b, &minted)
+	tok := minted["token"]
+	svc(t, ts.URL, tok, "POST", "/api/provision/tenants", map[string]string{"id": "acme"})
+	code := func() string {
+		_, out := svc(t, ts.URL, tok, "POST", "/api/provision/tenants/acme/pairing-codes", nil)
+		return out["code"].(string)
+	}
+	_, first := svc(t, ts.URL, "", "POST", "/api/connect/redeem", map[string]string{"code": code(), "name": "gbox"})
+	oldTok, _ := first["token"].(string)
+	fm := connect(t, ts.URL, oldTok, "", 5, machineBehaviour("r1"))
+	defer fm.stop()
+	waitFor(t, "gbox online", func() bool { return a.Runtime.Online("gbox") })
+
+	c2 := code()
+	if status, _ := svc(t, ts.URL, "", "POST", "/api/connect/redeem", map[string]string{"code": c2, "name": "gbox"}); status != 409 {
+		t.Fatalf("an existing machine was replaced by a code: %d", status)
+	}
+	if !a.Runtime.Online("gbox") || tokensMatch(a, oldTok) == false {
+		t.Fatal("the existing machine lost its link or token")
+	}
+
+	// Without a valid code: same status and body for any name.
+	s1, b1 := svc(t, ts.URL, "", "POST", "/api/connect/redeem", map[string]string{"code": "AAAA-BBBB-CCCC-DDDD", "name": "gbox"})
+	s2, b2 := svc(t, ts.URL, "", "POST", "/api/connect/redeem", map[string]string{"code": "AAAA-BBBB-CCCC-DDDD", "name": "nosuch"})
+	s3, b3 := svc(t, ts.URL, "", "POST", "/api/connect/redeem", map[string]string{"code": "AAAA-BBBB-CCCC-DDDD", "name": "mac"})
+	if s1 != 403 || s2 != 403 || s3 != 403 || b1["error"] != b2["error"] || b2["error"] != b3["error"] {
+		t.Fatalf("answers differ: %d %v / %d %v / %d %v", s1, b1, s2, b2, s3, b3)
+	}
+	// Failures from one address are limited.
+	last := 0
+	for i := 0; i < 12; i++ {
+		last, _ = svc(t, ts.URL, "", "POST", "/api/connect/redeem", map[string]string{"code": "AAAA-BBBB-CCCC-DDDD", "name": "x"})
+	}
+	if last != 429 {
+		t.Fatalf("no limit on failed redemptions: %d", last)
+	}
+}
+
+func tokensMatch(a *App, tok string) bool { return tokens.Match(a.Tokens.Machines(), tok) != nil }
+
+func TestServiceTokensExpire(t *testing.T) {
+	a, _ := newApp(t, nil)
+	_ = a.Store.AddServiceToken(store.ServiceToken{ID: "old", Name: "old", SHA256: tokens.Sha256Hex("t-old"), Expires: time.Now().Add(-time.Minute).Unix()})
+	_ = a.Store.AddServiceToken(store.ServiceToken{ID: "new", Name: "new", SHA256: tokens.Sha256Hex("t-new"), Expires: time.Now().Add(time.Hour).Unix()})
+	if _, err := a.Store.ServiceTokenBySHA(tokens.Sha256Hex("t-old")); err == nil {
+		t.Fatal("an expired service token still works")
+	}
+	if _, err := a.Store.ServiceTokenBySHA(tokens.Sha256Hex("t-new")); err != nil {
+		t.Fatal("a live service token was refused")
+	}
 }

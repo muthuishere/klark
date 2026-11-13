@@ -6,7 +6,8 @@ CREATE TABLE IF NOT EXISTS service_tokens (
   sha256     TEXT NOT NULL UNIQUE,
   created    INTEGER NOT NULL,
   created_by TEXT NOT NULL DEFAULT '',
-  revoked    INTEGER NOT NULL DEFAULT 0
+  revoked    INTEGER NOT NULL DEFAULT 0,
+  expires    INTEGER NOT NULL DEFAULT 0 -- unix seconds; 0 = never
 );
 ALTER TABLE tenants ADD COLUMN owner_token TEXT NOT NULL DEFAULT '';
 CREATE TABLE IF NOT EXISTS pairing_codes (
