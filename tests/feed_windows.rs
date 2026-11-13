@@ -142,23 +142,30 @@ impl Env {
         thread::sleep(Duration::from_secs(2));
         self.call(
             "pane.send_text",
-            json!({"pane_id": pane, "text": format!("\"{}\"", fake.display())}),
+            // Unquoted: PowerShell treats a quoted path as a string, not a
+            // command. The temp path has no spaces (an assert below says so).
+            json!({"pane_id": pane, "text": fake.display().to_string()}),
         );
         self.call(
             "pane.send_keys",
             json!({"pane_id": pane, "keys": ["Enter"]}),
         );
-        wait_for(
-            "the fake agent to be detected",
-            Duration::from_secs(60),
-            || {
-                let list = self.call("agent.list", json!({}));
-                list["result"]["agents"]
-                    .as_array()
-                    .is_some_and(|a| a.iter().any(|a| a["pane_id"] == json!(pane)))
-                    .then_some(())
-            },
-        );
+        let deadline = Instant::now() + Duration::from_secs(60);
+        loop {
+            let list = self.call("agent.list", json!({}));
+            if list["result"]["agents"]
+                .as_array()
+                .is_some_and(|a| a.iter().any(|a| a["pane_id"] == json!(pane)))
+            {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the fake agent was never detected.\nagent.list: {list}\npane:\n{}",
+                self.pane_text(&pane)
+            );
+            thread::sleep(Duration::from_millis(200));
+        }
         let named = self
             .cmd()
             .env("KLARK_SESSION", "work")
@@ -261,6 +268,11 @@ fn echo_agent() -> PathBuf {
             )
             .unwrap();
             let exe = dir.join("claude.exe");
+            assert!(
+                !exe.to_string_lossy().contains(' '),
+                "the agent path is typed unquoted: {}",
+                exe.display()
+            );
             let rustc = std::env::var("RUSTC").unwrap_or_else(|_| "rustc".into());
             let out = Command::new(rustc)
                 .arg(&src)
