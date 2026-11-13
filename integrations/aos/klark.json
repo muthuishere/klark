@@ -3,94 +3,132 @@
   "description": "Klark: agents, panes, messages and feeds (needs klark on PATH)",
   "commands": [
     {
+      "name": "version",
+      "summary": "klark version",
+      "args": "",
+      "examples": [
+        "aos klark version"
+      ],
+      "run": "klark --version"
+    },
+    {
       "name": "status",
       "summary": "Is a klark server running, and which version",
       "args": "",
-      "examples": ["aos klark status"],
+      "examples": [
+        "aos klark status"
+      ],
       "run": "klark status"
     },
     {
       "name": "agents",
       "summary": "List agents in every klark session",
       "args": "[--json]",
-      "examples": ["aos klark agents"],
+      "examples": [
+        "aos klark agents"
+      ],
       "run": "klark agent list -a"
     },
     {
       "name": "read",
       "summary": "Read an agent's recent terminal output",
       "args": "<agent> [options]",
-      "examples": ["aos klark read rev", "aos klark read work/rev --lines 80"],
+      "examples": [
+        "aos klark read rev",
+        "aos klark read work/rev --lines 80"
+      ],
       "run": "klark agent read"
     },
     {
       "name": "prompt",
       "summary": "Submit a prompt to an agent",
       "args": "<agent> <text>",
-      "examples": ["aos klark prompt rev \"run the tests\""],
+      "examples": [
+        "aos klark prompt rev \"run the tests\""
+      ],
       "run": "klark agent prompt"
     },
     {
       "name": "wait",
       "summary": "Wait until an agent reaches a state (idle, done, blocked...)",
       "args": "<agent> [options]",
-      "examples": ["aos klark wait rev --help"],
+      "examples": [
+        "aos klark wait rev --help"
+      ],
       "run": "klark agent wait"
     },
     {
       "name": "panes",
       "summary": "List panes",
       "args": "[options]",
-      "examples": ["aos klark panes"],
+      "examples": [
+        "aos klark panes"
+      ],
       "run": "klark pane list"
     },
     {
       "name": "send",
       "summary": "Type literal text into a pane (no Enter)",
       "args": "<pane> <text>",
-      "examples": ["aos klark send w1:p2 \"git status\""],
+      "examples": [
+        "aos klark send w1:p2 \"git status\""
+      ],
       "run": "klark pane send-text"
     },
     {
       "name": "msg",
       "summary": "Send a klark message to another agent",
       "args": "<address> <text>",
-      "examples": ["aos klark msg work/rev \"PR is ready\""],
+      "examples": [
+        "aos klark msg work/rev \"PR is ready\""
+      ],
       "run": "klark msg send"
     },
     {
       "name": "feeds",
       "summary": "List feeds",
       "args": "[--json]",
-      "examples": ["aos klark feeds", "aos klark feeds --json"],
+      "examples": [
+        "aos klark feeds",
+        "aos klark feeds --json"
+      ],
       "run": "klark feed list"
     },
     {
       "name": "feed",
       "summary": "Add a feed: send new output of a command, file or poll to an agent",
       "args": "<agent> <instruction> --stream|--follow|--poll <source> [options]",
-      "examples": ["aos klark feed work/rev \"Look at new errors\" --follow app.log"],
+      "examples": [
+        "aos klark feed work/rev \"Look at new errors\" --follow app.log"
+      ],
       "run": "klark feed add"
     },
     {
       "name": "unfeed",
       "summary": "Stop and remove a feed",
       "args": "<id-or-name>",
-      "examples": ["aos klark unfeed flw"],
+      "examples": [
+        "aos klark unfeed flw"
+      ],
       "run": "klark feed stop"
     },
     {
       "name": "stats",
       "summary": "Memory and CPU of the klark server and each agent pane",
       "args": "[--json]",
-      "examples": ["aos klark stats", "aos klark stats --json"],
+      "examples": [
+        "aos klark stats",
+        "aos klark stats --json"
+      ],
       "run": "klark stats"
     },
     {
       "name": "hub",
       "summary": "Hub connection status of this machine",
       "args": "",
-      "examples": ["aos klark hub"],
+      "examples": [
+        "aos klark hub"
+      ],
       "run": "klark hub status"
     }
   ]

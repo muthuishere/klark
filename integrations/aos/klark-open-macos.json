@@ -1,0 +1,18 @@
+{
+  "group": "klark",
+  "description": "Klark: agents, panes, messages and feeds",
+  "commands": [
+    {
+      "name": "open",
+      "summary": "Open a terminal tab in a folder running klark -c (that folder's session)",
+      "args": "<folder>",
+      "examples": [
+        "aos klark open ~/src/api"
+      ],
+      "run": "aos tab open --app=Ghostty --command=\"klark -c\" --cwd",
+      "platforms": [
+        "darwin"
+      ]
+    }
+  ]
+}
