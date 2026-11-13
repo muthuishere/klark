@@ -329,7 +329,7 @@ func TestConnectDenyExpiryAndPolicy(t *testing.T) {
 	if r, _ := admin.do("POST", "/api/connect/requests/"+s.Code+"/approve", nil); r.StatusCode != 409 {
 		t.Fatalf("HUB_MACHINES name: %d", r.StatusCode)
 	}
-	if err := a.Store.UpsertMachine("box-4", tokens.Sha256Hex("t4"), "admin"); err != nil {
+	if err := a.Store.UpsertMachine("box-4", tokens.Sha256Hex("t4"), "admin", ""); err != nil {
 		t.Fatal(err)
 	}
 	bob := newClient(t, ts.URL)

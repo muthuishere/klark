@@ -221,11 +221,12 @@ func (a *App) getAsset(w http.ResponseWriter, r *http.Request) {
 		}
 		visible = func(as store.Asset) bool { return as.Direction == "to_agent" && strings.EqualFold(as.Machine, me) }
 	} else {
-		if _, ok := a.Auth.Current(r); !ok {
+		u, ok := a.Auth.Current(r)
+		if !ok {
 			jsonErr(w, http.StatusUnauthorized, "sign in required")
 			return
 		}
-		visible = func(store.Asset) bool { return true }
+		visible = func(as store.Asset) bool { return u.Sees(a.Store.MachineTenant(as.Machine)) }
 	}
 	rows, err := a.Store.Assets(sha, time.Now().Add(-assetRetention).UnixMilli())
 	if err != nil {

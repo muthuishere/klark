@@ -70,7 +70,7 @@ func usersMachinesMessagesSettings(t *testing.T, s *Store) {
 	for _, id := range []string{"a", "b", "c"} {
 		_ = s.RecordMessage(Message{ID: id, Time: 100, Sender: "user:x", From: "user:x", To: "m/s/a", Text: id, OK: true})
 	}
-	got, _ := s.RecentMessages(2)
+	got, _ := s.RecentMessages(2, "")
 	if len(got) != 2 || got[0].ID != "c" {
 		t.Fatalf("%+v", got)
 	}

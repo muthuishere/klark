@@ -126,6 +126,7 @@ type User struct {
 	Created     int64  `json:"created"`
 	// Groups are the directory groups of a mockldap user ("|" is not allowed in a name).
 	Groups []string `json:"groups"`
+	Tenant string   `json:"tenant"`
 }
 
 func joinGroups(g []string) string { return strings.Join(g, "|") }
@@ -145,9 +146,9 @@ func (s *Store) UpsertUser(u User) error {
 	if u.DisplayName == "" {
 		u.DisplayName = u.Name
 	}
-	_, err := s.db.Exec(`INSERT INTO users (name, display_name, hash, admin, source, created, groups) VALUES (?,?,?,?,?,?,?)
-		ON CONFLICT(name) DO UPDATE SET display_name=excluded.display_name, hash=excluded.hash, admin=excluded.admin, source=excluded.source, groups=excluded.groups`,
-		u.Name, u.DisplayName, u.Hash, b2i(u.Admin), u.Source, time.Now().Unix(), joinGroups(u.Groups))
+	_, err := s.db.Exec(`INSERT INTO users (name, display_name, hash, admin, source, created, groups, tenant) VALUES (?,?,?,?,?,?,?,?)
+		ON CONFLICT(name) DO UPDATE SET display_name=excluded.display_name, hash=excluded.hash, admin=excluded.admin, source=excluded.source, groups=excluded.groups, tenant=excluded.tenant`,
+		u.Name, u.DisplayName, u.Hash, b2i(u.Admin), u.Source, time.Now().Unix(), joinGroups(u.Groups), tenantOr(u.Tenant))
 	return err
 }
 
@@ -156,8 +157,8 @@ func (s *Store) InsertUser(u User) (bool, error) {
 	if u.DisplayName == "" {
 		u.DisplayName = u.Name
 	}
-	r, err := s.db.Exec(`INSERT OR IGNORE INTO users (name, display_name, hash, admin, source, created, groups) VALUES (?,?,?,?,?,?,?)`,
-		u.Name, u.DisplayName, u.Hash, b2i(u.Admin), u.Source, time.Now().Unix(), joinGroups(u.Groups))
+	r, err := s.db.Exec(`INSERT OR IGNORE INTO users (name, display_name, hash, admin, source, created, groups, tenant) VALUES (?,?,?,?,?,?,?,?)`,
+		u.Name, u.DisplayName, u.Hash, b2i(u.Admin), u.Source, time.Now().Unix(), joinGroups(u.Groups), tenantOr(u.Tenant))
 	if err != nil {
 		return false, err
 	}
@@ -169,13 +170,13 @@ func scanUser(sc interface{ Scan(...any) error }) (User, error) {
 	var u User
 	var admin int
 	var groups string
-	err := sc.Scan(&u.Name, &u.DisplayName, &u.Hash, &admin, &u.Source, &u.Created, &groups)
+	err := sc.Scan(&u.Name, &u.DisplayName, &u.Hash, &admin, &u.Source, &u.Created, &groups, &u.Tenant)
 	u.Admin = admin != 0
 	u.Groups = splitGroups(groups)
 	return u, err
 }
 
-const userCols = `name, display_name, hash, admin, source, created, groups`
+const userCols = `name, display_name, hash, admin, source, created, groups, tenant`
 
 func (s *Store) User(name string) (User, error) {
 	u, err := scanUser(s.db.QueryRow(`SELECT `+userCols+` FROM users WHERE lower(name) = lower(?)`, name))
@@ -235,12 +236,13 @@ type Machine struct {
 	LastSeen  int64  `json:"lastSeen"`
 	Version   string `json:"version"`
 	Protocol  int    `json:"protocol"`
+	Tenant    string `json:"tenant"`
 }
 
 // AddMachine stores a machine token's hash; false when the name is taken.
 func (s *Store) AddMachine(m Machine) (bool, error) {
-	r, err := s.db.Exec(`INSERT OR IGNORE INTO machines (name, token_sha256, fleet, created, created_by) VALUES (?,?,?,?,?)`,
-		m.Name, strings.ToLower(m.SHA256), b2i(m.Fleet), time.Now().Unix(), m.CreatedBy)
+	r, err := s.db.Exec(`INSERT OR IGNORE INTO machines (name, token_sha256, fleet, created, created_by, tenant) VALUES (?,?,?,?,?,?)`,
+		m.Name, strings.ToLower(m.SHA256), b2i(m.Fleet), time.Now().Unix(), m.CreatedBy, tenantOr(m.Tenant))
 	if err != nil {
 		return false, err
 	}
@@ -249,7 +251,7 @@ func (s *Store) AddMachine(m Machine) (bool, error) {
 }
 
 func (s *Store) Machines() ([]Machine, error) {
-	rows, err := s.db.Query(`SELECT name, token_sha256, fleet, created, created_by, last_seen, version, protocol FROM machines ORDER BY name`)
+	rows, err := s.db.Query(`SELECT name, token_sha256, fleet, created, created_by, last_seen, version, protocol, tenant FROM machines ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -258,7 +260,7 @@ func (s *Store) Machines() ([]Machine, error) {
 	for rows.Next() {
 		var m Machine
 		var fleet int
-		if err := rows.Scan(&m.Name, &m.SHA256, &fleet, &m.Created, &m.CreatedBy, &m.LastSeen, &m.Version, &m.Protocol); err != nil {
+		if err := rows.Scan(&m.Name, &m.SHA256, &fleet, &m.Created, &m.CreatedBy, &m.LastSeen, &m.Version, &m.Protocol, &m.Tenant); err != nil {
 			return nil, err
 		}
 		m.Fleet = fleet != 0
@@ -294,16 +296,19 @@ type Message struct {
 	Text   string `json:"text"`
 	OK     bool   `json:"ok"`
 	Error  string `json:"error,omitempty"`
+	Tenant string `json:"tenant"`
 }
 
 func (s *Store) RecordMessage(m Message) error {
-	_, err := s.db.Exec(`INSERT INTO messages (id, ts, sender, from_, to_, text, ok, error) VALUES (?,?,?,?,?,?,?,?)`,
-		m.ID, m.Time, m.Sender, m.From, m.To, m.Text, b2i(m.OK), m.Error)
+	_, err := s.db.Exec(`INSERT INTO messages (id, ts, sender, from_, to_, text, ok, error, tenant) VALUES (?,?,?,?,?,?,?,?,?)`,
+		m.ID, m.Time, m.Sender, m.From, m.To, m.Text, b2i(m.OK), m.Error, tenantOr(m.Tenant))
 	return err
 }
 
-func (s *Store) RecentMessages(limit int) ([]Message, error) {
-	rows, err := s.db.Query(`SELECT id, ts, sender, from_, to_, text, ok, error FROM messages ORDER BY ts DESC, rowid DESC LIMIT ?`, limit)
+// RecentMessages returns the newest messages; tenant "" means every tenant.
+func (s *Store) RecentMessages(limit int, tenant string) ([]Message, error) {
+	rows, err := s.db.Query(`SELECT id, ts, sender, from_, to_, text, ok, error, tenant FROM messages
+		WHERE ? = '' OR lower(tenant) = lower(?) ORDER BY ts DESC, rowid DESC LIMIT ?`, tenant, tenant, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -312,13 +317,79 @@ func (s *Store) RecentMessages(limit int) ([]Message, error) {
 	for rows.Next() {
 		var m Message
 		var ok int
-		if err := rows.Scan(&m.ID, &m.Time, &m.Sender, &m.From, &m.To, &m.Text, &ok, &m.Error); err != nil {
+		if err := rows.Scan(&m.ID, &m.Time, &m.Sender, &m.From, &m.To, &m.Text, &ok, &m.Error, &m.Tenant); err != nil {
 			return nil, err
 		}
 		m.OK = ok != 0
 		out = append(out, m)
 	}
 	return out, rows.Err()
+}
+
+// ---- tenants -----------------------------------------------------------------
+
+// DefaultTenant holds everything a hub had before tenants, env-configured
+// machines and fleet tokens. Its admins operate the whole hub.
+const DefaultTenant = "default"
+
+func tenantOr(t string) string {
+	if strings.TrimSpace(t) == "" {
+		return DefaultTenant
+	}
+	return t
+}
+
+type Tenant struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Created int64  `json:"created"`
+}
+
+// CreateTenant adds a tenant; false when the id is taken.
+func (s *Store) CreateTenant(t Tenant) (bool, error) {
+	r, err := s.db.Exec(`INSERT OR IGNORE INTO tenants (id, name, created) VALUES (?,?,?)`, t.ID, t.Name, time.Now().Unix())
+	if err != nil {
+		return false, err
+	}
+	n, _ := r.RowsAffected()
+	return n > 0, nil
+}
+
+func (s *Store) TenantExists(id string) bool {
+	var n int
+	_ = s.db.QueryRow(`SELECT count(*) FROM tenants WHERE lower(id) = lower(?)`, id).Scan(&n)
+	return n > 0
+}
+
+func (s *Store) Tenants() ([]Tenant, error) {
+	rows, err := s.db.Query(`SELECT id, name, created FROM tenants ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Tenant{}
+	for rows.Next() {
+		var t Tenant
+		if err := rows.Scan(&t.ID, &t.Name, &t.Created); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// MachineTenant is the tenant of a machine id: its own row, else its fleet's
+// row (fleet machines link as <fleet>:<host>), else the default tenant
+// (machines from HUB_MACHINES).
+func (s *Store) MachineTenant(id string) string {
+	var t string
+	if s.db.QueryRow(`SELECT tenant FROM machines WHERE lower(name) = lower(?)`, id).Scan(&t) == nil {
+		return t
+	}
+	if fleet, _, ok := strings.Cut(id, ":"); ok && s.db.QueryRow(`SELECT tenant FROM machines WHERE lower(name) = lower(?) AND fleet = 1`, fleet).Scan(&t) == nil {
+		return t
+	}
+	return DefaultTenant
 }
 
 // ---- settings ----------------------------------------------------------------

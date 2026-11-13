@@ -88,7 +88,12 @@ func (a *App) agents(ctx context.Context) []agentEntry {
 }
 
 func (a *App) listAgents(w http.ResponseWriter, r *http.Request) {
-	out := append([]agentEntry{}, a.agents(r.Context())...)
+	out := []agentEntry{}
+	for _, e := range a.agents(r.Context()) {
+		if a.sees(r, e.Machine) {
+			out = append(out, e)
+		}
+	}
 	jsonOut(w, http.StatusOK, out)
 }
 
@@ -108,7 +113,12 @@ func (a *App) listMessages(w http.ResponseWriter, r *http.Request) {
 	if limit < 1 || limit > 500 {
 		limit = 100
 	}
-	rows, err := a.Store.RecentMessages(limit)
+	u, _ := auth.FromContext(r.Context())
+	tenant := u.Tenant
+	if u.Operator() {
+		tenant = ""
+	}
+	rows, err := a.Store.RecentMessages(limit, tenant)
 	if err != nil {
 		jsonErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -155,6 +165,9 @@ func (a *App) postMessage(w http.ResponseWriter, r *http.Request) {
 	id := uuid.NewString()
 	status, errText := http.StatusOK, ""
 	info, known := a.Runtime.Info(machine)
+	if known && !a.sees(r, machine) {
+		known = false // another tenant's machine: as if it were not linked
+	}
 	switch {
 	case !known:
 		status, errText = http.StatusNotFound, "machine "+machine+" is not linked to this hub"
@@ -173,7 +186,7 @@ func (a *App) postMessage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	_ = a.Store.RecordMessage(store.Message{ID: id, Time: time.Now().Unix(), Sender: "user:" + u.Name, From: from,
-		To: machine + "/" + session + "/" + agent, Text: b.Text, OK: status == http.StatusOK, Error: errText})
+		To: machine + "/" + session + "/" + agent, Text: b.Text, OK: status == http.StatusOK, Error: errText, Tenant: u.Tenant})
 	if status != http.StatusOK {
 		jsonOut(w, status, map[string]any{"error": errText, "id": id})
 		return

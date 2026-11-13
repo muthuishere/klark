@@ -99,13 +99,14 @@ type ConnectRequest struct {
 	Created   int64 // unix ms
 	Expires   int64 // unix ms
 	DecidedBy string
+	Tenant    string // the approver's tenant: the machine joins it (K1)
 }
 
-const connectCols = `poll_sha, code, machine, status, ip, created_ms, expires_ms, decided_by`
+const connectCols = `poll_sha, code, machine, status, ip, created_ms, expires_ms, decided_by, tenant`
 
 func scanConnect(row interface{ Scan(...any) error }) (ConnectRequest, error) {
 	var c ConnectRequest
-	err := row.Scan(&c.PollSHA, &c.Code, &c.Machine, &c.Status, &c.IP, &c.Created, &c.Expires, &c.DecidedBy)
+	err := row.Scan(&c.PollSHA, &c.Code, &c.Machine, &c.Status, &c.IP, &c.Created, &c.Expires, &c.DecidedBy, &c.Tenant)
 	if errors.Is(err, sql.ErrNoRows) {
 		return c, ErrNotFound
 	}
@@ -114,8 +115,8 @@ func scanConnect(row interface{ Scan(...any) error }) (ConnectRequest, error) {
 
 // AddConnectRequest stores a new request; false when its code is already taken.
 func (s *Store) AddConnectRequest(c ConnectRequest) (bool, error) {
-	r, err := s.db.Exec(`INSERT OR IGNORE INTO connect_requests (`+connectCols+`) VALUES (?,?,?,?,?,?,?,?)`,
-		c.PollSHA, c.Code, c.Machine, c.Status, c.IP, c.Created, c.Expires, c.DecidedBy)
+	r, err := s.db.Exec(`INSERT OR IGNORE INTO connect_requests (`+connectCols+`) VALUES (?,?,?,?,?,?,?,?,?)`,
+		c.PollSHA, c.Code, c.Machine, c.Status, c.IP, c.Created, c.Expires, c.DecidedBy, tenantOr(c.Tenant))
 	if err != nil {
 		return false, err
 	}
@@ -134,9 +135,9 @@ func (s *Store) ConnectRequestByPoll(pollSHA string) (ConnectRequest, error) {
 }
 
 // DecideConnectRequest moves a pending, unexpired request to status; false when it was not pending any more.
-func (s *Store) DecideConnectRequest(code, status, by string, now int64) (bool, error) {
-	r, err := s.db.Exec(`UPDATE connect_requests SET status = ?, decided_by = ? WHERE code = ? AND status = 'pending' AND expires_ms > ?`,
-		status, by, code, now)
+func (s *Store) DecideConnectRequest(code, status, by, tenant string, now int64) (bool, error) {
+	r, err := s.db.Exec(`UPDATE connect_requests SET status = ?, decided_by = ?, tenant = ? WHERE code = ? AND status = 'pending' AND expires_ms > ?`,
+		status, by, tenantOr(tenant), code, now)
 	if err != nil {
 		return false, err
 	}
@@ -170,9 +171,9 @@ func (s *Store) SweepConnectRequests(now int64) (left int, err error) {
 }
 
 // UpsertMachine stores a (non-fleet) machine token's hash, replacing the token of a machine with that name.
-func (s *Store) UpsertMachine(name, sha, createdBy string) error {
-	_, err := s.db.Exec(`INSERT INTO machines (name, token_sha256, fleet, created, created_by) VALUES (?,?,0,?,?)
-		ON CONFLICT(name) DO UPDATE SET token_sha256 = excluded.token_sha256, fleet = 0, created = excluded.created, created_by = excluded.created_by`,
-		name, strings.ToLower(sha), time.Now().Unix(), createdBy)
+func (s *Store) UpsertMachine(name, sha, createdBy, tenant string) error {
+	_, err := s.db.Exec(`INSERT INTO machines (name, token_sha256, fleet, created, created_by, tenant) VALUES (?,?,0,?,?,?)
+		ON CONFLICT(name) DO UPDATE SET token_sha256 = excluded.token_sha256, fleet = 0, created = excluded.created, created_by = excluded.created_by, tenant = excluded.tenant`,
+		name, strings.ToLower(sha), time.Now().Unix(), createdBy, tenantOr(tenant))
 	return err
 }

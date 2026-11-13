@@ -18,7 +18,8 @@ type Session struct {
 	User    string `json:"u"`
 	Display string `json:"d,omitempty"`
 	Admin   bool   `json:"a,omitempty"`
-	Source  string `json:"s"` // "db" (user row is checked on every request) or "oidc"
+	Source  string `json:"s"`           // "db" (user row is checked on every request) or "oidc"
+	Tenant  string `json:"t,omitempty"` // a session that is not "db"; empty = the default tenant
 	Expires int64  `json:"e"`
 }
 

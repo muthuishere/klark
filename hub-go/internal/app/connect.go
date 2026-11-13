@@ -159,7 +159,7 @@ func (a *App) connectPoll(w http.ResponseWriter, r *http.Request) {
 		raw := make([]byte, 32)
 		_, _ = rand.Read(raw)
 		token := "km_" + hex.EncodeToString(raw)
-		if err := a.Store.UpsertMachine(req.Machine, tokens.Sha256Hex(token), req.DecidedBy); err != nil {
+		if err := a.Store.UpsertMachine(req.Machine, tokens.Sha256Hex(token), req.DecidedBy, req.Tenant); err != nil {
 			jsonErr(w, 500, "could not store the machine")
 			return
 		}
@@ -248,13 +248,13 @@ func (a *App) connectDecide(approve bool) http.HandlerFunc {
 					jsonErr(w, http.StatusConflict, req.Machine+" is a fleet token; pick another name (KLARK_MACHINE_NAME)")
 					return
 				}
-				if !me.Admin && !strings.EqualFold(m.CreatedBy, me.Name) {
+				if !me.Sees(m.Tenant) || (!me.Admin && !strings.EqualFold(m.CreatedBy, me.Name)) {
 					jsonErr(w, http.StatusForbidden, "A machine named "+req.Machine+" already exists and belongs to someone else.")
 					return
 				}
 			}
 		}
-		done, err := a.Store.DecideConnectRequest(req.Code, status, me.Name, a.connectClock().UnixMilli())
+		done, err := a.Store.DecideConnectRequest(req.Code, status, me.Name, me.Tenant, a.connectClock().UnixMilli())
 		if err != nil {
 			jsonErr(w, 500, "could not store the decision")
 			return

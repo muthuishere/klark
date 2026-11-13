@@ -18,6 +18,16 @@ import (
 func (a *App) mountAPI(mux *http.ServeMux) {
 	user := func(f http.HandlerFunc) http.Handler { return auth.CSRF(a.Auth.Require(false, f)) }
 	admin := func(f http.HandlerFunc) http.Handler { return auth.CSRF(a.Auth.Require(true, f)) }
+	// Hub-wide settings: the operator only (an admin of the default tenant), not a tenant's admin.
+	operator := func(f http.HandlerFunc) http.Handler {
+		return admin(func(w http.ResponseWriter, r *http.Request) {
+			if u, _ := auth.FromContext(r.Context()); !u.Operator() {
+				jsonErr(w, http.StatusForbidden, "hub operator only")
+				return
+			}
+			f(w, r)
+		})
+	}
 
 	mux.Handle("GET /api/machines", user(a.listMachines))
 	mux.Handle("GET /api/machines/{id}/tree", user(a.getTree))
@@ -53,15 +63,15 @@ func (a *App) mountAPI(mux *http.ServeMux) {
 	mux.Handle("GET /api/admin/machines", admin(a.adminMachines))
 	mux.Handle("POST /api/admin/machines", admin(a.adminAddMachine))
 	mux.Handle("DELETE /api/admin/machines/{id}", admin(a.adminRevokeMachine))
-	mux.Handle("GET /api/admin/directory", admin(a.adminDirectory))
-	mux.Handle("PUT /api/admin/directory", admin(a.adminPutDirectory))
-	mux.Handle("DELETE /api/admin/directory", admin(a.adminResetDirectory))
-	mux.Handle("POST /api/admin/directory/test", admin(a.adminTestDirectory))
-	mux.Handle("GET /api/admin/analytics", admin(a.adminAnalytics))
-	mux.Handle("GET /api/admin/storage", admin(a.adminStorage))
-	mux.Handle("PUT /api/admin/storage", admin(a.adminPutStorage))
-	mux.Handle("DELETE /api/admin/storage", admin(a.adminResetStorage))
-	mux.Handle("POST /api/admin/storage/test", admin(a.adminTestStorage))
+	mux.Handle("GET /api/admin/directory", operator(a.adminDirectory))
+	mux.Handle("PUT /api/admin/directory", operator(a.adminPutDirectory))
+	mux.Handle("DELETE /api/admin/directory", operator(a.adminResetDirectory))
+	mux.Handle("POST /api/admin/directory/test", operator(a.adminTestDirectory))
+	mux.Handle("GET /api/admin/analytics", operator(a.adminAnalytics))
+	mux.Handle("GET /api/admin/storage", operator(a.adminStorage))
+	mux.Handle("PUT /api/admin/storage", operator(a.adminPutStorage))
+	mux.Handle("DELETE /api/admin/storage", operator(a.adminResetStorage))
+	mux.Handle("POST /api/admin/storage/test", operator(a.adminTestStorage))
 }
 
 // failure turns an error from the machine link into an HTTP answer.
@@ -111,9 +121,17 @@ func (a *App) knownMachine(id string) bool {
 	return false
 }
 
+// sees reports whether the request's user may see machine id (K1: tenants).
+func (a *App) sees(r *http.Request, id string) bool {
+	u, ok := auth.FromContext(r.Context())
+	return ok && u.Sees(a.Store.MachineTenant(id))
+}
+
+// machineOr404 is the machine of the route, if it exists and is in the
+// user's tenant; a machine of another tenant is "unknown", as if absent.
 func (a *App) machineOr404(w http.ResponseWriter, r *http.Request) (string, bool) {
 	id := r.PathValue("id")
-	if !a.knownMachine(id) {
+	if !a.knownMachine(id) || !a.sees(r, id) {
 		jsonErr(w, http.StatusNotFound, "unknown machine "+id)
 		return "", false
 	}
@@ -128,7 +146,7 @@ func rfc(t time.Time) *string {
 	return &s
 }
 
-func (a *App) listMachines(w http.ResponseWriter, _ *http.Request) {
+func (a *App) listMachines(w http.ResponseWriter, r *http.Request) {
 	byID := map[string]*machineOut{}
 	for _, m := range a.Tokens.Machines() {
 		if !m.Fleet {
@@ -163,7 +181,9 @@ func (a *App) listMachines(w http.ResponseWriter, _ *http.Request) {
 	}
 	out := make([]machineOut, 0, len(byID))
 	for _, o := range byID {
-		out = append(out, *o)
+		if a.sees(r, o.ID) {
+			out = append(out, *o)
+		}
 	}
 	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].ID) < strings.ToLower(out[j].ID) })
 	jsonOut(w, http.StatusOK, out)

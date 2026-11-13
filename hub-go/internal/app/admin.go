@@ -13,14 +13,18 @@ import (
 	"github.com/muthuishere/klark/hub-go/internal/tokens"
 )
 
-func (a *App) adminUsers(w http.ResponseWriter, _ *http.Request) {
-	rows, err := a.Store.Users()
+func (a *App) adminUsers(w http.ResponseWriter, r *http.Request) {
+	me, _ := auth.FromContext(r.Context())
+	all, err := a.Store.Users()
 	if err != nil {
 		jsonErr(w, 500, err.Error())
 		return
 	}
-	if rows == nil {
-		rows = []store.User{}
+	rows := []store.User{}
+	for _, u := range all {
+		if me.Sees(u.Tenant) {
+			rows = append(rows, u)
+		}
 	}
 	jsonOut(w, 200, rows)
 }
@@ -33,6 +37,7 @@ func (a *App) adminSaveUser(w http.ResponseWriter, r *http.Request) {
 		Admin                           bool
 		Source                          string   // new users only: local (default) or mockldap
 		Groups                          []string // mockldap users: directory groups; absent keeps them
+		Tenant                          string   // the operator only: which tenant; others create in their own
 	}
 	if !decode(w, r, &b) {
 		return
@@ -42,8 +47,17 @@ func (a *App) adminSaveUser(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, 400, "username must be 1-64 characters without spaces, ':', ',' or '='")
 		return
 	}
+	me, _ := auth.FromContext(r.Context())
 	cur, err := a.Store.User(name)
 	exists := err == nil
+	if exists && !me.Sees(cur.Tenant) {
+		jsonErr(w, 409, "this username is not available")
+		return
+	}
+	tenant, ok := a.adminTenant(w, me, b.Tenant)
+	if !ok {
+		return
+	}
 	if !exists && len(b.Password) < 8 {
 		jsonErr(w, 400, "password must be at least 8 characters")
 		return
@@ -62,7 +76,7 @@ func (a *App) adminSaveUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	u := store.User{Name: name, DisplayName: b.DisplayName, Admin: b.Admin, Source: "local", Groups: b.Groups}
+	u := store.User{Name: name, DisplayName: b.DisplayName, Admin: b.Admin, Source: "local", Groups: b.Groups, Tenant: tenant}
 	if b.Source != "" {
 		u.Source = b.Source
 	}
@@ -76,6 +90,9 @@ func (a *App) adminSaveUser(w http.ResponseWriter, r *http.Request) {
 		}
 		if cur.Source == "builtin" {
 			u.Admin = true
+		}
+		if b.Tenant == "" {
+			u.Tenant = cur.Tenant
 		}
 	}
 	if b.Password != "" {
@@ -94,11 +111,15 @@ func (a *App) adminSaveUser(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) adminDeleteUser(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if me, _ := auth.FromContext(r.Context()); strings.EqualFold(me.Name, name) {
+	me, _ := auth.FromContext(r.Context())
+	if strings.EqualFold(me.Name, name) {
 		jsonErr(w, 409, "you cannot delete yourself")
 		return
 	}
-	if u, err := a.Store.User(name); err == nil && u.Source != "local" && u.Source != auth.SourceMock {
+	if u, err := a.Store.User(name); err == nil && !me.Sees(u.Tenant) {
+		jsonErr(w, 404, "no such user")
+		return
+	} else if err == nil && u.Source != "local" && u.Source != auth.SourceMock {
 		jsonErr(w, 409, "this account comes from "+u.Source+" configuration and is recreated on start; change the environment instead")
 		return
 	}
@@ -120,7 +141,8 @@ type adminMachine struct {
 	Source     string `json:"source"` // env | admin
 }
 
-func (a *App) adminMachines(w http.ResponseWriter, _ *http.Request) {
+func (a *App) adminMachines(w http.ResponseWriter, r *http.Request) {
+	me, _ := auth.FromContext(r.Context())
 	out := []adminMachine{}
 	seen := map[string]bool{}
 	status := func(name string) string {
@@ -131,11 +153,14 @@ func (a *App) adminMachines(w http.ResponseWriter, _ *http.Request) {
 	}
 	for _, m := range a.Cfg.Machines {
 		seen[strings.ToLower(m.Name)] = true
+		if !me.Sees(store.DefaultTenant) {
+			continue
+		}
 		out = append(out, adminMachine{Name: m.Name, Status: status(m.Name), ApprovedBy: "HUB_MACHINES", Source: "env"})
 	}
 	rows, _ := a.Store.Machines()
 	for _, m := range rows {
-		if seen[strings.ToLower(m.Name)] {
+		if seen[strings.ToLower(m.Name)] || !me.Sees(m.Tenant) {
 			continue
 		}
 		out = append(out, adminMachine{Name: m.Name, Status: status(m.Name), ApprovedBy: m.CreatedBy,
@@ -147,8 +172,9 @@ func (a *App) adminMachines(w http.ResponseWriter, _ *http.Request) {
 // adminAddMachine registers a machine and returns its token once (only the SHA-256 is stored).
 func (a *App) adminAddMachine(w http.ResponseWriter, r *http.Request) {
 	var b struct {
-		Name  string
-		Fleet bool
+		Name   string
+		Fleet  bool
+		Tenant string // the operator only
 	}
 	if !decode(w, r, &b) {
 		return
@@ -158,11 +184,15 @@ func (a *App) adminAddMachine(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, 400, "name must be 1-64 characters without spaces, '/', ':', '*', ',' or '='")
 		return
 	}
+	me, _ := auth.FromContext(r.Context())
+	tenant, ok := a.adminTenant(w, me, b.Tenant)
+	if !ok {
+		return
+	}
 	raw := make([]byte, 24)
 	_, _ = rand.Read(raw)
 	token := hex.EncodeToString(raw)
-	me, _ := auth.FromContext(r.Context())
-	ok, err := a.Store.AddMachine(store.Machine{Name: name, SHA256: tokens.Sha256Hex(token), Fleet: b.Fleet, CreatedBy: me.Name})
+	ok, err := a.Store.AddMachine(store.Machine{Name: name, SHA256: tokens.Sha256Hex(token), Fleet: b.Fleet, CreatedBy: me.Name, Tenant: tenant})
 	if err != nil {
 		jsonErr(w, 500, err.Error())
 		return
@@ -179,6 +209,10 @@ func (a *App) adminAddMachine(w http.ResponseWriter, r *http.Request) {
 // can only have their session dropped (the token comes from the environment).
 func (a *App) adminRevokeMachine(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("id")
+	if me, _ := auth.FromContext(r.Context()); !me.Sees(a.Store.MachineTenant(name)) {
+		jsonErr(w, 404, "no such machine")
+		return
+	}
 	err := a.Store.DeleteMachine(name)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		jsonErr(w, 500, err.Error())
@@ -255,4 +289,22 @@ func (a *App) adminTestDirectory(w http.ResponseWriter, r *http.Request) {
 	}
 	ok, msg := a.Auth.TestDirectory(b.Settings, b.Username, b.Password)
 	jsonOut(w, 200, map[string]any{"ok": ok, "message": msg})
+}
+
+// adminTenant is the tenant an admin request acts in: the admin's own, or for
+// the operator the one it names (which must exist).
+func (a *App) adminTenant(w http.ResponseWriter, me auth.User, asked string) (string, bool) {
+	asked = strings.TrimSpace(asked)
+	if asked == "" || strings.EqualFold(asked, me.Tenant) {
+		return me.Tenant, true
+	}
+	if !me.Operator() {
+		jsonErr(w, http.StatusForbidden, "you can only manage your own tenant")
+		return "", false
+	}
+	if !a.Store.TenantExists(asked) {
+		jsonErr(w, http.StatusBadRequest, "no such tenant "+asked)
+		return "", false
+	}
+	return asked, true
 }

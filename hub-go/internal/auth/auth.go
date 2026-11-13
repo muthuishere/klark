@@ -32,6 +32,26 @@ type User struct {
 	Name    string `json:"username"`
 	Display string `json:"displayName"`
 	Admin   bool   `json:"admin"`
+	Tenant  string `json:"tenant"`
+}
+
+// Operator is an admin of the default tenant: it sees and manages every
+// tenant. Every other user sees only their own tenant.
+func (u User) Operator() bool { return u.Admin && strings.EqualFold(u.Tenant, store.DefaultTenant) }
+
+// Sees reports whether u may see something that belongs to tenant t.
+func (u User) Sees(t string) bool {
+	if t == "" {
+		t = store.DefaultTenant
+	}
+	return u.Operator() || strings.EqualFold(u.Tenant, t)
+}
+
+func tenantOrDefault(t string) string {
+	if t == "" {
+		return store.DefaultTenant
+	}
+	return t
 }
 
 type ctxKey struct{}
@@ -192,9 +212,9 @@ func (s *Service) Current(r *http.Request) (User, bool) {
 		if err != nil {
 			return User{}, false // deleted: the cookie is dead
 		}
-		return User{Name: u.Name, Display: u.DisplayName, Admin: u.Admin}, true
+		return User{Name: u.Name, Display: u.DisplayName, Admin: u.Admin, Tenant: tenantOrDefault(u.Tenant)}, true
 	}
-	return User{Name: sess.User, Display: sess.Display, Admin: sess.Admin}, true
+	return User{Name: sess.User, Display: sess.Display, Admin: sess.Admin, Tenant: tenantOrDefault(sess.Tenant)}, true
 }
 
 // CSRF refuses a state-changing browser request that did not come from this hub's own origin. Cookies are
@@ -333,7 +353,7 @@ func (s *Service) login(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		ok(Session{User: u.Name, Source: "db"}, User{Name: u.Name, Display: u.DisplayName, Admin: u.Admin})
+		ok(Session{User: u.Name, Source: "db"}, User{Name: u.Name, Display: u.DisplayName, Admin: u.Admin, Tenant: tenantOrDefault(u.Tenant)})
 	case mode == "ldap":
 		du, err := s.directoryLogin(strings.TrimSpace(body.Username), body.Password)
 		if err != nil {
@@ -344,7 +364,7 @@ func (s *Service) login(w http.ResponseWriter, r *http.Request) {
 			fail()
 			return
 		}
-		ok(Session{User: du.Name, Display: du.Display, Admin: du.Admin, Source: "ldap"}, User{Name: du.Name, Display: du.Display, Admin: du.Admin})
+		ok(Session{User: du.Name, Display: du.Display, Admin: du.Admin, Source: "ldap"}, User{Name: du.Name, Display: du.Display, Admin: du.Admin, Tenant: store.DefaultTenant})
 	default:
 		VerifyPassword(s.dummy, body.Password) // same work whether or not the user exists
 		fail()
