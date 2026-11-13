@@ -33,6 +33,7 @@ Etiquette: one ask per message, say what you need back and in what form, include
 | I want to … | command |
 |---|---|
 | know / set my own address | `klark msg whoami` → `laptop/work/reviewer`; `klark msg name reviewer` |
+| ask an agent and get the answer back when you are NOT in a klark pane (`KLARK_PANE_ID` unset: a plain shell, a script, a coding agent outside klark) | `klark msg send --wait-reply 600 work/coder "<question>"`; it prints the answer. Never invent a `--from` name: nothing can be typed into it, so the answer only reaches `klark msg log`. |
 | message an agent only once it is idle | `klark msg send --wait 300 work/coder "<text>"` |
 | message every agent in this session; on this machine | `klark msg send --all "<text>"`; `klark msg send --all-sessions "<text>"` |
 | list every agent, with its worktree | `klark msg ls --local` (`--json`; without `--local` also the hub's machines) |
@@ -61,6 +62,7 @@ Etiquette: one ask per message, say what you need back and in what form, include
 | `m/s/a: no such agent (agent_not_found)` | The hub reached that machine; no such agent there. |
 | `m/s/a: hub refused: …` | Machine offline/not linked, not exposed by its `--agents`, or no permission to type into it. |
 | `nobody has messaged this pane yet; use klark msg send <to> <text>` | Nothing to reply to; use `send`. |
+| `reply` prints `… is not a klark pane, so the reply was saved for it` | Done: the sender is outside klark and reads the answer with `--wait-reply` or `klark msg log`. Do not resend it, and do not look for it on another machine. |
 | `klark msg: reply works inside a klark pane (KLARK_PANE_ID is not set)` | `reply` and `name` only work from inside a pane. |
 | `no hub configured: pass --hub or set KLARK_HUB_URL` (`klark expose url`) | This machine has no hub. Tell the person; don't guess a URL. |
 | `no pane: run this inside a klark pane or pass --pane <pane-id>` | Ask which pane, then `--pane <id>`. |

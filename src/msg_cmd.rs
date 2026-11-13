@@ -27,6 +27,9 @@ commands:
   ls [--local] [--json]                  agents in every running session, worktrees included (+ the hub's, unless --local)
   send [--from <addr>] [--json] <to> <text...>
                                          deliver a message as a prompt to another agent
+  send --wait-reply <secs> <to> <text...>
+                                         send, then wait for the answer and print it
+                                         (works outside a klark pane: shells, scripts, other agents)
   send --wait <secs> <to> <text...>      wait until the agent is idle (not working, not on a dialog), then send
   send --all [--json] <text...>          every other agent in this session (worktrees included)
   send --all-sessions [--json] <text...> every other agent in every running session on this machine
@@ -600,10 +603,17 @@ fn text_of(words: &[String]) -> R<String> {
 fn cmd_send(args: &[String]) -> R<()> {
     let a = Args::parse(
         args,
-        &["--from", "--wait"],
+        &["--from", "--wait", "--wait-reply"],
         &["--json", "--all", "--all-sessions"],
     )?;
     let wait = wait_secs(&a)?;
+    let wait_reply = a
+        .value("--wait-reply")
+        .map(|v| {
+            v.parse::<u64>()
+                .map_err(|_| Fail::Usage(format!("--wait-reply {v}: seconds expected")))
+        })
+        .transpose()?;
     if a.has("--all") || a.has("--all-sessions") {
         return broadcast(&a, a.has("--all-sessions"));
     }
@@ -612,12 +622,34 @@ fn cmd_send(args: &[String]) -> R<()> {
         .split_first()
         .ok_or_else(|| Fail::Usage("send needs <to> <text...>".into()))?;
     let text = text_of(words)?;
-    let from = a.value("--from").unwrap_or_else(|| whoami().address);
+    let from = a.value("--from").unwrap_or_else(|| {
+        let me = whoami();
+        // Outside a pane every caller is <machine>/<session>/cli; one that
+        // waits for its answer needs an address of its own.
+        if wait_reply.is_some() && me.pane_id.is_none() {
+            format!("{}/{}/cli-{}", me.machine, me.session, std::process::id())
+        } else {
+            me.address
+        }
+    });
     if let Some(secs) = wait {
         wait_until_idle(to, secs)?;
     }
+    let seen = tail_log(&data_dir(), usize::MAX).len();
     let (to_addr, outcome) = send(to, &from, &text);
     let json = a.has("--json");
+    if let (Ok(()), Some(secs)) = (&outcome, wait_reply) {
+        let reply = wait_for_reply(&data_dir(), seen, &from, secs)?;
+        if json {
+            println!(
+                "{}",
+                json!({"delivered": true, "to": to_addr, "from": from, "reply": reply.text, "reply_from": reply.from})
+            );
+        } else {
+            println!("{}", reply.text);
+        }
+        return Ok(());
+    }
     match outcome {
         Ok(()) => {
             if json {
@@ -639,6 +671,28 @@ fn cmd_send(args: &[String]) -> R<()> {
             }
             Err(Fail::Error(e))
         }
+    }
+}
+
+/// `send --wait-reply`: the first message addressed to `me` written to the
+/// shared log after entry `seen`. A reply to a sender that is not a pane
+/// cannot be typed anywhere, but `reply` still logs it, so it is read here.
+fn wait_for_reply(dir: &Path, seen: usize, me: &str, secs: u64) -> R<LogEntry> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(secs);
+    loop {
+        if let Some(e) = tail_log(dir, usize::MAX)
+            .into_iter()
+            .skip(seen)
+            .find(|e| e.dir == "sent" && e.to == me)
+        {
+            return Ok(e);
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(Fail::Error(format!(
+                "delivered, but no reply within {secs}s; it may still come: klark msg log"
+            )));
+        }
+        std::thread::sleep(Duration::from_millis(500));
     }
 }
 
@@ -1005,15 +1059,16 @@ fn cmd_reply(args: &[String]) -> R<()> {
         .ok_or("nobody has messaged this pane yet; use klark msg send <to> <text>")?;
     let from = whoami().address;
     let (to_addr, outcome) = send(&to, &from, &text);
-    outcome.map_err(|e| {
-        if to.ends_with("/cli") && e.starts_with("no agent cli ") {
-            // A plain shell outside any pane sent it: nobody to prompt.
-            format!("{e}; the last message came from {to}, a shell outside any klark pane, so there is no agent to reply to")
-        } else {
-            e
-        }
-    })?;
-    println!("delivered to {to_addr}");
+    match outcome {
+        Ok(()) => println!("delivered to {to_addr}"),
+        // The sender is not a pane (a shell, a script, a coding agent run
+        // outside klark): there is nothing to type into, but the reply is in
+        // the shared log, where `send --wait-reply` and `klark msg log` read it.
+        Err(e) if e.starts_with("no agent ") => println!(
+            "{to} is not a klark pane, so the reply was saved for it (klark msg log) instead of typed"
+        ),
+        Err(e) => return Err(e.into()),
+    }
     Ok(())
 }
 
@@ -1558,5 +1613,30 @@ mod tests {
         assert_eq!(a.positional, ["rev", "--json", "-n"]);
         assert!(!a.has("--json"));
         assert!(Args::parse(&v(&["--bogus"]), &[], &[]).is_err());
+    }
+
+    #[test]
+    fn wait_for_reply_takes_only_a_new_answer_to_me() {
+        let dir = std::env::temp_dir().join(format!("klark-waitreply-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let entry = |dir: &str, from: &str, to: &str, text: &str| LogEntry {
+            ts: String::new(),
+            dir: dir.into(),
+            from: from.into(),
+            to: to.into(),
+            text: text.into(),
+            ok: false,
+            error: Some("no agent cli-7 in any running session".into()),
+        };
+        let me = "m/default/cli-7";
+        append_log(&dir, &entry("sent", "m/w/rev", me, "old answer")).unwrap();
+        let seen = tail_log(&dir, usize::MAX).len();
+        append_log(&dir, &entry("sent", "m/w/rev", "m/default/cli-8", "not mine")).unwrap();
+        append_log(&dir, &entry("received", "m/w/rev", me, "not a reply")).unwrap();
+        append_log(&dir, &entry("sent", "m/w/rev", me, "the answer")).unwrap();
+        let got = wait_for_reply(&dir, seen, me, 1).unwrap();
+        assert_eq!(got.text, "the answer");
+        assert!(wait_for_reply(&dir, seen + 3, me, 0).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

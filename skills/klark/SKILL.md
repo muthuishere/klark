@@ -48,7 +48,7 @@ Most used, without reading further:
 |---|---|
 | see panes / agents here; in all sessions | `klark pane list`, `klark agent list`; `klark msg ls` |
 | prompt an agent and wait | `klark agent prompt <target> "<text>" --wait --timeout 120000` |
-| message an agent (when asked) | `klark msg send <session/agent> "<text>"`; answer one: `klark msg reply "<text>"` |
+| message an agent (when asked) | `klark msg send <session/agent> "<text>"`; answer one: `klark msg reply "<text>"`; outside a klark pane add `--wait-reply 600` to get the answer printed |
 | feed new output to an agent (when asked) | `klark feed add <agent> "<instruction>" --stream "<cmd>"` (or `--follow <file>`, `--poll "<cmd>"`) |
 | share this pane | `klark expose url` |
 
