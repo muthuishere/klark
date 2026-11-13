@@ -1,6 +1,6 @@
 ---
 name: klark
-description: "Control Klark, a terminal multiplexer for coding agents: panes, tabs, workspaces, commands and agents; agents across klark sessions; messaging other agents (klark msg); exposing this machine or pane to a klark hub (klark expose, --agents, share links); offering files; the hub (login, chat/transcript view); feeds (klark feed: a log, command, file or URL's new output sent to an agent). Use when the user mentions Klark, or, running inside a Klark pane, says: share this, give me a link, expose, which agents are running, message/ask/tell another agent, tell all agents / broadcast, reply to that agent, send a file / send this to my phone, show me a file, hub, watch this log / tell me when X changes. Do not use merely because a task could benefit from a background terminal, delegation, or parallel work. Requires KLARK_ENV=1."
+description: "Control Klark, a terminal multiplexer for coding agents: panes, tabs, workspaces, commands and agents; agents across klark sessions; messaging other agents (klark msg); feeds (klark feed: a command, log, file or URL whose new output is sent to an agent); exposing this machine or pane to a klark hub (klark expose, share links); offering files; the hub. Use when the user mentions Klark or a klark command, or, running inside a Klark pane, asks about its panes, agents or sessions, says share this / give me a link / expose / send this to my phone / show me a file / hub. Use messaging and feeds ONLY when the user asks for klark msg or klark feed (or says in klark / via klark): another skill that also sends messages, alerts, mail, WhatsApp or watches things (notifier, herdr-message, a monitor or cron skill) takes precedence. Do not use merely because a task could benefit from a background terminal, delegation, or parallel work. Requires KLARK_ENV=1."
 ---
 
 # Klark
@@ -12,6 +12,8 @@ Before issuing any control command, verify that this agent is running inside a K
 ```bash
 test "${KLARK_ENV:-}" = 1
 ```
+
+Precedence: `klark msg` and `klark feed` are used only when the user asks for them (by name, or "in klark" / "via klark"). If another skill or tool also fits (sending a message, mail, WhatsApp or an alert; watching or polling something; scheduling), that one wins and this skill stays out of it. Never start a feed or message an agent on your own initiative.
 
 If the check fails, say that you are not running inside Klark and stop. Do not inspect or control the focused Klark session from outside Klark.
 
