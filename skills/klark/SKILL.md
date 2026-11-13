@@ -5,87 +5,43 @@ description: "Control Klark, a terminal multiplexer for coding agents: panes, ta
 
 # Klark
 
-Klark organizes terminals into workspaces, tabs, and panes, recognizes coding agents running inside panes, and exposes the current session through the `klark` CLI.
+Klark organizes terminals into workspaces, tabs and panes, recognizes coding agents in panes, and exposes the session through the `klark` CLI.
 
-Before issuing any control command, verify that this agent is running inside a Klark-managed pane:
+First check you run inside a Klark pane; if not, say so and stop:
 
 ```bash
 test "${KLARK_ENV:-}" = 1
 ```
 
-Precedence: `klark msg` and `klark feed` are used only when the user asks for them (by name, or "in klark" / "via klark"). If another skill or tool also fits (sending a message, mail, WhatsApp or an alert; watching or polling something; scheduling), that one wins and this skill stays out of it. Never start a feed or message an agent on your own initiative.
+## Precedence
 
-If the check fails, say that you are not running inside Klark and stop. Do not inspect or control the focused Klark session from outside Klark.
+`klark msg` and `klark feed` are used only when the user asks for them (by name, or "in klark" / "via klark"). If another skill or tool also fits (sending a message, mail, WhatsApp or an alert; watching or polling something; scheduling), that one wins. Never start a feed or message an agent on your own initiative.
 
-When the check passes, the `klark` binary in `PATH` talks to the current session. Use it to inspect neighboring work, create terminal layout, start agents and commands, read output, and wait for state changes.
+## Routing
 
-## I want to … → command
+Read only the reference the request needs; it sits next to this file (`klark --skill <name>` prints it).
+
+<routes>
+  <route ask="panes, tabs, workspaces, IDs; start, prompt, read or wait on an agent; run a command in a pane; another machine (--machine)" read="references/operations.md"/>
+  <route ask="klark msg: message, reply, broadcast, who am I, list agents across sessions; an error message from klark" read="references/messaging.md"/>
+  <route ask="klark feed: watch a command, log, file or URL and send its new output to an agent; manage feeds; a [klark feed …] message arrived" read="references/feed.md"/>
+  <route ask="a ready-made feed: GitHub PRs, CI, reviews (gh); files, folders, git; web or API; mail; pods, containers, disk" read="references/feed-recipes.md"/>
+  <route ask="share this / give me a link, expose, hub connect or stop, offer or link a file, hub login" read="references/hub.md"/>
+</routes>
+
+Most used, without reading further:
 
 | I want to … | command |
 |---|---|
-| see the panes / agents of this session | `klark pane list`, `klark agent list` |
-| see which agents are running in ALL sessions | `klark agent list -a` (JSON, `session` + `address`) or `klark msg ls` (table) |
-| start an agent next to me | `klark pane split --current --direction right --cwd "$PWD" --no-focus`, then `klark agent start <name> --kind <kind> --pane <id>` |
+| see panes / agents here; in all sessions | `klark pane list`, `klark agent list`; `klark msg ls` |
 | prompt an agent and wait | `klark agent prompt <target> "<text>" --wait --timeout 120000` |
-| read / wait on an agent in another session | `klark agent read work/coder --lines 40`, `klark agent wait work/coder --timeout 600000` |
-| know my own address | `klark msg whoami` → `laptop/work/reviewer` |
-| name myself | `klark msg name reviewer` |
-| message another agent (any session or machine) | `klark msg send work/coder "<text>"` |
-| message an agent only once it is idle (not mid-turn, not on a dialog) | `klark msg send --wait 300 work/coder "<text>"` |
-| message every agent in this session (worktrees included) | `klark msg send --all "<text>"` (add `--wait <secs>` to skip busy ones until idle) |
-| message every agent in every session on this machine | `klark msg send --all-sessions "<text>"` |
-| list every agent, with its worktree | `klark msg ls --local` (`--json`; drop `--local` to include the hub's machines) |
-| answer a message I got | `klark msg reply "<text>"` |
-| see recent messages | `klark msg log` (`-n 50`, `--json`) |
-| hear about new output of a log, command, inbox or URL without polling it myself | `klark feed add <agent> "<instruction>" --stream "<command>"` (or `--follow <file>`, `--poll "<command>"`; see `references/feed.md`) |
-| share this pane ("share this", "give me a link") | `klark expose url` |
-| put this machine on a hub | `klark hub connect --url http://host:7470` (owner approves in the browser; owner only; keeps running in the background, `--foreground` to stay in the terminal) |
-| take this machine off the hub | `klark hub stop` (one hub at a time: the last one connected is the default) |
-| expose only some agents | `klark expose … --agents reviewer,builder` (or `KLARK_EXPOSE_AGENTS`) |
-| send a file to the person / their phone | `klark offer <path>` |
-| give me a link to a file / files | `klark link <file>...` (prints a hub viewer link per file) |
-| show me / send me a file (any file you mention) | write its **full absolute path** (`/Users/me/Downloads/a.mp3`), never `~/` or a bare name: the hub turns it into a viewer + download link |
-| reach agents on other machines | `klark msg login --hub http://hub.lan:7470 --user <name>` (a person types the password) |
-| check hub, token, sessions | `klark msg status` |
-
-## References (read the one you need)
-
-| file | covers |
-|---|---|
-| `references/operations.md` | panes, tabs, workspaces, IDs, caller context, `--machine`, starting and prompting agents, running commands in a pane, read sources |
-| `references/messaging.md` | agents across sessions, `klark msg` (send, reply, `--wait`, `--all`), how a message is delivered, error messages and fixes |
-| `references/feed.md` | `klark feed`: send a log, command, file or URL's new output to an agent |
-| `references/feed-recipes.md` | ready feeds: GitHub PRs/CI/reviews (`gh`), files and folders, git, web/APIs, mail, pods/containers/disk |
-| `references/hub.md` | `klark hub`, `klark expose` and share links, `klark offer` / `klark link`, the hub's pages |
-
-They sit next to this file (`<this skill's folder>/references/…`). `klark --skill <name>` prints one (`klark --skill feed`).
+| message an agent (when asked) | `klark msg send <session/agent> "<text>"`; answer one: `klark msg reply "<text>"` |
+| feed new output to an agent (when asked) | `klark feed add <agent> "<instruction>" --stream "<cmd>"` (or `--follow <file>`, `--poll "<cmd>"`) |
+| share this pane | `klark expose url` |
 
 ## Learn the current CLI
 
-The installed binary is the authority for command syntax. Start with:
-
-```bash
-klark --help
-```
-
-Then print the relevant command group by running the group without a subcommand:
-
-```bash
-klark agent
-klark pane
-klark workspace
-klark tab
-klark worktree
-klark terminal
-klark notification
-klark integration
-klark session
-klark machine
-```
-
-Do not run bare `klark` for discovery; it launches or attaches the TUI. Do not probe a mutating nested command by omitting arguments. Commands such as `klark workspace create` are valid with defaults and will execute.
-
-Most control commands return JSON. Read identifiers and state from those responses instead of predicting them.
+The installed binary is the authority for syntax: `klark --help`, then a group without a subcommand (`klark agent`, `klark pane`, `klark feed`, `klark msg`, …). Do not run bare `klark` (it opens the TUI), and do not probe a mutating command by leaving out arguments (`klark workspace create` runs with defaults). Most commands return JSON: read IDs and state from it.
 
 ## Safety and coordination rules
 
@@ -101,7 +57,6 @@ Most control commands return JSON. Read identifiers and state from those respons
 - Never kill the main Klark process. Use named test sessions for experiments that need an isolated server.
 - CLI server errors are JSON on stderr with exit status 1. CLI syntax errors exit with status 2.
 
-## Showing or sending files
+## Files
 
 Inside a klark pane, the person may be reading you through klarkhub. Whenever you show, list, create or are asked to send a file, write its full absolute path on its own (for example `/Users/me/Downloads/ganesha-speech.mp3`). The hub makes that path a link that opens the file viewer and downloads it from this machine (up to 10 MB). Do not shorten it to `~/…` or a bare file name, and do not route it through another channel (email, chat bots) unless asked. When the person asks for a link, or may be reading elsewhere (phone, chat), run `klark link <file>...` and paste the links it prints: each opens the hub's viewer (code, markdown, images, PDF) with a download button; nothing is uploaded. For a file the person should get right away as a download on the pane page, run `klark offer <path>`.
-

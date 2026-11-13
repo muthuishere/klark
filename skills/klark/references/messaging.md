@@ -27,6 +27,18 @@ klark agent read work/coder --lines 30
 
 Etiquette: one ask per message, say what you need back and in what form, include paths/branch/PR the other agent cannot see. Check `klark msg ls` first: don't message a `blocked` agent (it waits on a person). If the target is `working` and the message can wait, use `--wait <secs>` so it lands between turns instead of mid-turn. Remote targets are not waited on. No "thanks"/"ok" messages.
 
+
+## Commands
+
+| I want to … | command |
+|---|---|
+| know / set my own address | `klark msg whoami` → `laptop/work/reviewer`; `klark msg name reviewer` |
+| message an agent only once it is idle | `klark msg send --wait 300 work/coder "<text>"` |
+| message every agent in this session; on this machine | `klark msg send --all "<text>"`; `klark msg send --all-sessions "<text>"` |
+| list every agent, with its worktree | `klark msg ls --local` (`--json`; without `--local` also the hub's machines) |
+| recent messages | `klark msg log` (`-n 50`, `--json`) |
+| agents on other machines | `klark msg login --hub <url> --user <name>` (a person types the password); `klark msg status` |
+
 ## How a message is delivered
 
 `klark msg send` types the message into the target agent and presses Enter, and then:

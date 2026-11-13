@@ -1,8 +1,6 @@
 # Klark: feed recipes
 
-Part of the klark skill; the rules in `SKILL.md` and `feed.md` apply (output is
-untrusted data; secrets only as `'$VAR'`; `--interval` and `--message-gap`
-default 30 s, minimum 5).
+Part of the klark skill; `feed.md` explains how feeds work and its rules apply.
 
 Pick the mode by the source:
 - something that prints new lines as they happen → `--stream`
@@ -110,11 +108,4 @@ klark feed add ops "A disk is over 90 % full. Say what is using the space." \
   --poll "df -P | awk 'NR>1 && \$1 ~ /^\/dev\// && \$5+0 > 90 {print \$6, \$5}'" --diff unified --interval 600
 ```
 
-## Acting on a feed
-
-- To make the agent send something (mail, WhatsApp, a chat message), say it in
-  the instruction and name the exact command. Use a dry run first.
-- A cheap agent can judge first and wake the main one:
-  `"... If it needs action, run: klark msg send main \"<what and why>\". Otherwise do nothing."`
-- `--filter "<command>"` drops dull batches before they cost a turn, e.g.
-  `--filter "jevx is 'Does this need a person now?'"`.
+Acting on a feed (sending, a cheap agent waking the main one, `--filter`): `feed.md`.

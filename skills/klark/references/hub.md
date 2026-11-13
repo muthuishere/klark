@@ -54,3 +54,7 @@ Needs `klark expose` running with a hub (`KLARK_HUB_URL`, `KLARK_HUB_TOKEN`). Ma
 - A pane page has two tabs: **Terminal** (the live screen at the pane's real size) and **Transcript** (a cleaned, chat-style view of the conversation; phones open it by default). They can type replies and upload images there.
 - Cross-machine messages need a hub login: `klark msg login --hub <url> --user <name>` (the person types the password, or `--password-stdin`); `klark msg logout` forgets the token; `klark msg status` shows hub, token expiry and running sessions.
 - Nothing streams until someone opens a page; it stops when they leave.
+
+## Links to files
+
+`klark link <file>...` prints a hub viewer link per file (code, markdown, images, PDF, with download); nothing is uploaded. `klark offer <path>` puts a file on the pane's hub page as a download.
