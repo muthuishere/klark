@@ -571,7 +571,6 @@ fn install_skill_for(
     let mut roots = vec![
         ("skill.claude", home.join(".claude")),
         ("skill.agents", home.join(".agents")),
-        ("skill.codex", home.join(".codex")),
     ];
     if let Some(dir) = claude_config {
         roots.push(("skill.claude_config", dir.to_path_buf()));
@@ -1287,11 +1286,10 @@ mod tests {
         }
 
         #[test]
-        fn installs_into_claude_config_dir_and_codex_once_each() {
+        fn installs_into_claude_config_dir_once() {
             let home = scratch("profiles");
             let profile = home.join(".claude-work");
             std::fs::create_dir_all(&profile).unwrap();
-            std::fs::create_dir_all(home.join(".codex")).unwrap();
             #[cfg(unix)]
             std::os::unix::fs::symlink(&profile, home.join(".claude")).unwrap();
             let versions = home.join("config/versions.txt");
@@ -1300,10 +1298,7 @@ mod tests {
                 std::fs::read_to_string(skill_file(&home, ".claude-work")).unwrap(),
                 SKILL
             );
-            assert_eq!(
-                std::fs::read_to_string(skill_file(&home, ".codex")).unwrap(),
-                SKILL
-            );
+            assert!(!home.join(".codex").exists());
             // The link and its target are written once, under the first key.
             #[cfg(unix)]
             assert!(read_versions(&versions)
