@@ -7,6 +7,8 @@ use std::time::Instant;
 use tracing::warn;
 
 use super::{App, GIT_REMOTE_STATUS_REFRESH_INTERVAL, GIT_REPO_DISCOVERY_REFRESH_INTERVAL};
+
+const CWD_DRIFT_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
 use crate::events::AppEvent;
 use crate::workspace::{GitStatusCacheEntry, GitStatusRefreshDemand, WorkspaceGitStatus};
 
@@ -153,6 +155,28 @@ impl App {
         self.git_identity_refresh_requested = false;
         if refresh_repo_discovery {
             self.last_git_repo_discovery_refresh = now;
+        }
+    }
+
+    /// A workspace's folder can move without the shell reporting it: a coding
+    /// agent that enters a new git worktree (or `cd`s inside its own tool)
+    /// sends no cwd escape. Its pane's process cwd changes all the same; when
+    /// it no longer matches the folder the workspace's git identity was read
+    /// from, look again now instead of at the 5-minute rediscovery, so the new
+    /// worktree shows in the sidebar at once. Checked at most every 2 s.
+    pub(crate) fn check_workspace_cwd_drift(&mut self, now: Instant) {
+        if now.saturating_duration_since(self.last_cwd_drift_check) < CWD_DRIFT_CHECK_INTERVAL
+            || self.git_identity_refresh_requested
+        {
+            return;
+        }
+        self.last_cwd_drift_check = now;
+        let moved = self.state.workspaces.iter().any(|ws| {
+            ws.resolved_identity_cwd_from(&self.state.terminals, &self.terminal_runtimes)
+                .is_some_and(|cwd| cwd != ws.cached_identity_cwd)
+        });
+        if moved {
+            self.request_git_identity_refresh(now);
         }
     }
 
@@ -390,6 +414,44 @@ mod tests {
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].resolved_identity_cwd, cwd);
         assert_eq!(items[0].cache_key_hint, None);
+    }
+
+    #[test]
+    fn a_workspace_whose_folder_moved_is_looked_at_again_soon() {
+        let mut app = test_app(&crate::config::Config::default());
+        let mut ws = Workspace::test_new("test");
+        ws.identity_cwd = PathBuf::from("/repo/.claude/worktrees/cost");
+        ws.cached_identity_cwd = PathBuf::from("/repo");
+        ws.tabs.clear();
+        app.state.workspaces.push(ws);
+        let start = Instant::now();
+        app.last_cwd_drift_check = start;
+        app.git_identity_refresh_requested = false;
+
+        // Not more often than every 2 s.
+        app.check_workspace_cwd_drift(start + std::time::Duration::from_millis(500));
+        assert!(!app.git_identity_refresh_requested);
+
+        app.check_workspace_cwd_drift(start + std::time::Duration::from_secs(3));
+        assert!(
+            app.git_identity_refresh_requested,
+            "moved folder not noticed"
+        );
+    }
+
+    #[test]
+    fn a_workspace_that_did_not_move_causes_no_refresh() {
+        let mut app = test_app(&crate::config::Config::default());
+        let mut ws = Workspace::test_new("test");
+        ws.identity_cwd = PathBuf::from("/repo");
+        ws.cached_identity_cwd = PathBuf::from("/repo");
+        ws.tabs.clear();
+        app.state.workspaces.push(ws);
+        let start = Instant::now();
+        app.last_cwd_drift_check = start;
+        app.git_identity_refresh_requested = false;
+        app.check_workspace_cwd_drift(start + std::time::Duration::from_secs(3));
+        assert!(!app.git_identity_refresh_requested);
     }
 
     #[test]

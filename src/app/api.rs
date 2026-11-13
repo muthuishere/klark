@@ -380,6 +380,9 @@ impl App {
             }
         }
         self.sync_full_lifecycle_authority_detection_pauses();
+        if !terminal_cwd_reported {
+            self.check_workspace_cwd_drift(Instant::now());
+        }
         if terminal_cwd_reported {
             self.request_git_identity_refresh(Instant::now());
             self.render_dirty.request_generic();
