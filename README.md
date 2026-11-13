@@ -59,11 +59,12 @@ klark machines will keep working against either, because the machine link protoc
 1. Run klarkhub (see [deploy guide](docs/deploy.md)):
 
    ```bash
-   docker run -d -p 7470:7470 -v klarkhub-data:/data ghcr.io/muthuishere/klarkhub:latest
+   docker run -d -p 7470:7470 -v klarkhub-data:/data -e HUB_ADMIN_PASSWORD='choose-one' ghcr.io/muthuishere/klarkhub:latest
    # or: kubectl apply -f deploy/k8s/
    ```
 
-   Open `http://<host>:7470`, sign in as `admin` / `adminadmin`, and change the password.
+   Open `http://<host>:7470` and sign in as `admin` with that password. (A hub that listens on
+   the network does not start while `admin` still has the default password.)
 
 2. On each machine:
 

@@ -41,6 +41,10 @@ type User struct {
 
 // Operator is an admin of the default tenant: it sees and manages every
 // tenant. Every other user sees only their own tenant.
+// ReadOnly users see machines and panes but cannot type, send, upload or
+// message: a viewer account, or a platform ticket with role viewer.
+func (u User) ReadOnly() bool { return u.Role == "viewer" && !u.Admin }
+
 func (u User) Operator() bool {
 	return u.Admin && !u.NotOperator && strings.EqualFold(u.Tenant, store.DefaultTenant)
 }
@@ -248,7 +252,7 @@ func (s *Service) Current(r *http.Request) (User, bool) {
 		if err != nil {
 			return User{}, false // deleted: the cookie is dead
 		}
-		return User{Name: u.Name, Display: u.DisplayName, Admin: u.Admin, Tenant: tenantOrDefault(u.Tenant)}, true
+		return User{Name: u.Name, Display: u.DisplayName, Admin: u.Admin, Tenant: tenantOrDefault(u.Tenant), Role: u.Role}, true
 	}
 	if strings.HasPrefix(sess.Source, "platform:") && !s.Store.TenantExists(sess.Tenant) {
 		return User{}, false // the tenant was deleted: the session ends with it

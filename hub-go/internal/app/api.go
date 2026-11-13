@@ -37,12 +37,13 @@ func (a *App) mountAPI(mux *http.ServeMux) {
 	mux.Handle("GET /api/machines/{id}/events", user(a.machineEvents))
 	mux.Handle("GET /api/machines/{id}/panes/{pane}/chat", user(a.getChat))
 	mux.Handle("GET /api/machines/{id}/panes/{pane}/events", user(a.paneEvents))
-	mux.Handle("POST /api/machines/{id}/panes/{pane}/input", user(a.postInput))
-	mux.Handle("POST /api/machines/{id}/panes/{pane}/keys", user(a.postKeys))
-	mux.Handle("POST /api/machines/{id}/panes/{pane}/send", user(a.postSend))
-	mux.Handle("POST /api/machines/{id}/panes/{pane}/upload", user(a.postUpload))
+	mux.Handle("POST /api/machines/{id}/panes/{pane}/input", user(a.acting("input", a.postInput)))
+	mux.Handle("POST /api/machines/{id}/panes/{pane}/keys", user(a.acting("keys", a.postKeys)))
+	mux.Handle("POST /api/machines/{id}/panes/{pane}/send", user(a.acting("send", a.postSend)))
+	mux.Handle("POST /api/machines/{id}/panes/{pane}/upload", user(a.acting("upload", a.postUpload)))
 
-	mux.Handle("GET /api/assets/{sha}", http.HandlerFunc(a.getAsset)) // machine token or cookie, checked inside
+	mux.Handle("GET /api/assets/{sha}", http.HandlerFunc(a.getAsset))
+	mux.Handle("GET /api/admin/audit", admin(a.adminAudit)) // machine token or cookie, checked inside
 
 	// `klark hub connect` (ADR 0012): start and poll need no sign-in (rate limited); the decision does.
 	mux.HandleFunc("POST /api/connect/start", a.connectStart)
@@ -51,13 +52,13 @@ func (a *App) mountAPI(mux *http.ServeMux) {
 	mux.Handle("POST /api/connect/requests/{code}/approve", user(a.connectDecide(true)))
 	mux.Handle("POST /api/connect/requests/{code}/deny", user(a.connectDecide(false)))
 
-	mux.Handle("GET /api/files/{id}", user(a.fileInfo))
-	mux.Handle("GET /api/files/{id}/markdown", user(a.fileMarkdown))
-	mux.Handle("GET /api/files/{id}/raw", user(a.fileRaw))
+	mux.Handle("GET /api/files/{id}", user(a.reading("file", a.fileInfo)))
+	mux.Handle("GET /api/files/{id}/markdown", user(a.reading("file", a.fileMarkdown)))
+	mux.Handle("GET /api/files/{id}/raw", user(a.reading("file", a.fileRaw)))
 
 	mux.Handle("GET /api/agents", user(a.listAgents))
 	mux.Handle("GET /api/messages", user(a.listMessages))
-	mux.Handle("POST /api/messages", user(a.postMessage))
+	mux.Handle("POST /api/messages", user(a.acting("message", a.postMessage)))
 
 	mux.Handle("GET /api/admin/users", admin(a.adminUsers))
 	mux.Handle("POST /api/admin/users", admin(a.adminSaveUser))

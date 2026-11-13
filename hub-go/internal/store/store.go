@@ -127,6 +127,7 @@ type User struct {
 	// Groups are the directory groups of a mockldap user ("|" is not allowed in a name).
 	Groups []string `json:"groups"`
 	Tenant string   `json:"tenant"`
+	Role   string   `json:"role"` // member (default) or viewer (read-only)
 }
 
 func joinGroups(g []string) string { return strings.Join(g, "|") }
@@ -146,9 +147,9 @@ func (s *Store) UpsertUser(u User) error {
 	if u.DisplayName == "" {
 		u.DisplayName = u.Name
 	}
-	_, err := s.db.Exec(`INSERT INTO users (name, display_name, hash, admin, source, created, groups, tenant) VALUES (?,?,?,?,?,?,?,?)
-		ON CONFLICT(name) DO UPDATE SET display_name=excluded.display_name, hash=excluded.hash, admin=excluded.admin, source=excluded.source, groups=excluded.groups, tenant=excluded.tenant`,
-		u.Name, u.DisplayName, u.Hash, b2i(u.Admin), u.Source, time.Now().Unix(), joinGroups(u.Groups), tenantOr(u.Tenant))
+	_, err := s.db.Exec(`INSERT INTO users (name, display_name, hash, admin, source, created, groups, tenant, role) VALUES (?,?,?,?,?,?,?,?,?)
+		ON CONFLICT(name) DO UPDATE SET display_name=excluded.display_name, hash=excluded.hash, admin=excluded.admin, source=excluded.source, groups=excluded.groups, tenant=excluded.tenant, role=excluded.role`,
+		u.Name, u.DisplayName, u.Hash, b2i(u.Admin), u.Source, time.Now().Unix(), joinGroups(u.Groups), tenantOr(u.Tenant), roleOr(u.Role))
 	return err
 }
 
@@ -157,8 +158,8 @@ func (s *Store) InsertUser(u User) (bool, error) {
 	if u.DisplayName == "" {
 		u.DisplayName = u.Name
 	}
-	r, err := s.db.Exec(`INSERT OR IGNORE INTO users (name, display_name, hash, admin, source, created, groups, tenant) VALUES (?,?,?,?,?,?,?,?)`,
-		u.Name, u.DisplayName, u.Hash, b2i(u.Admin), u.Source, time.Now().Unix(), joinGroups(u.Groups), tenantOr(u.Tenant))
+	r, err := s.db.Exec(`INSERT OR IGNORE INTO users (name, display_name, hash, admin, source, created, groups, tenant, role) VALUES (?,?,?,?,?,?,?,?,?)`,
+		u.Name, u.DisplayName, u.Hash, b2i(u.Admin), u.Source, time.Now().Unix(), joinGroups(u.Groups), tenantOr(u.Tenant), roleOr(u.Role))
 	if err != nil {
 		return false, err
 	}
@@ -170,13 +171,13 @@ func scanUser(sc interface{ Scan(...any) error }) (User, error) {
 	var u User
 	var admin int
 	var groups string
-	err := sc.Scan(&u.Name, &u.DisplayName, &u.Hash, &admin, &u.Source, &u.Created, &groups, &u.Tenant)
+	err := sc.Scan(&u.Name, &u.DisplayName, &u.Hash, &admin, &u.Source, &u.Created, &groups, &u.Tenant, &u.Role)
 	u.Admin = admin != 0
 	u.Groups = splitGroups(groups)
 	return u, err
 }
 
-const userCols = `name, display_name, hash, admin, source, created, groups, tenant`
+const userCols = `name, display_name, hash, admin, source, created, groups, tenant, role`
 
 func (s *Store) User(name string) (User, error) {
 	u, err := scanUser(s.db.QueryRow(`SELECT `+userCols+` FROM users WHERE lower(name) = lower(?)`, name))
@@ -331,6 +332,13 @@ func (s *Store) RecentMessages(limit int, tenant string) ([]Message, error) {
 // DefaultTenant holds everything a hub had before tenants, env-configured
 // machines and fleet tokens. Its admins operate the whole hub.
 const DefaultTenant = "default"
+
+func roleOr(r string) string {
+	if r == "viewer" {
+		return r
+	}
+	return "member"
+}
 
 func tenantOr(t string) string {
 	if strings.TrimSpace(t) == "" {

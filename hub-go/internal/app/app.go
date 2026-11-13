@@ -56,6 +56,7 @@ type App struct {
 	// Now is the clock of connect requests (tests move it); nil is time.Now.
 	Now func() time.Time
 
+	actions           window        // action budgets per user and per machine (guard.go)
 	connectStartLimit *auth.Limiter // `klark hub connect` starts per client address
 	redeemLimit       *auth.Limiter // failed pairing-code redemptions per client address
 	connectPollLimit  *auth.Limiter // and polls

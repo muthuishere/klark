@@ -38,6 +38,7 @@ func (a *App) adminSaveUser(w http.ResponseWriter, r *http.Request) {
 		Source                          string   // new users only: local (default) or mockldap
 		Groups                          []string // mockldap users: directory groups; absent keeps them
 		Tenant                          string   // the operator only: which tenant; others create in their own
+		Role                            string   // member (default) or viewer (read-only); absent keeps it
 	}
 	if !decode(w, r, &b) {
 		return
@@ -76,7 +77,11 @@ func (a *App) adminSaveUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	u := store.User{Name: name, DisplayName: b.DisplayName, Admin: b.Admin, Source: "local", Groups: b.Groups, Tenant: tenant}
+	if b.Role != "" && b.Role != "member" && b.Role != "viewer" {
+		jsonErr(w, 400, "role must be member or viewer")
+		return
+	}
+	u := store.User{Name: name, DisplayName: b.DisplayName, Admin: b.Admin, Source: "local", Groups: b.Groups, Tenant: tenant, Role: b.Role}
 	if b.Source != "" {
 		u.Source = b.Source
 	}
@@ -93,6 +98,9 @@ func (a *App) adminSaveUser(w http.ResponseWriter, r *http.Request) {
 		}
 		if b.Tenant == "" {
 			u.Tenant = cur.Tenant
+		}
+		if b.Role == "" {
+			u.Role = cur.Role
 		}
 	}
 	if b.Password != "" {

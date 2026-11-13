@@ -138,7 +138,7 @@ first, or the binary serves a placeholder page:
 
 ```sh
 cd hub-go/ui && npm ci && npm run build      # writes ../internal/ui/dist
-cd .. && go run ./cmd/klarkhub               # http://localhost:7470, sign in admin / adminadmin
+cd .. && HUB_ADDR=127.0.0.1:7470 go run ./cmd/klarkhub   # http://localhost:7470, sign in admin / adminadmin
 curl http://localhost:7470/healthz           # ok
 ```
 

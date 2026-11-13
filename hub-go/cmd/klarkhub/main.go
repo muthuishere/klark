@@ -57,6 +57,9 @@ func main() {
 		log.Fatal(err)
 	}
 	defer a.Close()
+	if err := auth.StartupCheck(cfg, a.Store, os.Getenv); err != nil {
+		log.Fatal(err)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

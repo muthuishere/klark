@@ -41,7 +41,8 @@ browser's `/_blazor` uses Server-Sent Events or long polling). Set
 
 ## First sign-in
 
-1. Sign in as `admin` with `adminadmin` (or the Secret's `admin-password`).
+1. Sign in as `admin` with the Secret's `admin-password` (`adminadmin` works only for a hub that
+   listens on localhost; on the network the hub does not start until the password is set).
 2. Change the password: the banner, or ⋯ → Change password (`/account/password`).
 3. Pick the sign-in directory at ⋯ → Sign-in directory (`/admin/directory`):
    save LDAP settings, use Test connection, then switch the mode. Or manage the

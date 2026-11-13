@@ -235,6 +235,10 @@ func (a *App) connectDecide(approve bool) http.HandlerFunc {
 			return
 		}
 		me, _ := auth.FromContext(r.Context())
+		if me.ReadOnly() {
+			jsonErr(w, http.StatusForbidden, "read-only access: this account cannot approve machines")
+			return
+		}
 		status := "denied"
 		if approve {
 			status = "approved"
