@@ -34,11 +34,16 @@ type User struct {
 	Admin   bool   `json:"admin"`
 	Tenant  string `json:"tenant"`
 	Role    string `json:"role,omitempty"` // from a platform ticket: viewer | member | admin
+	// NotOperator: a directory (LDAP/OIDC) admin, who administers the default
+	// tenant but does not operate the others unless HUB_DIRECTORY_OPERATORS is set.
+	NotOperator bool `json:"-"`
 }
 
 // Operator is an admin of the default tenant: it sees and manages every
 // tenant. Every other user sees only their own tenant.
-func (u User) Operator() bool { return u.Admin && strings.EqualFold(u.Tenant, store.DefaultTenant) }
+func (u User) Operator() bool {
+	return u.Admin && !u.NotOperator && strings.EqualFold(u.Tenant, store.DefaultTenant)
+}
 
 // Sees reports whether u may see something that belongs to tenant t.
 // t "" means no tenant (a machine id the hub has no record of): operator only.
@@ -151,19 +156,44 @@ func (s *Service) ExternalBase(r *http.Request) string {
 }
 
 // ClientIP is the caller's address (X-Forwarded-For only from a loopback or private peer).
-func ClientIP(r *http.Request) string { return clientIP(r) }
+func (s *Service) ClientIP(r *http.Request) string { return clientIP(r, s.Cfg.TrustedProxies) }
 
-func clientIP(r *http.Request) string {
+// clientIP is the caller's address. X-Forwarded-For is believed only when the
+// peer is a trusted proxy (HUB_TRUSTED_PROXIES), and then read from the right:
+// the nearest hop that is not itself a trusted proxy. A caller cannot choose
+// its own address by sending the header.
+func clientIP(r *http.Request, trusted []*net.IPNet) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		host = r.RemoteAddr
 	}
-	if ip := net.ParseIP(host); ip != nil && (ip.IsLoopback() || ip.IsPrivate()) {
-		if x := firstOf(r.Header.Get("X-Forwarded-For")); x != "" {
-			return x
+	if !inNets(net.ParseIP(host), trusted) {
+		return host
+	}
+	hops := strings.Split(strings.Join(r.Header.Values("X-Forwarded-For"), ","), ",")
+	for i := len(hops) - 1; i >= 0; i-- {
+		h := strings.TrimSpace(hops[i])
+		ip := net.ParseIP(h)
+		if ip == nil {
+			break
+		}
+		if !inNets(ip, trusted) {
+			return h
 		}
 	}
 	return host
+}
+
+func inNets(ip net.IP, nets []*net.IPNet) bool {
+	if ip == nil {
+		return false
+	}
+	for _, n := range nets {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -190,12 +220,16 @@ func (s *Service) setCookie(w http.ResponseWriter, r *http.Request, name, value 
 }
 
 func (s *Service) startSession(w http.ResponseWriter, r *http.Request, sess Session) error {
-	sess.Expires = time.Now().Add(SessionTTL).Unix()
+	return s.startSessionFor(w, r, sess, SessionTTL)
+}
+
+func (s *Service) startSessionFor(w http.ResponseWriter, r *http.Request, sess Session, ttl time.Duration) error {
+	sess.Expires = time.Now().Add(ttl).Unix()
 	tok, err := s.Signer.Sign(sess)
 	if err != nil {
 		return err
 	}
-	s.setCookie(w, r, CookieName, tok, int(SessionTTL.Seconds()))
+	s.setCookie(w, r, CookieName, tok, int(ttl.Seconds()))
 	return nil
 }
 
@@ -219,7 +253,9 @@ func (s *Service) Current(r *http.Request) (User, bool) {
 	if strings.HasPrefix(sess.Source, "platform:") && !s.Store.TenantExists(sess.Tenant) {
 		return User{}, false // the tenant was deleted: the session ends with it
 	}
-	return User{Name: sess.User, Display: sess.Display, Admin: sess.Admin, Tenant: tenantOrDefault(sess.Tenant), Role: sess.Role}, true
+	directory := sess.Source == "ldap" || sess.Source == "oidc"
+	return User{Name: sess.User, Display: sess.Display, Admin: sess.Admin, Tenant: tenantOrDefault(sess.Tenant), Role: sess.Role,
+		NotOperator: directory && !s.Cfg.DirectoryOperators}, true
 }
 
 // CSRF refuses a state-changing browser request that did not come from this hub's own origin. Cookies are
@@ -273,7 +309,7 @@ func (s *Service) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("GET /auth/adfs/login", s.adfsLogin)
 	mux.HandleFunc("GET /auth/adfs/callback", s.adfsCallback)
 	mux.HandleFunc("GET /auth/oidc/{id}/login", s.oidcLogin)
-	mux.HandleFunc("GET /auth/ticket", s.ticketLogin)
+	mux.HandleFunc("POST /auth/ticket", s.ticketLogin)
 	mux.HandleFunc("GET /auth/oidc/{id}/callback", s.oidcCallback)
 }
 
@@ -321,7 +357,7 @@ func (s *Service) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := strings.ToLower(strings.TrimSpace(body.Username))
-	ukey, ipkey := "u:"+name, "ip:"+clientIP(r)
+	ukey, ipkey := "u:"+name, "ip:"+clientIP(r, s.Cfg.TrustedProxies)
 	for _, k := range []string{ukey, ipkey} {
 		if blocked, wait := s.Limiter.Blocked(k); blocked {
 			w.Header().Set("Retry-After", strconv.Itoa(int(wait.Seconds())+1))

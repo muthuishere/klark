@@ -78,7 +78,7 @@ func rateLimited(w http.ResponseWriter, l *auth.Limiter, key string) bool {
 
 // connectStart: POST /api/connect/start {"name"} -> {code, poll_id, url, expires_in, interval}. No sign-in.
 func (a *App) connectStart(w http.ResponseWriter, r *http.Request) {
-	if rateLimited(w, a.connectStartLimit, auth.ClientIP(r)) {
+	if rateLimited(w, a.connectStartLimit, a.Auth.ClientIP(r)) {
 		return
 	}
 	var b struct {
@@ -105,7 +105,7 @@ func (a *App) connectStart(w http.ResponseWriter, r *http.Request) {
 	raw := make([]byte, 32)
 	_, _ = rand.Read(raw)
 	pollID := hex.EncodeToString(raw)
-	req := store.ConnectRequest{PollSHA: tokens.Sha256Hex(pollID), Machine: name, Status: "pending", IP: auth.ClientIP(r),
+	req := store.ConnectRequest{PollSHA: tokens.Sha256Hex(pollID), Machine: name, Status: "pending", IP: a.Auth.ClientIP(r),
 		Created: now.UnixMilli(), Expires: now.Add(connectLifetime).UnixMilli()}
 	for i := 0; ; i++ {
 		req.Code = newConnectCode()
@@ -127,7 +127,7 @@ func (a *App) connectStart(w http.ResponseWriter, r *http.Request) {
 
 // connectPoll: POST /api/connect/poll {"poll_id"} -> pending | denied | expired, or approved with the token (once).
 func (a *App) connectPoll(w http.ResponseWriter, r *http.Request) {
-	if rateLimited(w, a.connectPollLimit, auth.ClientIP(r)) {
+	if rateLimited(w, a.connectPollLimit, a.Auth.ClientIP(r)) {
 		return
 	}
 	var b struct {

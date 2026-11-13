@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"regexp"
 	"strconv"
@@ -151,6 +153,53 @@ type Config struct {
 	PlatformKeys map[string]ed25519.PublicKey
 	// PlatformAudience is the aud a ticket must carry: HUB_PLATFORM_AUDIENCE, else HUB_PUBLIC_URL.
 	PlatformAudience string
+	// PlatformOrigins: the browser origin each issuer's sign-in form posts
+	// from (HUB_PLATFORM_ORIGINS "issuer=https://app.example,...").
+	PlatformOrigins map[string]string
+	// TrustedProxies: peers whose X-Forwarded-For is believed (HUB_TRUSTED_PROXIES, CIDRs or IPs).
+	TrustedProxies []*net.IPNet
+	// DirectoryOperators: admins from LDAP/OIDC operate every tenant (HUB_DIRECTORY_OPERATORS); off by default.
+	DirectoryOperators bool
+}
+
+func parseOrigins(v string) (map[string]string, error) {
+	out := map[string]string{}
+	for _, part := range strings.Split(v, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		iss, origin, ok := strings.Cut(part, "=")
+		u, err := url.Parse(strings.TrimSpace(origin))
+		if !ok || strings.TrimSpace(iss) == "" || err != nil || u.Scheme == "" || u.Host == "" || (u.Path != "" && u.Path != "/") {
+			return nil, fmt.Errorf("HUB_PLATFORM_ORIGINS: %q is not issuer=<scheme://host[:port]>", part)
+		}
+		out[strings.TrimSpace(iss)] = u.Scheme + "://" + u.Host
+	}
+	return out, nil
+}
+
+func parseProxies(v string) ([]*net.IPNet, error) {
+	var out []*net.IPNet
+	for _, part := range strings.Split(v, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if !strings.Contains(part, "/") {
+			if ip := net.ParseIP(part); ip != nil && ip.To4() != nil {
+				part += "/32"
+			} else {
+				part += "/128"
+			}
+		}
+		_, n, err := net.ParseCIDR(part)
+		if err != nil {
+			return nil, fmt.Errorf("HUB_TRUSTED_PROXIES: %q is not an IP or CIDR", part)
+		}
+		out = append(out, n)
+	}
+	return out, nil
 }
 
 // parsePlatformKeys reads HUB_PLATFORM_KEYS ("issuer=<base64 key>,...").
@@ -205,6 +254,18 @@ func FromEnv(getenv func(string) string) (Config, error) {
 		return c, err
 	}
 	c.PlatformAudience = strings.TrimRight(orDefault(getenv("HUB_PLATFORM_AUDIENCE"), c.PublicURL), "/")
+	if c.PlatformOrigins, err = parseOrigins(getenv("HUB_PLATFORM_ORIGINS")); err != nil {
+		return c, err
+	}
+	for iss := range c.PlatformKeys {
+		if c.PlatformOrigins[iss] == "" {
+			return c, fmt.Errorf("HUB_PLATFORM_ORIGINS has no origin for issuer %s (the page its sign-in form posts from)", iss)
+		}
+	}
+	if c.TrustedProxies, err = parseProxies(getenv("HUB_TRUSTED_PROXIES")); err != nil {
+		return c, err
+	}
+	c.DirectoryOperators = truthy(getenv("HUB_DIRECTORY_OPERATORS"))
 	if len(c.PlatformKeys) > 0 && c.PlatformAudience == "" {
 		return c, errors.New("HUB_PLATFORM_KEYS needs HUB_PLATFORM_AUDIENCE or HUB_PUBLIC_URL (the aud a ticket must name)")
 	}

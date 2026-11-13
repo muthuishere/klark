@@ -17,20 +17,22 @@ type ServiceToken struct {
 	CreatedBy string `json:"createdBy"`
 	Revoked   bool   `json:"revoked"`
 	Expires   int64  `json:"expires"` // unix seconds; 0 = never
+	// Issuer: the sign-in ticket issuer bound to the tenants this token creates.
+	Issuer string `json:"issuer"`
 }
 
 func (s *Store) AddServiceToken(t ServiceToken) error {
-	_, err := s.db.Exec(`INSERT INTO service_tokens (id, name, sha256, created, created_by, expires) VALUES (?,?,?,?,?,?)`,
-		t.ID, t.Name, strings.ToLower(t.SHA256), time.Now().Unix(), t.CreatedBy, t.Expires)
+	_, err := s.db.Exec(`INSERT INTO service_tokens (id, name, sha256, created, created_by, expires, issuer) VALUES (?,?,?,?,?,?,?)`,
+		t.ID, t.Name, strings.ToLower(t.SHA256), time.Now().Unix(), t.CreatedBy, t.Expires, t.Issuer)
 	return err
 }
 
 // ServiceTokenBySHA is the live (not revoked, not expired) token with this hash.
 func (s *Store) ServiceTokenBySHA(sha string) (ServiceToken, error) {
 	var t ServiceToken
-	err := s.db.QueryRow(`SELECT id, name, created, created_by, expires FROM service_tokens
+	err := s.db.QueryRow(`SELECT id, name, created, created_by, expires, issuer FROM service_tokens
 		WHERE sha256 = ? AND revoked = 0 AND (expires = 0 OR expires > ?)`,
-		strings.ToLower(sha), time.Now().Unix()).Scan(&t.ID, &t.Name, &t.Created, &t.CreatedBy, &t.Expires)
+		strings.ToLower(sha), time.Now().Unix()).Scan(&t.ID, &t.Name, &t.Created, &t.CreatedBy, &t.Expires, &t.Issuer)
 	if errors.Is(err, sql.ErrNoRows) {
 		return t, ErrNotFound
 	}
@@ -38,7 +40,7 @@ func (s *Store) ServiceTokenBySHA(sha string) (ServiceToken, error) {
 }
 
 func (s *Store) ServiceTokens() ([]ServiceToken, error) {
-	rows, err := s.db.Query(`SELECT id, name, created, created_by, revoked, expires FROM service_tokens ORDER BY created`)
+	rows, err := s.db.Query(`SELECT id, name, created, created_by, revoked, expires, issuer FROM service_tokens ORDER BY created`)
 	if err != nil {
 		return nil, err
 	}
@@ -47,7 +49,7 @@ func (s *Store) ServiceTokens() ([]ServiceToken, error) {
 	for rows.Next() {
 		var t ServiceToken
 		var rev int
-		if err := rows.Scan(&t.ID, &t.Name, &t.Created, &t.CreatedBy, &rev, &t.Expires); err != nil {
+		if err := rows.Scan(&t.ID, &t.Name, &t.Created, &t.CreatedBy, &rev, &t.Expires, &t.Issuer); err != nil {
 			return nil, err
 		}
 		t.Revoked = rev != 0
@@ -67,15 +69,23 @@ func (s *Store) RevokeServiceToken(id string) error {
 	return nil
 }
 
-// CreateOwnedTenant adds a tenant owned by a service token; false when the id is taken.
-func (s *Store) CreateOwnedTenant(t Tenant, ownerToken string) (bool, error) {
-	r, err := s.db.Exec(`INSERT OR IGNORE INTO tenants (id, name, created, owner_token) VALUES (?,?,?,?)`,
-		t.ID, t.Name, time.Now().Unix(), ownerToken)
+// CreateOwnedTenant adds a tenant owned by a service token and bound to that
+// token's ticket issuer; false when the id is taken.
+func (s *Store) CreateOwnedTenant(t Tenant, owner ServiceToken) (bool, error) {
+	r, err := s.db.Exec(`INSERT OR IGNORE INTO tenants (id, name, created, owner_token, issuer) VALUES (?,?,?,?,?)`,
+		t.ID, t.Name, time.Now().Unix(), owner.ID, owner.Issuer)
 	if err != nil {
 		return false, err
 	}
 	n, _ := r.RowsAffected()
 	return n > 0, nil
+}
+
+// TenantIssuer is the only ticket issuer a tenant accepts ("" = none).
+func (s *Store) TenantIssuer(id string) string {
+	var iss string
+	_ = s.db.QueryRow(`SELECT issuer FROM tenants WHERE lower(id) = lower(?)`, id).Scan(&iss)
+	return iss
 }
 
 // TenantOwnedBy reports whether tenant id was created by service token tokenID.

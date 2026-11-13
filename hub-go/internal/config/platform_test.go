@@ -12,15 +12,19 @@ func TestPlatformKeys(t *testing.T) {
 	k := base64.StdEncoding.EncodeToString(pub)
 	env := func(m map[string]string) func(string) string { return func(s string) string { return m[s] } }
 
-	c, err := FromEnv(env(map[string]string{"HUB_PLATFORM_KEYS": "liveconv=" + k, "HUB_PUBLIC_URL": "https://hub.example/"}))
-	if err != nil || len(c.PlatformKeys["liveconv"]) != ed25519.PublicKeySize || c.PlatformAudience != "https://hub.example" {
+	if _, err := FromEnv(env(map[string]string{"HUB_PLATFORM_KEYS": "liveconv=" + k, "HUB_PUBLIC_URL": "https://h"})); err == nil {
+		t.Fatal("keys without the issuer's origin accepted")
+	}
+	c, err := FromEnv(env(map[string]string{"HUB_PLATFORM_KEYS": "liveconv=" + k, "HUB_PUBLIC_URL": "https://hub.example/",
+		"HUB_PLATFORM_ORIGINS": "liveconv=https://app.liveconv.example"}))
+	if err != nil || len(c.PlatformKeys["liveconv"]) != ed25519.PublicKeySize || c.PlatformAudience != "https://hub.example" || c.PlatformOrigins["liveconv"] != "https://app.liveconv.example" {
 		t.Fatalf("keys %v aud %q err %v", c.PlatformKeys, c.PlatformAudience, err)
 	}
-	if _, err := FromEnv(env(map[string]string{"HUB_PLATFORM_KEYS": "liveconv=" + k})); err == nil {
+	if _, err := FromEnv(env(map[string]string{"HUB_PLATFORM_KEYS": "liveconv=" + k, "HUB_PLATFORM_ORIGINS": "liveconv=https://a"})); err == nil {
 		t.Fatal("keys without an audience accepted")
 	}
 	for _, bad := range []string{"liveconv", "=" + k, "x=notbase64!", "x=" + base64.StdEncoding.EncodeToString([]byte("short"))} {
-		if _, err := FromEnv(env(map[string]string{"HUB_PLATFORM_KEYS": bad, "HUB_PUBLIC_URL": "https://h"})); err == nil {
+		if _, err := FromEnv(env(map[string]string{"HUB_PLATFORM_KEYS": bad, "HUB_PUBLIC_URL": "https://h", "HUB_PLATFORM_ORIGINS": "x=https://a"})); err == nil {
 			t.Fatalf("bad key %q accepted", bad)
 		}
 	}

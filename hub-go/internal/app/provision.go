@@ -98,7 +98,7 @@ func (a *App) provCreateTenant(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusBadRequest, "id must be 2-40 characters: a-z, 0-9 and '-', starting with a letter or digit (not 'default')")
 		return
 	}
-	ok, err := a.Store.CreateOwnedTenant(store.Tenant{ID: id, Name: strings.TrimSpace(b.Name)}, serviceOf(r).ID)
+	ok, err := a.Store.CreateOwnedTenant(store.Tenant{ID: id, Name: strings.TrimSpace(b.Name)}, serviceOf(r))
 	if err != nil {
 		jsonErr(w, 500, "could not create the tenant")
 		return
@@ -208,7 +208,7 @@ func (a *App) provRevokeMachine(w http.ResponseWriter, r *http.Request) {
 // code answers the same, so the route tells nothing about names to someone
 // without a valid code; failures count toward a per-address limit.
 func (a *App) connectRedeem(w http.ResponseWriter, r *http.Request) {
-	ip := auth.ClientIP(r)
+	ip := a.Auth.ClientIP(r)
 	if blocked, wait := a.redeemLimit.Blocked(ip); blocked {
 		w.Header().Set("Retry-After", strconv.Itoa(int(wait.Seconds())+1))
 		jsonErr(w, http.StatusTooManyRequests, "too many requests; try again later")
@@ -277,7 +277,8 @@ func (a *App) adminServiceTokens(w http.ResponseWriter, _ *http.Request) {
 func (a *App) adminAddServiceToken(w http.ResponseWriter, r *http.Request) {
 	var b struct {
 		Name        string
-		ExpiresDays int `json:"expires_days"` // 0 = never
+		ExpiresDays int    `json:"expires_days"` // 0 = never
+		Issuer      string // the ticket issuer its tenants accept (HUB_PLATFORM_KEYS); "" = none
 	}
 	if !decode(w, r, &b) {
 		return
@@ -285,6 +286,10 @@ func (a *App) adminAddServiceToken(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimSpace(b.Name)
 	if name == "" || len(name) > 64 {
 		jsonErr(w, http.StatusBadRequest, "name must be 1-64 characters")
+		return
+	}
+	if b.Issuer != "" && a.Cfg.PlatformKeys[b.Issuer] == nil {
+		jsonErr(w, http.StatusBadRequest, "issuer "+b.Issuer+" is not in HUB_PLATFORM_KEYS")
 		return
 	}
 	if b.ExpiresDays < 0 || b.ExpiresDays > 3650 {
@@ -295,7 +300,7 @@ func (a *App) adminAddServiceToken(w http.ResponseWriter, r *http.Request) {
 	_, _ = rand.Read(raw)
 	token := "khs_" + hex.EncodeToString(raw)
 	me, _ := auth.FromContext(r.Context())
-	t := store.ServiceToken{ID: uuid.NewString(), Name: name, SHA256: tokens.Sha256Hex(token), CreatedBy: me.Name}
+	t := store.ServiceToken{ID: uuid.NewString(), Name: name, SHA256: tokens.Sha256Hex(token), CreatedBy: me.Name, Issuer: b.Issuer}
 	if b.ExpiresDays > 0 {
 		t.Expires = time.Now().AddDate(0, 0, b.ExpiresDays).Unix()
 	}
