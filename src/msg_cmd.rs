@@ -33,7 +33,8 @@ commands:
   send --wait <secs> <to> <text...>      wait until the agent is idle (not working, not on a dialog), then send
   send --all [--json] <text...>          every other agent in this session (worktrees included)
   send --all-sessions [--json] <text...> every other agent in every running session on this machine
-  reply <text...>                        answer the last agent that messaged this pane
+  reply [--to <addr>] <text...>          answer the agent that messaged this pane (--to: that
+                                         sender, as the message's hint gives it; else the last one)
   log [-n N] [--json]                    recent sent/received messages
   name <new-name>                        rename this pane's agent (its address)
   login --hub <url> --user <name> [--name <machine>] [--password-stdin]
@@ -182,7 +183,9 @@ pub use crate::agent_index::{parse_address, resolve, Address, LocalAgent, Route}
 
 /// The prompt the receiving agent sees (ADR 0009, Delivery).
 pub fn format_prompt(from: &str, text: &str) -> String {
-    format!("[klark msg from {from}] {text}\n(reply: klark msg reply \"<text>\")")
+    // The hint names the sender: a pane can be messaged by several agents
+    // before it answers, and "the last one" would then be the wrong one.
+    format!("[klark msg from {from}] {text}\n(reply: klark msg reply --to {from} \"<text>\")")
 }
 
 // ---------------------------------------------------------------- identity
@@ -1052,11 +1055,17 @@ fn cmd_deliver(args: &[String]) -> R<()> {
 }
 
 fn cmd_reply(args: &[String]) -> R<()> {
-    let a = Args::parse(args, &[], &["--json"])?;
+    let a = Args::parse(args, &["--to"], &["--json"])?;
     let text = text_of(&a.positional)?;
-    let pane = my_pane().ok_or("reply works inside a klark pane (KLARK_PANE_ID is not set)")?;
-    let to = last_sender(&data_dir(), &my_session(), &pane)
-        .ok_or("nobody has messaged this pane yet; use klark msg send <to> <text>")?;
+    let to = match a.value("--to") {
+        Some(to) => to,
+        None => {
+            let pane =
+                my_pane().ok_or("reply works inside a klark pane (KLARK_PANE_ID is not set)")?;
+            last_sender(&data_dir(), &my_session(), &pane)
+                .ok_or("nobody has messaged this pane yet; use klark msg send <to> <text>")?
+        }
+    };
     let from = whoami().address;
     let (to_addr, outcome) = send(&to, &from, &text);
     match outcome {
@@ -1410,7 +1419,7 @@ mod tests {
     fn prompt_matches_the_adr() {
         assert_eq!(
             format_prompt("alice-laptop/default/reviewer", "please review PR 12"),
-            "[klark msg from alice-laptop/default/reviewer] please review PR 12\n(reply: klark msg reply \"<text>\")"
+            "[klark msg from alice-laptop/default/reviewer] please review PR 12\n(reply: klark msg reply --to alice-laptop/default/reviewer \"<text>\")"
         );
     }
 

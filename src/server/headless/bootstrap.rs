@@ -244,4 +244,12 @@ fn print_ready_message(api_socket: &Path, client_socket: &Path) {
 /// Initialize logging for the server process.
 fn init_logging() {
     crate::logging::init_file_logging("klark-server.log");
+    // Old uploads, logs and message-log entries; at most once a day, also
+    // for a server that stays up for weeks.
+    let _ = std::thread::Builder::new()
+        .name("housekeeping".into())
+        .spawn(|| loop {
+            crate::housekeeping::run_daily();
+            std::thread::sleep(std::time::Duration::from_secs(6 * 3600));
+        });
 }

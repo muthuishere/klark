@@ -12,10 +12,10 @@ Every `klark agent` TARGET (`get read prompt send-keys wait focus rename`) accep
 
 ```
 [klark msg from laptop/default/reviewer] Run the tests in crates/x; reply with failing names.
-(reply: klark msg reply "<text>")
+(reply: klark msg reply --to laptop/default/reviewer "<text>")
 ```
 
-Answer with `klark msg reply "<text>"`; it goes to whoever last messaged your pane. Options go before the address (`klark msg send --json work/coder <text...>`); everything after the address is the message, verbatim. In `klark msg ls`, STATUS `-` means klark cannot classify that agent's screen.
+Answer with the hint's command, `klark msg reply --to <sender> "<text>"`: it goes to that sender even if someone else messaged you since. Without `--to` it goes to whoever messaged your pane last. Options go before the address (`klark msg send --json work/coder <text...>`); everything after the address is the message, verbatim. In `klark msg ls`, STATUS `-` means klark cannot classify that agent's screen.
 
 Ask, then wait:
 

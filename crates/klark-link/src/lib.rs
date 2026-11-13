@@ -66,17 +66,59 @@ pub fn run(config: LinkConfig) -> ! {
     let mut backoff = Duration::from_secs(1);
     loop {
         let started = Instant::now();
-        match run_once(&config) {
-            Ok(()) => eprintln!("klark expose: hub closed the connection"),
-            Err(e) => eprintln!("klark expose: {e}"),
-        }
+        let problem = match run_once(&config) {
+            Ok(()) => "hub closed the connection".to_string(),
+            Err(e) => e,
+        };
         if started.elapsed() > Duration::from_secs(60) {
             backoff = Duration::from_secs(1);
         }
-        let wait = jittered(backoff, &config.machine_id);
-        eprintln!("klark expose: reconnecting in {:.1}s", wait.as_secs_f64());
-        std::thread::sleep(wait);
+        REPORT.with_problem(&problem);
+        std::thread::sleep(jittered(backoff, &config.machine_id));
         backoff = (backoff * 2).min(MAX_BACKOFF);
+    }
+}
+
+/// What the link says on stderr: changes only. A hub that is down or keeps
+/// dropping the link would otherwise print three lines per retry, forever,
+/// scrolling whatever pane or terminal runs `klark expose`.
+struct Report {
+    state: std::sync::Mutex<(Option<String>, u32, bool)>, // (last problem, retries, ever connected)
+}
+
+static REPORT: Report = Report {
+    state: std::sync::Mutex::new((None, 0, false)),
+};
+
+impl Report {
+    fn with_problem(&self, problem: &str) {
+        let Ok(mut s) = self.state.lock() else { return };
+        s.1 += 1;
+        if s.0.as_deref() != Some(problem) {
+            eprintln!("klark expose: {problem} (retrying quietly; shown again if it changes)");
+            s.0 = Some(problem.to_string());
+        }
+    }
+
+    fn connected(&self, base: &str) {
+        let Ok(mut s) = self.state.lock() else { return };
+        match (s.2, s.1) {
+            (false, _) => eprintln!("klark expose: connected to {base}"),
+            (true, 0) => {}
+            (true, n) => eprintln!("klark expose: reconnected to {base} after {n} {}", if n == 1 { "try" } else { "tries" }),
+        }
+        *s = (None, 0, true);
+    }
+}
+
+/// An error that can repeat on every request: printed once until it changes.
+fn report_once(msg: String) {
+    static LAST: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+    if let Ok(mut last) = LAST.lock() {
+        if last.as_deref() != Some(msg.as_str()) {
+            eprintln!("klark expose: {msg}");
+            *last = Some(msg);
+        }
     }
 }
 
@@ -135,7 +177,7 @@ pub fn run_once(config: &LinkConfig) -> Result<(), String> {
         klark_version: config.klark_version.clone(),
     };
     let mut link = HubLink::open(&config.hub_url, &config.token, &config.machine_id, &hello)?;
-    eprintln!("klark expose: connected to {}", link.base());
+    REPORT.connected(link.base());
 
     let upstream = Upstream::new(config.socket.clone(), config.bin.clone());
     let mut session = Session::new(upstream);
@@ -506,7 +548,7 @@ impl Session {
                                         )
                                     });
                             if let Err(e) = &outcome {
-                                eprintln!("klark expose: get_file {path}: {e}");
+                                report_once(format!("get_file {path}: {e}"));
                             }
                             let (result, error) = match outcome {
                                 Ok(v) => (Some(v), None),
@@ -615,7 +657,7 @@ impl Session {
                 let writes = !matches!(msg, HubMessage::Subscribe { .. });
                 (!self.exposed(s, l, writes)).then(|| {
                     let reason = self.not_exposed(&format!("pane {pane_id}"));
-                    eprintln!("klark expose: refused: {reason}");
+                    report_once(format!("refused: {reason}"));
                     vec![AgentMessage::Closed {
                         pane_id: pane_id.clone(),
                         reason,
@@ -778,7 +820,7 @@ impl Session {
 
     fn fire(&mut self, session: &str, method: &str, params: Value) -> Vec<AgentMessage> {
         if let Err(e) = self.call_in(session, method, params) {
-            eprintln!("klark expose: {e}");
+            report_once(e);
         }
         vec![]
     }
@@ -848,7 +890,7 @@ impl Session {
         running.sort_by(|a, b| a.0.cmp(&b.0));
         if running.is_empty() {
             return default.unwrap_or_else(|e| {
-                eprintln!("klark expose: snapshot: {e}");
+                report_once(format!("snapshot: {e}"));
                 json!({"error": e})
             });
         }
