@@ -2,7 +2,10 @@
 package config
 
 import (
+	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
@@ -142,6 +145,31 @@ type Config struct {
 	SQLiteBackupKeep     int           // HUB_SQLITE_BACKUP_KEEP, default 7
 
 	PodID string // HUB_POD_ID: names this hub instance as the SQLite backup owner; random when empty
+
+	// K2: platforms that may sign users in with a ticket. HUB_PLATFORM_KEYS is
+	// "issuer=<base64 Ed25519 public key>,..."; the hub holds public keys only.
+	PlatformKeys map[string]ed25519.PublicKey
+	// PlatformAudience is the aud a ticket must carry: HUB_PLATFORM_AUDIENCE, else HUB_PUBLIC_URL.
+	PlatformAudience string
+}
+
+// parsePlatformKeys reads HUB_PLATFORM_KEYS ("issuer=<base64 key>,...").
+func parsePlatformKeys(v string) (map[string]ed25519.PublicKey, error) {
+	out := map[string]ed25519.PublicKey{}
+	for _, part := range strings.Split(v, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		iss, key, ok := strings.Cut(part, "=")
+		iss = strings.TrimSpace(iss)
+		raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(key))
+		if !ok || iss == "" || err != nil || len(raw) != ed25519.PublicKeySize {
+			return nil, fmt.Errorf("HUB_PLATFORM_KEYS: %q is not issuer=<base64 Ed25519 public key>", iss)
+		}
+		out[iss] = ed25519.PublicKey(raw)
+	}
+	return out, nil
 }
 
 // NormalizeBase turns "klark/", "/klark" or "/" into "/klark" or "".
@@ -173,6 +201,13 @@ func FromEnv(getenv func(string) string) (Config, error) {
 		MockADFS: truthy(getenv("HUB_MOCK_ADFS")),
 	}
 	var err error
+	if c.PlatformKeys, err = parsePlatformKeys(getenv("HUB_PLATFORM_KEYS")); err != nil {
+		return c, err
+	}
+	c.PlatformAudience = strings.TrimRight(orDefault(getenv("HUB_PLATFORM_AUDIENCE"), c.PublicURL), "/")
+	if len(c.PlatformKeys) > 0 && c.PlatformAudience == "" {
+		return c, errors.New("HUB_PLATFORM_KEYS needs HUB_PLATFORM_AUDIENCE or HUB_PUBLIC_URL (the aud a ticket must name)")
+	}
 	if c.Machines, err = parseMachines(getenv("HUB_MACHINES")); err != nil {
 		return c, err
 	}

@@ -20,6 +20,7 @@ type Session struct {
 	Admin   bool   `json:"a,omitempty"`
 	Source  string `json:"s"`           // "db" (user row is checked on every request) or "oidc"
 	Tenant  string `json:"t,omitempty"` // a session that is not "db"; empty = the default tenant
+	Role    string `json:"r,omitempty"` // platform sessions: viewer | member | admin
 	Expires int64  `json:"e"`
 }
 

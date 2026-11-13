@@ -33,6 +33,7 @@ type User struct {
 	Display string `json:"displayName"`
 	Admin   bool   `json:"admin"`
 	Tenant  string `json:"tenant"`
+	Role    string `json:"role,omitempty"` // from a platform ticket: viewer | member | admin
 }
 
 // Operator is an admin of the default tenant: it sees and manages every
@@ -215,7 +216,10 @@ func (s *Service) Current(r *http.Request) (User, bool) {
 		}
 		return User{Name: u.Name, Display: u.DisplayName, Admin: u.Admin, Tenant: tenantOrDefault(u.Tenant)}, true
 	}
-	return User{Name: sess.User, Display: sess.Display, Admin: sess.Admin, Tenant: tenantOrDefault(sess.Tenant)}, true
+	if strings.HasPrefix(sess.Source, "platform:") && !s.Store.TenantExists(sess.Tenant) {
+		return User{}, false // the tenant was deleted: the session ends with it
+	}
+	return User{Name: sess.User, Display: sess.Display, Admin: sess.Admin, Tenant: tenantOrDefault(sess.Tenant), Role: sess.Role}, true
 }
 
 // CSRF refuses a state-changing browser request that did not come from this hub's own origin. Cookies are
@@ -269,6 +273,7 @@ func (s *Service) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("GET /auth/adfs/login", s.adfsLogin)
 	mux.HandleFunc("GET /auth/adfs/callback", s.adfsCallback)
 	mux.HandleFunc("GET /auth/oidc/{id}/login", s.oidcLogin)
+	mux.HandleFunc("GET /auth/ticket", s.ticketLogin)
 	mux.HandleFunc("GET /auth/oidc/{id}/callback", s.oidcCallback)
 }
 

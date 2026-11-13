@@ -168,3 +168,15 @@ func (s *Store) LivePairingCode(codeSHA string, nowMs int64) (string, bool) {
 		strings.ToLower(codeSHA), nowMs).Scan(&t)
 	return t, err == nil
 }
+
+// UseTicket records a sign-in ticket id; false when it was already used.
+// Expired ids are dropped on the way.
+func (s *Store) UseTicket(jti string, expires int64) (bool, error) {
+	_, _ = s.db.Exec(`DELETE FROM used_tickets WHERE expires < ?`, time.Now().Unix())
+	r, err := s.db.Exec(`INSERT OR IGNORE INTO used_tickets (jti, expires) VALUES (?,?)`, jti, expires)
+	if err != nil {
+		return false, err
+	}
+	n, _ := r.RowsAffected()
+	return n == 1, nil
+}
