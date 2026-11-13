@@ -9,8 +9,11 @@ use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
 use windows_sys::Win32::{
-    Foundation::{CloseHandle, HANDLE},
+    Foundation::{
+        CloseHandle, SetHandleInformation, HANDLE, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE,
+    },
     System::{
+        Console::{GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE},
         JobObjects::{
             AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
             SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
@@ -124,6 +127,20 @@ pub(crate) fn close_feed_job(pid: u32) {
 /// the worker then starts inside it.
 pub(crate) fn spawn_detached(c: &mut std::process::Command) -> std::io::Result<std::process::Child> {
     use std::os::windows::process::CommandExt;
+    // CreateProcess hands the child every inheritable handle, so a worker
+    // would also keep the caller's own stdout/stderr pipes open and anyone
+    // reading `klark feed add`'s output (a script, `$(...)`) would wait for
+    // EOF forever. The worker gets its stdio explicitly; ours stay home.
+    for which in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+        // SAFETY: GetStdHandle has no preconditions; a null or invalid
+        // handle just makes SetHandleInformation fail, which is ignored.
+        unsafe {
+            let h = GetStdHandle(which);
+            if !h.is_null() && h != INVALID_HANDLE_VALUE {
+                SetHandleInformation(h, HANDLE_FLAG_INHERIT, 0);
+            }
+        }
+    }
     let base = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW;
     c.creation_flags(base | CREATE_BREAKAWAY_FROM_JOB);
     match c.spawn() {
