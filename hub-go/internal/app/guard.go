@@ -81,6 +81,12 @@ func (a *App) acting(action string, f http.HandlerFunc) http.HandlerFunc {
 			jsonErr(w, http.StatusForbidden, "read-only access: this account can watch but not type or send")
 			return
 		}
+		// A machine the caller cannot see is "unknown" (404) before anything is
+		// charged: nobody spends another tenant's machine budget.
+		if machine != "" && (!a.knownMachine(machine) || !a.sees(r, machine)) {
+			jsonErr(w, http.StatusNotFound, "unknown machine "+machine)
+			return
+		}
 		now := time.Now()
 		if !a.actions.allow("u:"+strings.ToLower(u.Tenant+"/"+u.Name), a.userActionLimit(), now) ||
 			(machine != "" && !a.actions.allow("m:"+strings.ToLower(machine), a.machineActionLimit(), now)) {
@@ -109,9 +115,21 @@ func (a *App) reading(action string, f http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// audit records under the machine's tenant, so that tenant's admin sees every
+// action on its machines (the operator's too), and also under the actor's
+// tenant when that is a different one.
 func (a *App) audit(u auth.User, machine, target, action string, status int, bytes int64) {
-	_ = a.Store.Audit(store.AuditRow{Tenant: u.Tenant, Actor: actorOf(u), Machine: machine, Target: target,
-		Action: action, Status: status, Bytes: bytes})
+	row := store.AuditRow{Actor: actorOf(u), Machine: machine, Target: target, Action: action, Status: status, Bytes: bytes}
+	tenants := []string{u.Tenant}
+	if machine != "" {
+		if mt := a.machineTenant(machine); mt != "" && !strings.EqualFold(mt, u.Tenant) {
+			tenants = []string{mt, u.Tenant}
+		}
+	}
+	for _, t := range tenants {
+		row.Tenant = t
+		_ = a.Store.Audit(row)
+	}
 }
 
 func statusOr200(s int) int {
