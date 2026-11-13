@@ -30,6 +30,7 @@ func (a *App) mountAPI(mux *http.ServeMux) {
 		})
 	}
 
+	a.mountProvisioning(mux)
 	mux.Handle("GET /api/machines", user(a.listMachines))
 	mux.Handle("GET /api/machines/{id}/tree", user(a.getTree))
 	mux.Handle("POST /api/machines/{id}/call", user(a.postCall))

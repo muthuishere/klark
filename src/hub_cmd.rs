@@ -18,13 +18,14 @@ use serde_json::{json, Value};
 
 const USAGE: &str =
     "usage: klark hub connect [--url http://host[:port]] [--as <name>] [<name>] [--agents a,b]
-                         [--token <machine-token> | --token-stdin] [--no-browser] [--foreground]
+                         [--token <machine-token> | --token-stdin | --code <pairing-code>] [--no-browser] [--foreground]
        klark hub stop                   ends the connection (alias: disconnect)
        klark hub ls | use <name> | rm <name> | status [<name>]
        connect --url adds (or refreshes) a hub: approve this machine in the browser and the hub
        issues its token. With a <name>, connects to that saved hub; with nothing, the default.
        Saved in <config dir>/hubs.json (0600). --token / --token-stdin / KLARK_HUB_TOKEN skip the
-       browser (scripts). The connection keeps running in the background (log: <config dir>/hub-<name>.log);
+       browser (scripts). --code redeems a pairing code the hub's provisioning API issued for one
+       tenant: no browser approval. The connection keeps running in the background (log: <config dir>/hub-<name>.log);
        --foreground keeps it in this terminal. `stop` ends it.";
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
@@ -183,6 +184,8 @@ pub struct ConnectOptions {
     pub name: Option<String>,
     pub token: Option<String>,
     pub token_stdin: bool,
+    /// A pairing code from the hub's provisioning API: redeemed for a token, no approval.
+    pub code: Option<String>,
     pub no_browser: bool,
     pub agents: Vec<String>,
     /// Stay attached to this terminal instead of running in the background.
@@ -197,12 +200,13 @@ pub fn parse_connect(args: &[String]) -> Result<ConnectOptions, String> {
             "--token-stdin" => o.token_stdin = true,
             "--no-browser" => o.no_browser = true,
             "--foreground" | "-f" => o.foreground = true,
-            "--url" | "--hub" | "--as" | "--token" | "--agents" | "--agent" => {
+            "--url" | "--hub" | "--as" | "--token" | "--code" | "--agents" | "--agent" => {
                 let v = it.next().cloned().ok_or(format!("{arg} needs a value"))?;
                 match arg.as_str() {
                     "--url" | "--hub" => o.url = Some(v),
                     "--as" => o.name = Some(v),
                     "--token" => o.token = Some(v),
+                    "--code" => o.code = Some(v),
                     _ => o.agents.push(v),
                 }
             }
@@ -211,8 +215,13 @@ pub fn parse_connect(args: &[String]) -> Result<ConnectOptions, String> {
             extra => return Err(format!("unexpected argument: {extra}")),
         }
     }
-    if o.token.is_some() && o.token_stdin {
-        return Err("pass --token or --token-stdin, not both".into());
+    if [o.token.is_some(), o.token_stdin, o.code.is_some()]
+        .iter()
+        .filter(|b| **b)
+        .count()
+        > 1
+    {
+        return Err("pass one of --token, --token-stdin or --code".into());
     }
     Ok(o)
 }
@@ -277,6 +286,23 @@ fn post(base: &str, path: &str, body: Value) -> Result<Value, String> {
 
 /// Device authorization: start, show the code, poll until approved.
 /// Returns (token, machine name the hub registered).
+/// Redeems a pairing code (issued by the hub's provisioning API for one
+/// tenant) for this machine's token. Returns (token, machine name).
+pub fn redeem_code(base: &str, machine: &str, code: &str) -> Result<(String, String), String> {
+    let r = post(
+        base,
+        "/api/connect/redeem",
+        json!({ "code": code, "name": machine }),
+    )?;
+    let token = r
+        .get("token")
+        .and_then(Value::as_str)
+        .filter(|t| !t.is_empty())
+        .ok_or("the hub sent no token for this pairing code")?;
+    let name = r.get("machine").and_then(Value::as_str).unwrap_or(machine);
+    Ok((token.to_string(), name.to_string()))
+}
+
 pub fn device_flow(
     base: &str,
     machine: &str,
@@ -440,6 +466,16 @@ fn connect(o: ConnectOptions) {
         .unwrap_or_else(machine_name);
 
     let hub = match (explicit_token, saved) {
+        _ if o.code.is_some() => {
+            let code = o.code.as_deref().unwrap_or_default();
+            let (token, machine) = redeem_code(&base, &machine, code).unwrap_or_else(|e| fail(e));
+            eprintln!("klark hub: paired as {machine}");
+            SavedHub {
+                url,
+                token,
+                machine,
+            }
+        }
         (Some(token), _) => SavedHub {
             url,
             token,
@@ -832,6 +868,28 @@ mod tests {
 
     fn start() -> Value {
         json!({"code": "ABCD-EFGH", "poll_id": "p1", "url": "http://hub/approve", "expires_in": 60, "interval": 0})
+    }
+
+    #[test]
+    fn a_pairing_code_is_redeemed_for_a_token() {
+        let (base, t) = fake_hub(vec![json!({"token": "tok-9", "machine": "acme-laptop"})]);
+        let got = redeem_code(&base, "laptop", "PAIR-1234").unwrap();
+        assert_eq!(got, ("tok-9".to_string(), "acme-laptop".to_string()));
+        let seen = t.join().unwrap();
+        assert!(
+            seen[0].contains("/api/connect/redeem") && seen[0].contains("PAIR-1234"),
+            "{seen:?}"
+        );
+    }
+
+    #[test]
+    fn code_and_token_are_exclusive() {
+        let args: Vec<String> = ["--code", "A", "--token", "B"].map(String::from).into();
+        assert!(parse_connect(&args).is_err());
+        let args: Vec<String> = ["--url", "http://h", "--code", "A"]
+            .map(String::from)
+            .into();
+        assert_eq!(parse_connect(&args).unwrap().code.as_deref(), Some("A"));
     }
 
     #[test]
