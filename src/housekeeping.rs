@@ -85,8 +85,8 @@ fn trim_messages(dir: &Path, cutoff: SystemTime) {
     };
     // klark writes UTC RFC 3339 ("2026-11-13T11:23:51.89Z"); to the second
     // that sorts as text.
-    let Ok(cutoff) = time::OffsetDateTime::from(cutoff)
-        .format(&time::format_description::well_known::Rfc3339)
+    let Ok(cutoff) =
+        time::OffsetDateTime::from(cutoff).format(&time::format_description::well_known::Rfc3339)
     else {
         return;
     };

@@ -125,7 +125,9 @@ pub(crate) fn close_feed_job(pid: u32) {
 /// the pane or terminal that ran `klark feed add` does not end the feed (the
 /// Unix `process_group(0)`). A job that forbids breakaway is not an error:
 /// the worker then starts inside it.
-pub(crate) fn spawn_detached(c: &mut std::process::Command) -> std::io::Result<std::process::Child> {
+pub(crate) fn spawn_detached(
+    c: &mut std::process::Command,
+) -> std::io::Result<std::process::Child> {
     use std::os::windows::process::CommandExt;
     // CreateProcess hands the child every inheritable handle, so a worker
     // would also keep the caller's own stdout/stderr pipes open and anyone
