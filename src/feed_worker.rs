@@ -166,8 +166,12 @@ fn shell_command(command: &str) -> Command {
 #[cfg(windows)]
 fn shell_command(command: &str) -> Command {
     let shell = std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".into());
+    use std::os::windows::process::CommandExt;
     let mut c = Command::new(shell);
-    c.arg("/C").arg(command);
+    // Raw, not `.arg()`: Rust escapes quotes as \" for the C runtime, which
+    // cmd does not understand (`type "a b.txt"` then fails). With /S cmd
+    // strips just the outer pair and runs the rest exactly as typed.
+    c.raw_arg(format!("/S /C \"{command}\""));
     c
 }
 
