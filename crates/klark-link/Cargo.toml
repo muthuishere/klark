@@ -18,3 +18,7 @@ url = "2"
 rustls = { version = "0.23", default-features = false, features = ["std", "ring", "tls12"] }
 rustls-pki-types = { version = "1", features = ["std"] }
 webpki-roots = "0.26"
+
+[target.'cfg(windows)'.dependencies]
+# The server's socket API is a named pipe on Windows (same name scheme as the main crate's ipc.rs).
+interprocess = "2.4.2"

@@ -16,7 +16,11 @@ use windows_sys::Win32::{
             SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
             JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
         },
-        Threading::{CREATE_NO_WINDOW, CREATE_SUSPENDED},
+        Threading::{
+            OpenProcess, TerminateProcess, WaitForSingleObject, CREATE_BREAKAWAY_FROM_JOB,
+            CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW, CREATE_SUSPENDED, DETACHED_PROCESS,
+            PROCESS_SYNCHRONIZE, PROCESS_TERMINATE,
+        },
     },
 };
 
@@ -111,6 +115,46 @@ pub(crate) fn attach_feed_job(child: &mut std::process::Child) -> std::io::Resul
 pub(crate) fn close_feed_job(pid: u32) {
     let job = jobs().lock().ok().and_then(|mut map| map.remove(&pid));
     drop(job);
+}
+
+/// Starts a feed worker (or `feed resume`) with no console, in its own
+/// process group, outside the caller's job when the job allows it, so closing
+/// the pane or terminal that ran `klark feed add` does not end the feed (the
+/// Unix `process_group(0)`). A job that forbids breakaway is not an error:
+/// the worker then starts inside it.
+pub(crate) fn spawn_detached(c: &mut std::process::Command) -> std::io::Result<std::process::Child> {
+    use std::os::windows::process::CommandExt;
+    let base = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW;
+    c.creation_flags(base | CREATE_BREAKAWAY_FROM_JOB);
+    match c.spawn() {
+        Ok(child) => Ok(child),
+        // ERROR_ACCESS_DENIED: the caller's job does not allow breakaway.
+        Err(e) if e.raw_os_error() == Some(5) => {
+            c.creation_flags(base);
+            c.spawn()
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// Ends a feed worker by pid and waits up to `wait` for it to go. The
+/// caller has checked (by the feed's run lock) that the pid is that feed's
+/// worker. The worker's handles close with it, so its commands' kill-on-close
+/// jobs end their trees too. Returns false when the process could not be
+/// opened (already gone, or not ours).
+pub(crate) fn terminate_worker(pid: u32, wait: std::time::Duration) -> bool {
+    // SAFETY: plain handle calls; the handle is closed before returning.
+    unsafe {
+        let h = OpenProcess(PROCESS_TERMINATE | PROCESS_SYNCHRONIZE, 0, pid);
+        if h.is_null() {
+            return false;
+        }
+        let ok = TerminateProcess(h, 1) != 0;
+        let ms = u32::try_from(wait.as_millis()).unwrap_or(u32::MAX);
+        WaitForSingleObject(h, ms);
+        CloseHandle(h);
+        ok
+    }
 }
 
 #[cfg(test)]

@@ -29,6 +29,38 @@ pub struct Upstream {
     session: Option<String>,
 }
 
+/// One NDJSON request line.
+#[cfg(windows)]
+fn request_line(method: &str, params: Value) -> Result<Vec<u8>, String> {
+    let params = if params.is_null() { json!({}) } else { params };
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed).to_string();
+    let mut line = serde_json::to_vec(&json!({"id": id, "method": method, "params": params}))
+        .map_err(|e| e.to_string())?;
+    line.push(b'\n');
+    Ok(line)
+}
+
+/// Connect to the server's pipe, write the request, read one response line.
+#[cfg(windows)]
+fn windows_exchange(socket: &Path, method: &str, request: &[u8]) -> Result<String, String> {
+    use interprocess::local_socket::{prelude::*, GenericNamespaced, Stream};
+
+    let name = socket.to_string_lossy().to_string();
+    let name = name
+        .to_ns_name::<GenericNamespaced>()
+        .map_err(|e| format!("connect {}: {e}", socket.display()))?;
+    let mut conn =
+        Stream::connect(name).map_err(|e| format!("connect {}: {e}", socket.display()))?;
+    conn.write_all(request)
+        .map_err(|e| format!("write {method}: {e}"))?;
+    let mut reader = BufReader::new(conn);
+    let mut buf = String::new();
+    reader
+        .read_line(&mut buf)
+        .map_err(|e| format!("read {method}: {e}"))?;
+    Ok(buf)
+}
+
 impl Upstream {
     pub fn new(socket: PathBuf, bin: PathBuf) -> Self {
         Self {
@@ -87,7 +119,31 @@ impl Upstream {
         parse_response(method, &buf)
     }
 
-    #[cfg(not(unix))]
+    /// Windows: the server listens on a named pipe whose name is the socket
+    /// path (namespaced, as `src/ipc.rs` binds it). A pipe has no read
+    /// timeout, so the exchange runs on a helper thread and the caller stops
+    /// waiting after `timeout`; the thread ends when the server answers or
+    /// closes the pipe.
+    #[cfg(windows)]
+    pub fn call(&self, method: &str, params: Value) -> Result<Value, String> {
+        let request = request_line(method, params)?;
+        let socket = self.socket.clone();
+        let m = method.to_string();
+        let (tx, rx) = std::sync::mpsc::channel();
+        thread::Builder::new()
+            .name("klark-link-call".into())
+            .spawn(move || {
+                let _ = tx.send(windows_exchange(&socket, &m, &request));
+            })
+            .map_err(|e| format!("{method}: {e}"))?;
+        match rx.recv_timeout(self.timeout) {
+            Ok(Ok(line)) => parse_response(method, &line),
+            Ok(Err(e)) => Err(e),
+            Err(_) => Err(format!("read {method}: timed out")),
+        }
+    }
+
+    #[cfg(not(any(unix, windows)))]
     pub fn call(&self, method: &str, _params: Value) -> Result<Value, String> {
         Err(format!(
             "{method}: klark expose is not supported on this platform yet"

@@ -69,10 +69,6 @@ pub fn run(args: &[String]) -> ! {
         Some((c, r)) => (c.as_str(), r),
         None => usage_exit(0),
     };
-    if unsupported_here(cmd) {
-        eprintln!("{UNSUPPORTED}");
-        std::process::exit(1);
-    }
     let result = match cmd {
         "add" => cmd_add(rest),
         "list" | "ls" => cmd_list(rest),
@@ -100,15 +96,6 @@ pub fn run(args: &[String]) -> ! {
             std::process::exit(1)
         }
     }
-}
-
-/// Feeds deliver through the session socket client, which Windows does not
-/// have until S-16; every verb but help says so (ADR 0015, Platforms).
-const UNSUPPORTED: &str =
-    "klark feed: not supported on Windows yet (needs the named pipe client, S-16)";
-
-fn unsupported_here(verb: &str) -> bool {
-    cfg!(windows) && !matches!(verb, "-h" | "--help" | "help")
 }
 
 fn usage_exit(code: i32) -> ! {
@@ -663,11 +650,13 @@ fn start_worker_within(
         .stdout(log.try_clone().map_err(|e| e.to_string())?)
         .stderr(log);
     #[cfg(unix)]
-    {
+    let mut child = {
         use std::os::unix::process::CommandExt;
         cmd.process_group(0);
-    }
-    let mut child = cmd.spawn().map_err(|e| e.to_string())?;
+        cmd.spawn().map_err(|e| e.to_string())?
+    };
+    #[cfg(windows)]
+    let mut child = crate::platform::spawn_detached_feed(&mut cmd).map_err(|e| e.to_string())?;
 
     let wait = match def.mode {
         Mode::Poll => Duration::from_secs(5 * def.timing_secs.max(12) + 10),
@@ -745,6 +734,13 @@ fn end_feed(store: &Store, id: &str) {
         if let Some(pid) = load_status(store, id).worker_pid {
             // SAFETY: the feed lock is held, so this pid is that feed's worker.
             unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+        }
+        // Windows has no SIGTERM for a detached process: the worker is ended
+        // outright. Its definition is already gone, so nothing it would have
+        // flushed is needed; its commands' jobs close with it.
+        #[cfg(windows)]
+        if let Some(pid) = load_status(store, id).worker_pid {
+            crate::platform::terminate_feed_worker(pid, Duration::from_secs(5));
         }
         let deadline = Instant::now() + Duration::from_secs(10);
         while is_running(store, id) && Instant::now() < deadline {
@@ -1120,9 +1116,6 @@ fn cmd_set(args: &[String]) -> R<()> {
 /// --session <it>` in the background, with the server's environment. Only
 /// when there is a feed at all.
 pub(crate) fn spawn_resume() {
-    if cfg!(windows) {
-        return;
-    }
     let Ok(store) = open_store() else {
         return;
     };
@@ -1151,11 +1144,14 @@ pub(crate) fn spawn_resume() {
         }
     }
     #[cfg(unix)]
-    {
+    let spawned = {
         use std::os::unix::process::CommandExt;
         cmd.process_group(0);
-    }
-    match cmd.spawn() {
+        cmd.spawn()
+    };
+    #[cfg(windows)]
+    let spawned = crate::platform::spawn_detached_feed(&mut cmd);
+    match spawned {
         // Reaped off the server's main thread; it ends within seconds.
         Ok(mut child) => {
             let _ = std::thread::Builder::new()
@@ -1803,20 +1799,6 @@ fn cmd_logs(args: &[String]) -> R<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// P1: on Windows every verb but help is refused with the S-16 note.
-    #[cfg(windows)]
-    #[test]
-    fn every_verb_is_unsupported_on_windows() {
-        for verb in [
-            "add", "list", "show", "set", "resume", "stop", "start", "leave", "agent", "batch",
-            "logs", "_worker",
-        ] {
-            assert!(unsupported_here(verb), "{verb}");
-        }
-        assert!(!unsupported_here("--help"));
-        assert!(UNSUPPORTED.contains("not supported") && UNSUPPORTED.contains("S-16"));
-    }
 
     fn args(s: &[&str]) -> Vec<String> {
         s.iter().map(|a| a.to_string()).collect()

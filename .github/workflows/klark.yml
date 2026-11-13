@@ -40,6 +40,26 @@ jobs:
       - name: Hub tests
         run: dotnet test hub/hub.Tests
 
+  # Native Windows: the named pipe client, feed workers and Job Objects, and
+  # `klark feed` end to end (tests/feed_windows.rs). Not a release gate yet.
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with: { persist-credentials: false }
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # v1
+        with: { toolchain: "${{ env.RUST_TOOLCHAIN_VERSION }}" }
+      - uses: vercel-labs/setup-zig@83c1594f26b86da8a9a8ddd9b5ee5f3af0f96943 # v1.0.2
+        with: { version: "${{ env.ZIG_VERSION }}" }
+      - uses: Swatinem/rust-cache@v2
+      - name: Feed and link unit tests
+        run: |
+          cargo test --locked --bin klark -- feed
+          cargo test --locked -p klark-link
+      - name: Feed end to end
+        run: cargo test --locked --test feed_windows -- --test-threads=1 --nocapture
+
   binaries:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: test
