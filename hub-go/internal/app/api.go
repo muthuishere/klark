@@ -22,6 +22,7 @@ func (a *App) mountAPI(mux *http.ServeMux) {
 	mux.Handle("GET /api/machines", user(a.listMachines))
 	mux.Handle("GET /api/machines/{id}/tree", user(a.getTree))
 	mux.Handle("POST /api/machines/{id}/call", user(a.postCall))
+	mux.Handle("GET /api/machines/{id}/feeds", user(a.getFeeds))
 	mux.Handle("GET /api/machines/{id}/events", user(a.machineEvents))
 	mux.Handle("GET /api/machines/{id}/panes/{pane}/chat", user(a.getChat))
 	mux.Handle("GET /api/machines/{id}/panes/{pane}/events", user(a.paneEvents))
@@ -202,6 +203,27 @@ func (a *App) getTree(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write(t.Snapshot)
+}
+
+// getFeeds lists the machine's feeds, read-only: label, kind, agents, state,
+// last delivery. What a feed watches (its command, file or URL) is not sent.
+func (a *App) getFeeds(w http.ResponseWriter, r *http.Request) {
+	id, ok := a.machineOr404(w, r)
+	if !ok {
+		return
+	}
+	res, err := a.Runtime.Call(r.Context(), id, "feed.list", map[string]any{}, 15*time.Second)
+	if err != nil {
+		failure(w, err)
+		return
+	}
+	var out struct {
+		Feeds json.RawMessage `json:"feeds"`
+	}
+	if json.Unmarshal(res, &out) != nil || len(out.Feeds) == 0 {
+		out.Feeds = json.RawMessage("[]")
+	}
+	jsonOut(w, http.StatusOK, map[string]json.RawMessage{"feeds": out.Feeds})
 }
 
 func (a *App) postCall(w http.ResponseWriter, r *http.Request) {

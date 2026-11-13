@@ -540,6 +540,11 @@ func machineBehaviour(treeRev string) func(*fakeMachine, map[string]any) {
 			_ = json.Unmarshal([]byte(snapshotJSON), &snap)
 			m.push(map[string]any{"type": "tree", "rev": treeRev, "snapshot": snap})
 		case "call":
+			if msg["method"] == "feed.list" {
+				m.push(map[string]any{"type": "result", "id": id, "result": map[string]any{"type": "feed_list", "feeds": []map[string]any{
+					{"id": "f1", "label": "ci", "kind": "poll", "agents": []string{"work/rev"}, "state": "running", "running": true, "last_delivery": 1}}}})
+				return
+			}
 			if msg["method"] == "pane.read" {
 				m.push(map[string]any{"type": "result", "id": id, "result": map[string]any{"read": map[string]any{"text": "screen text"}}})
 				return
@@ -604,6 +609,19 @@ func TestMachineDataAPI(t *testing.T) {
 	}
 	if r, _ := c.do("POST", "/api/machines/mac/call", map[string]any{"method": "pane.close"}); r.StatusCode != 403 {
 		t.Fatal("mutating call allowed")
+	}
+
+	// feeds: listed read-only; the hub cannot start or stop one
+	if r, b := c.do("GET", "/api/machines/mac/feeds", nil); r.StatusCode != 200 || !strings.Contains(string(b), `"label":"ci"`) || !strings.Contains(string(b), `"state":"running"`) {
+		t.Fatalf("feeds %d %s", r.StatusCode, b)
+	}
+	if r, _ := c.do("GET", "/api/machines/ghost/feeds", nil); r.StatusCode != 404 {
+		t.Fatal("feeds of an unknown machine")
+	}
+	for _, m := range []string{"feed.start", "feed.stop"} {
+		if r, _ := c.do("POST", "/api/machines/mac/call", map[string]any{"method": m, "params": map[string]any{"id": "f1"}}); r.StatusCode != 403 {
+			t.Fatalf("%s allowed from the hub", m)
+		}
 	}
 
 	// chat: structured transcript, rendered, paths linked

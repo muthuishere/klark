@@ -1,5 +1,5 @@
 import { connectSSE, type SseState } from './sse';
-import type { ChatPayload, MachineInfo, Offer, Tree } from './types';
+import type { ChatPayload, MachineInfo, Offer, Tree, FeedInfo } from './types';
 
 /** What a live pane/agent stream delivers. Frames come only when `frames` was asked for. */
 export interface EventHandlers {
@@ -31,6 +31,8 @@ export interface Transport {
   upload(m: string, a: string, file: File): Promise<{ path: string; name?: string }>;
   /** The link for a file path an agent mentioned (line 0/undefined = none). */
   fileUrl(m: string, a: string, path: string, line?: number): string;
+  /** The machine's feeds, read-only. Optional: a transport without feeds shows none. */
+  feeds?(m: string): Promise<FeedInfo[]>;
 }
 
 /** An HTTP error: status 0 when the hub did not answer. */
@@ -83,6 +85,7 @@ export function httpTransport(basePath = '/', o: HttpTransportOptions = {}): Tra
   const t: Transport = {
     machines: () => req<MachineInfo[]>(`${base}api/machines`),
     tree: (m) => req<Tree>(`${base}api/machines/${enc(m)}/tree`),
+    feeds: (m) => req<{ feeds: FeedInfo[] }>(`${base}api/machines/${enc(m)}/feeds`).then((r) => r.feeds ?? []),
     getChat: (m, a) => req<ChatPayload>(`${pane(m, a)}/chat`),
     events: (m, a, { frames }, h) => connectSSE(`${pane(m, a)}/events${frames ? '?frames=1' : ''}`, {
       events: ['chat', 'frame', 'size', 'offer'],
