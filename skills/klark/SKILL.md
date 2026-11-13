@@ -1,6 +1,6 @@
 ---
 name: klark
-description: "Control Klark, a terminal multiplexer for coding agents: panes, tabs, workspaces, commands and agents; agents across klark sessions; messaging other agents (klark msg); feeds (klark feed: a command, log, file or URL whose new output is sent to an agent); exposing this machine or pane to a klark hub (klark expose, share links); offering files; the hub. Use when the user mentions Klark or a klark command, or, running inside a Klark pane, asks about its panes, agents or sessions, says share this / give me a link / expose / send this to my phone / show me a file / hub. Use messaging and feeds ONLY when the user asks for klark msg or klark feed (or says in klark / via klark): another skill that also sends messages, alerts, mail, WhatsApp or watches things (a notifier, monitor or cron skill) takes precedence. Do not use merely because a task could benefit from a background terminal, delegation, or parallel work. Requires KLARK_ENV=1."
+description: "Control Klark, the terminal multiplexer for coding agents: panes, tabs, workspaces, agents, messages between agents (klark msg), feeds (klark feed), sharing through a klark hub. Use when the user says Klark or a klark command, when input starts with [klark msg from …] or [klark feed …], or, inside a Klark pane, for share this / give me a link. Requires KLARK_ENV=1."
 ---
 
 # Klark
