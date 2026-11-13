@@ -477,6 +477,10 @@ const SKILL_FILES: &[(&str, &str)] = &[
         include_str!("../skills/klark/references/feed.md"),
     ),
     (
+        "references/feed-recipes.md",
+        include_str!("../skills/klark/references/feed-recipes.md"),
+    ),
+    (
         "references/hub.md",
         include_str!("../skills/klark/references/hub.md"),
     ),
@@ -933,7 +937,7 @@ fn main() -> io::Result<()> {
         println!("  --handoff           Opt into live handoff for update or remote attach");
         println!("  --default-config    Print default configuration and exit");
         println!("  --skill [name]      Print the agent skill (or one reference: operations,");
-        println!("                      messaging, feed, hub) and exit");
+        println!("                      messaging, feed, feed-recipes, hub) and exit");
         println!("  --install-skill     Install the agent skill for Claude Code and ~/.agents");
         println!("  --version, -V       Print version and exit");
         println!("  --help, -h          Show this help");
@@ -966,7 +970,7 @@ fn main() -> io::Result<()> {
             Some(text) => print!("{text}"),
             None => {
                 eprintln!(
-                    "error: no skill reference {:?} (have: operations, messaging, feed, hub)",
+                    "error: no skill reference {:?} (have: operations, messaging, feed, feed-recipes, hub)",
                     name.unwrap_or_default()
                 );
                 std::process::exit(2);

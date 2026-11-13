@@ -53,6 +53,7 @@ When the check passes, the `klark` binary in `PATH` talks to the current session
 | `references/operations.md` | panes, tabs, workspaces, IDs, caller context, `--machine`, starting and prompting agents, running commands in a pane, read sources |
 | `references/messaging.md` | agents across sessions, `klark msg` (send, reply, `--wait`, `--all`), how a message is delivered, error messages and fixes |
 | `references/feed.md` | `klark feed`: send a log, command, file or URL's new output to an agent |
+| `references/feed-recipes.md` | ready feeds: GitHub PRs/CI/reviews (`gh`), files and folders, git, web/APIs, mail, pods/containers/disk |
 | `references/hub.md` | `klark hub`, `klark expose` and share links, `klark offer` / `klark link`, the hub's pages |
 
 They sit next to this file (`<this skill's folder>/references/…`). `klark --skill <name>` prints one (`klark --skill feed`).

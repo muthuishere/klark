@@ -30,6 +30,8 @@ klark feed add triage "Judge these lines. If one needs action, run: klark msg se
   --stream "tail -n0 -F app.log | grep --line-buffered -E 'ERROR|FATAL'"
 ```
 
+Ready-made feeds for GitHub (`gh`: PRs to review, CI failures, review comments), files, git, web pages, mail and servers: `feed-recipes.md`.
+
 Manage feeds:
 
 ```bash
