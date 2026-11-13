@@ -27,6 +27,8 @@ update brings the new skill). It writes the whole folder to:
 
 - `~/.claude/skills/klark/` (Claude Code)
 - `~/.agents/skills/klark/` (the shared agents folder)
+- `~/.codex/skills/klark/` (Codex)
+- `$CLAUDE_CONFIG_DIR/skills/klark/` (a Claude Code profile folder, when set)
 
 It writes only where that folder already exists. It installs when `SKILL.md` is
 or any reference is missing or out of date, and removes references

@@ -539,27 +539,54 @@ fn install_skill() {
     else {
         return;
     };
-    install_skill_in(
+    install_skill_for(
         &home,
+        std::env::var_os("CLAUDE_CONFIG_DIR")
+            .map(std::path::PathBuf::from)
+            .as_deref(),
         &config::config_dir().join("versions.txt"),
         env!("KLARK_RELEASE_VERSION"),
     );
 }
 
 /// `install_skill` with the home folder, versions file and version passed in.
+#[cfg(test)]
 fn install_skill_in(home: &std::path::Path, versions_path: &std::path::Path, version: &str) {
+    install_skill_for(home, None, versions_path, version)
+}
+
+/// `claude_config`: Claude Code's `CLAUDE_CONFIG_DIR`, a profile folder used
+/// instead of (or besides) `~/.claude`.
+fn install_skill_for(
+    home: &std::path::Path,
+    claude_config: Option<&std::path::Path>,
+    versions_path: &std::path::Path,
+    version: &str,
+) {
     let mut versions = read_versions(versions_path);
     // Where the last run left off. Upgrade steps (config migrations) go here, keyed
     // on `previous` being older than `version`; none exist yet.
     let previous = versions.get("klark").cloned();
     let _direction = previous.as_deref().map(|p| compare_versions(p, version));
-    for (key, root) in [
+    let mut roots = vec![
         ("skill.claude", home.join(".claude")),
         ("skill.agents", home.join(".agents")),
-    ] {
+        ("skill.codex", home.join(".codex")),
+    ];
+    if let Some(dir) = claude_config {
+        roots.push(("skill.claude_config", dir.to_path_buf()));
+    }
+    let mut seen = Vec::new();
+    for (key, root) in roots {
         if !root.is_dir() {
             continue;
         }
+        // `~/.claude` is often a link to the profile in CLAUDE_CONFIG_DIR.
+        let real = std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone());
+        if seen.contains(&real) {
+            continue;
+        }
+        seen.push(real);
         let dir = root.join("skills/klark");
         let file = dir.join("SKILL.md");
         let existing = std::fs::read_to_string(&file).ok();
@@ -1257,6 +1284,31 @@ mod tests {
             install_skill_in(&home, &versions, V);
             assert!(!dir.join("references/old.md").exists());
             assert!(dir.join("references/feed.md").exists());
+        }
+
+        #[test]
+        fn installs_into_claude_config_dir_and_codex_once_each() {
+            let home = scratch("profiles");
+            let profile = home.join(".claude-work");
+            std::fs::create_dir_all(&profile).unwrap();
+            std::fs::create_dir_all(home.join(".codex")).unwrap();
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(&profile, home.join(".claude")).unwrap();
+            let versions = home.join("config/versions.txt");
+            install_skill_for(&home, Some(&profile), &versions, V);
+            assert_eq!(
+                std::fs::read_to_string(skill_file(&home, ".claude-work")).unwrap(),
+                SKILL
+            );
+            assert_eq!(
+                std::fs::read_to_string(skill_file(&home, ".codex")).unwrap(),
+                SKILL
+            );
+            // The link and its target are written once, under the first key.
+            #[cfg(unix)]
+            assert!(read_versions(&versions)
+                .get("skill.claude_config")
+                .is_none());
         }
 
         #[test]
