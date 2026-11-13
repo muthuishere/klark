@@ -1701,7 +1701,16 @@ fn follow_across_a_restart() {
     env.wait_text("work", &pane, "after-bulk", 60);
     let s = env.wait_sends("f15", 3, 10);
     assert!(s[2].contains("line(s)"), "{s:?}");
-    let t = env.pane_text("work", &pane);
+    // The marker heads a long message: read far enough back to see it.
+    let read = call(
+        &env.socket("work"),
+        "pane.read",
+        json!({"pane_id": pane, "source": "recent", "lines": 2000}),
+    );
+    let t = read["result"]["read"]["text"]
+        .as_str()
+        .unwrap_or("")
+        .to_string();
     assert!(
         t.contains("bytes written while klark was not running were skipped"),
         "{t}"

@@ -185,8 +185,12 @@ mod tests {
 
     fn tmp() -> (Store, PathBuf) {
         let dir = std::env::temp_dir().join(format!(
-            "klark-feed-store-{}-{}",
+            "klark-feed-store-{}-{}-{}",
             std::process::id(),
+            {
+                static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            },
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()

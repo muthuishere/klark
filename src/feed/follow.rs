@@ -30,6 +30,22 @@ pub struct Follower {
     pub pos: Option<FollowPos>,
     /// A partial last line: since when it has been waiting, by its size.
     partial: Option<(u64, std::time::Instant)>,
+    /// The path was seen missing: whatever appears there next is a new file,
+    /// even when the file system gives it the old inode number (Linux does).
+    gone: bool,
+}
+
+/// The open file was deleted (no name left). A new file at the path may then
+/// reuse its inode number, so the identity alone would not show the change.
+#[cfg(unix)]
+fn unlinked(f: &File) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    f.metadata().is_ok_and(|m| m.nlink() == 0)
+}
+
+#[cfg(not(unix))]
+fn unlinked(_f: &File) -> bool {
+    false
 }
 
 /// Which file is at `path` now: device and inode on Unix, volume serial
@@ -79,6 +95,7 @@ impl Follower {
             file: None,
             pos,
             partial: None,
+            gone: false,
         }
     }
 
@@ -152,13 +169,16 @@ impl Follower {
                 self.finish_old(&mut step, partial_ms);
                 self.file = None;
             }
+            self.gone = true;
             return step;
         };
         let (dev, ino) = identity(&self.path, &meta);
-        let same = self
-            .pos
-            .as_ref()
-            .is_some_and(|p| (p.dev, p.ino) == (dev, ino));
+        let same = !std::mem::take(&mut self.gone)
+            && !self.file.as_ref().is_some_and(unlinked)
+            && self
+                .pos
+                .as_ref()
+                .is_some_and(|p| (p.dev, p.ino) == (dev, ino));
         if !same {
             if self.pos.is_some() && self.file.is_some() {
                 // Rotated: what was appended to the old file first.
@@ -252,8 +272,12 @@ mod tests {
 
     fn tmp(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
-            "klark-follow-{}-{}",
+            "klark-follow-{}-{}-{}",
             std::process::id(),
+            {
+                static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            },
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -384,6 +408,7 @@ mod tests {
         assert!(f.start().error.is_none(), "metadata needs no read access");
         // A new file at the path: it is opened, and that fails.
         std::fs::remove_file(&p).unwrap();
+        assert_eq!(f.step(5000), Step::default(), "missing: waited for");
         append(&p, "y\n");
         std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o000)).unwrap();
         assert!(f.step(5000).error.is_some());
