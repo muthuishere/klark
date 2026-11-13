@@ -831,6 +831,7 @@ fn main() -> io::Result<()> {
         println!();
         println!("Usage: klark [options]");
         println!("       klark --session [name] [options]");
+        println!("       klark --continue | -c      (session named after this folder: create or attach)");
         println!("       klark --machine <label-or-id> <command>");
         println!("       klark --remote <ssh-target> [--session <name>]");
         println!("       klark session attach <name>");

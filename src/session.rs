@@ -98,6 +98,14 @@ pub fn configure_from_args(args: &[String]) -> Result<Vec<String>, String> {
             }
             continue;
         }
+        // `klark --continue` / `klark -c`: carry on where this folder left off,
+        // the same as `-s` alone. First position only, so a subcommand's own
+        // `-c` (`klark worktree … -c`) is never taken.
+        if index == 1 && (arg == "--continue" || arg == "-c") {
+            requested_session = Some(folder_session_name()?);
+            index += 1;
+            continue;
+        }
         if let Some(value) = arg.strip_prefix("-s=") {
             requested_session = Some(session_for_value(value)?);
             index += 1;
@@ -904,6 +912,31 @@ mod tests {
         );
         assert!(explicit_session_requested());
         assert_eq!(cleaned, vec!["klark"]);
+        std::env::remove_var(SESSION_ENV_VAR);
+        clear_explicit_session_for_test();
+    }
+
+    #[test]
+    fn continue_uses_the_current_folder_only_in_first_position() {
+        let _guard = env_lock().lock().unwrap();
+        let folder = folder_session_name().unwrap();
+        for flag in ["--continue", "-c"] {
+            std::env::remove_var(SESSION_ENV_VAR);
+            clear_explicit_session_for_test();
+            let cleaned = configure_from_args(&["klark".to_string(), flag.to_string()]).unwrap();
+            assert_eq!(
+                std::env::var(SESSION_ENV_VAR).as_deref(),
+                Ok(folder.as_str())
+            );
+            assert_eq!(cleaned, vec!["klark"]);
+        }
+        // Later on the line it belongs to the subcommand.
+        std::env::remove_var(SESSION_ENV_VAR);
+        clear_explicit_session_for_test();
+        let args: Vec<String> = ["klark", "worktree", "add", "-c"].map(String::from).into();
+        let cleaned = configure_from_args(&args).unwrap();
+        assert_eq!(cleaned, args);
+        assert!(!explicit_session_requested());
         std::env::remove_var(SESSION_ENV_VAR);
         clear_explicit_session_for_test();
     }
