@@ -1,6 +1,6 @@
 {
   "name": "@muthuishere/klark-hub-ui",
-  "version": "0.11.1",
+  "version": "0.11.2",
   "description": "React components for watching and driving coding agents: chat view, composer, terminal, sidebar, over a pluggable Transport (klark hub's HTTP + SSE by default).",
   "license": "Apache-2.0",
   "author": "Muthukumaran Navaneethakrishnan",

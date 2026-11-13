@@ -1081,7 +1081,7 @@ dependencies = [
 
 [[package]]
 name = "klark"
-version = "0.11.1"
+version = "0.11.2"
 dependencies = [
  "base64",
  "bincode",
