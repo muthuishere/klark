@@ -61,7 +61,7 @@ pub fn configure_from_args(args: &[String]) -> Result<Vec<String>, String> {
             cleaned.extend_from_slice(&args[index..]);
             break;
         }
-        // `--session` alone is `-s` alone: a session named after the current folder (create or
+        // `--session` alone is `-c`: a session named after the current folder (create or
         // attach). `--session <name>` is that session; a following flag or klark command
         // (`klark --session pane list`) is not taken as the name.
         if arg == "--session" {
@@ -82,9 +82,8 @@ pub fn configure_from_args(args: &[String]) -> Result<Vec<String>, String> {
             index += 1;
             continue;
         }
-        // `-s` alone: a session named after the current folder (create or attach).
-        // `-s <name>` / `-s=<name>`: that session. A following word that is a
-        // klark command (`klark -s pane list`) is not taken as the name.
+        // `-s <name>` / `-s=<name>`: that session. `-s` needs a name; this
+        // folder's session is `klark -c`.
         if arg == "-s" {
             match args.get(index + 1) {
                 Some(next) if !next.starts_with('-') && !is_command_word(next) => {
@@ -92,14 +91,16 @@ pub fn configure_from_args(args: &[String]) -> Result<Vec<String>, String> {
                     index += 2;
                 }
                 _ => {
-                    requested_session = Some(folder_session_name()?);
-                    index += 1;
+                    return Err(
+                        "klark -s needs a session name or folder; for this folder's session use klark -c"
+                            .to_string(),
+                    );
                 }
             }
             continue;
         }
         // `klark --continue` / `klark -c`: carry on where this folder left off,
-        // the same as `-s` alone. First position only, so a subcommand's own
+        // the same as `--session` alone. First position only, so a subcommand's own
         // `-c` (`klark worktree … -c`) is never taken.
         if index == 1 && (arg == "--continue" || arg == "-c") {
             requested_session = Some(folder_session_name()?);

@@ -16,7 +16,7 @@ Docs: **https://muthuishere.github.io/klark/**
 
 - **Persistent panes.** Agents keep running in a background server when you
   detach. `klark` reattaches; `ctrl+b q` detaches.
-- **Folder sessions.** `klark -s` creates or attaches a session named after the
+- **Folder sessions.** `klark -c` creates or attaches a session named after the
   current folder; `klark -s ~/work/api` uses that folder; `klark -s review`
   uses that name.
 - **Agent-aware.** Every agent pane shows working, blocked or idle. Agents can be
@@ -44,7 +44,7 @@ Docs: **https://muthuishere.github.io/klark/**
 ```bash
 cargo build --release              # needs Zig 0.16 (for the vendored libghostty-vt)
 ln -s "$PWD/target/release/klark" ~/.local/bin/klark
-klark -s                           # a session for this folder; start an agent in it
+klark -c                           # a session for this folder; start an agent in it
 ```
 
 Prebuilt Linux binaries come with each tagged release.
@@ -106,7 +106,7 @@ terminal multiplexer for coding agents. klark keeps herdr's core and builds on i
 - structured transcripts (Claude Code logs, Devin's session database);
 - the file viewer, image upload and `klark offer`;
 - LDAP / directory sign-in, browser approval for machines, saved hubs;
-- `klark -s` folder sessions and the single `klark` skill.
+- `klark -c` folder sessions and the single `klark` skill.
 
 **Changed from herdr:** self-update, hosted announcements and remote catalogs are
 removed. The config folder is `~/.config/klark`; klark never reads or moves
