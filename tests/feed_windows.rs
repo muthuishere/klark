@@ -63,7 +63,9 @@ impl Env {
     }
 
     fn cmd(&self) -> Command {
-        let mut c = Command::new(BIN);
+        // KLARK_TEST_BIN: run a prebuilt klark (a test binary built elsewhere).
+        let bin = std::env::var("KLARK_TEST_BIN").unwrap_or_else(|_| BIN.into());
+        let mut c = Command::new(bin);
         c.env("XDG_CONFIG_HOME", &self.base)
             .env("XDG_STATE_HOME", &self.base)
             .env("XDG_DATA_HOME", self.base.join("data"))
@@ -262,6 +264,10 @@ fn echo_agent() -> PathBuf {
     static AGENT: OnceLock<PathBuf> = OnceLock::new();
     AGENT
         .get_or_init(|| {
+            // KLARK_TEST_AGENT: a prebuilt claude.exe, for machines with no linker.
+            if let Ok(p) = std::env::var("KLARK_TEST_AGENT") {
+                return PathBuf::from(p);
+            }
             let dir = std::env::temp_dir().join(format!("kfw-agent-{}", std::process::id()));
             fs::create_dir_all(&dir).unwrap();
             let src = dir.join("echo_agent.rs");
