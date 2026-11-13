@@ -1930,7 +1930,13 @@ fn settings() {
     let shown: std::collections::BTreeSet<&str> = t
         .lines()
         .map(str::trim)
-        .filter(|l| l.starts_with("big-line-"))
+        // Only whole lines: on Linux the echo and `cat` can interleave
+        // mid-line, and the pieces are not lines the message held.
+        .filter(|l| {
+            l.strip_prefix("big-line-")
+                .and_then(|r| r.split_once('-'))
+                .is_some_and(|(n, x)| n.parse::<u32>().is_ok() && x == "x".repeat(34))
+        })
         .collect();
     let lines_bytes: usize = shown.iter().map(|l| l.len() + 1).sum();
     assert!(lines_bytes <= 300, "{lines_bytes} bytes of lines: {t}");
