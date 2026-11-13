@@ -27,4 +27,6 @@ export interface PaneInfo {
 }
 export interface Tree { workspaces?: Workspace[]; tabs?: Tab[]; panes?: PaneInfo[] }
 /** A machine and its session tree (what the sidebar lists). */
+/** feed.list, read-only (ADR 0015): what a feed watches is never included. */
+export interface FeedInfo { id: string; label: string; kind: string; agents: string[]; state: string; running: boolean; last_delivery?: number | null }
 export interface MachineTree { machine: MachineInfo; tree?: Tree }
