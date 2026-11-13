@@ -226,7 +226,7 @@ func (a *App) getAsset(w http.ResponseWriter, r *http.Request) {
 			jsonErr(w, http.StatusUnauthorized, "sign in required")
 			return
 		}
-		visible = func(as store.Asset) bool { return u.Sees(a.Store.MachineTenant(as.Machine)) }
+		visible = func(as store.Asset) bool { return u.Sees(a.machineTenant(as.Machine)) }
 	}
 	rows, err := a.Store.Assets(sha, time.Now().Add(-assetRetention).UnixMilli())
 	if err != nil {

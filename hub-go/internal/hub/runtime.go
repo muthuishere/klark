@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -216,6 +217,38 @@ func (rt *Runtime) Online(id string) bool {
 
 // Revoke drops the machine's session at once.
 func (rt *Runtime) Revoke(id string) { rt.Reg.Revoke(id) }
+
+// Forget drops a machine id completely: its live link (and those of fleet
+// members linked as <id>:<host>) and everything cached under the id (tree,
+// panes, chat feeds). The id may be registered again later, possibly by
+// someone else, who must start from nothing.
+func (rt *Runtime) Forget(id string) {
+	lower := strings.ToLower(id)
+	mine := func(k string) bool {
+		k = strings.ToLower(k)
+		return k == lower || strings.HasPrefix(k, lower+":")
+	}
+	rt.mu.Lock()
+	var drop []string
+	for k := range rt.machines {
+		if mine(k) {
+			drop = append(drop, k)
+		}
+	}
+	for _, k := range drop {
+		delete(rt.machines, k)
+	}
+	for k := range rt.feeds {
+		if m, _, _ := strings.Cut(k, "\x00"); mine(m) {
+			delete(rt.feeds, k)
+		}
+	}
+	rt.mu.Unlock()
+	for _, k := range drop {
+		rt.Reg.Revoke(k)
+	}
+	rt.Reg.Revoke(id)
+}
 
 func (m *machine) live() (*link.Conn, error) {
 	m.mu.Lock()

@@ -13,6 +13,7 @@ import (
 	"github.com/muthuishere/klark/hub-go/internal/auth"
 	"github.com/muthuishere/klark/hub-go/internal/hub"
 	"github.com/muthuishere/klark/hub-go/internal/hubchat"
+	"github.com/muthuishere/klark/hub-go/internal/store"
 )
 
 func (a *App) mountAPI(mux *http.ServeMux) {
@@ -124,7 +125,29 @@ func (a *App) knownMachine(id string) bool {
 // sees reports whether the request's user may see machine id (K1: tenants).
 func (a *App) sees(r *http.Request, id string) bool {
 	u, ok := auth.FromContext(r.Context())
-	return ok && u.Sees(a.Store.MachineTenant(id))
+	return ok && u.Sees(a.machineTenant(id))
+}
+
+// machineTenant is the tenant a machine id belongs to. Machines configured in
+// HUB_MACHINES are always the default tenant's, whatever rows say; an id the
+// hub has no record of belongs to no tenant ("": the operator only).
+func (a *App) machineTenant(id string) string {
+	for _, m := range a.Cfg.Machines {
+		if strings.EqualFold(m.Name, id) {
+			return store.DefaultTenant
+		}
+	}
+	return a.Store.MachineTenant(id)
+}
+
+// forgetMachine drops a machine id's live link and every cache kept under it,
+// so whoever registers the id next starts from nothing.
+func (a *App) forgetMachine(id string) {
+	a.Runtime.Forget(id)
+	a.files.dropMachine(id)
+	a.agentCache.Lock()
+	a.agentCache.at, a.agentCache.val = time.Time{}, nil
+	a.agentCache.Unlock()
 }
 
 // machineOr404 is the machine of the route, if it exists and is in the

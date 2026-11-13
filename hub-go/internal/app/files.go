@@ -41,6 +41,17 @@ func (c *fileCache) get(k string) (cachedFile, bool) {
 	return f, ok && time.Since(f.at) < fileCacheTTL
 }
 
+// dropMachine forgets every cached file of a machine id (keys are id\npane\npath).
+func (c *fileCache) dropMachine(id string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for k := range c.m {
+		if m, _, _ := strings.Cut(k, "\n"); strings.EqualFold(m, id) || strings.HasPrefix(strings.ToLower(m), strings.ToLower(id)+":") {
+			delete(c.m, k)
+		}
+	}
+}
+
 func (c *fileCache) put(k string, f cachedFile) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

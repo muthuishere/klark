@@ -171,3 +171,83 @@ func TestApprovedMachineJoinsTheApproversTenant(t *testing.T) {
 		t.Fatal("globex admin sees acme's laptop")
 	}
 }
+
+// A configured machine's name cannot be taken by a tenant, and a stray row
+// with that name does not move the machine into a tenant.
+func TestConfiguredMachineNamesStayWithTheHub(t *testing.T) {
+	a, ts := newApp(t, nil)
+	fm := connect(t, ts.URL, machineToken, "", 5, machineBehaviour("r1"))
+	defer fm.stop()
+	_, _ = a.Store.CreateTenant(store.Tenant{ID: "acme"})
+	hash, _ := auth.HashPassword("password1")
+	_ = a.Store.UpsertUser(store.User{Name: "alice", Hash: hash, Admin: true, Source: "local", Tenant: "acme"})
+	alice := newClient(t, ts.URL)
+	alice.login("alice", "password1")
+	if r, b := alice.do("POST", "/api/admin/machines", map[string]any{"name": "MAC"}); r.StatusCode != 409 {
+		t.Fatalf("tenant admin took a configured name: %d %s", r.StatusCode, b)
+	}
+	_ = a.Store.UpsertMachine("mac", tokens.Sha256Hex("x"), "alice", "acme")
+	if a.machineTenant("mac") != store.DefaultTenant {
+		t.Fatalf("configured machine resolved to %q", a.machineTenant("mac"))
+	}
+	for _, rt := range [][2]string{{"GET", "/api/machines/mac/tree"}, {"POST", "/api/machines/mac/panes/p1/input"}} {
+		if r, _ := alice.do(rt[0], rt[1], map[string]string{"text": "x"}); r.StatusCode != 404 {
+			t.Fatalf("alice %s %s = %d", rt[0], rt[1], r.StatusCode)
+		}
+	}
+	if fm.count("input") != 0 {
+		t.Fatal("input reached the configured machine")
+	}
+}
+
+// A machine name that is revoked and registered again starts from nothing:
+// nothing cached for the old machine is served under the new registration.
+func TestReusedMachineNameStartsClean(t *testing.T) {
+	a, ts := newApp(t, nil)
+	a.Runtime.FeedPoll = 50 * time.Millisecond
+	for _, id := range []string{"acme", "globex"} {
+		_, _ = a.Store.CreateTenant(store.Tenant{ID: id})
+	}
+	hash, _ := auth.HashPassword("password1")
+	_ = a.Store.UpsertUser(store.User{Name: "alice", Hash: hash, Admin: true, Source: "local", Tenant: "acme"})
+	_ = a.Store.UpsertUser(store.User{Name: "bob", Hash: hash, Source: "local", Tenant: "globex"})
+	_, _ = a.Store.AddMachine(store.Machine{Name: "box1", SHA256: tokens.Sha256Hex("box1-token"), Tenant: "acme"})
+	a.Tokens.Invalidate()
+	fm := connect(t, ts.URL, "box1-token", "", 5, machineBehaviour("r1"))
+	alice := newClient(t, ts.URL)
+	alice.login("alice", "password1")
+	if _, b := alice.do("GET", "/api/machines/box1/panes/p1/chat", nil); !strings.Contains(string(b), "hello") {
+		t.Fatalf("setup: chat %s", b)
+	}
+	if r, _ := alice.do("DELETE", "/api/admin/machines/box1", nil); r.StatusCode != 204 {
+		t.Fatal("revoke")
+	}
+	fm.stop()
+	_, _ = a.Store.AddMachine(store.Machine{Name: "box1", SHA256: tokens.Sha256Hex("other"), Tenant: "globex"})
+	a.Tokens.Invalidate()
+	bob := newClient(t, ts.URL)
+	bob.login("bob", "password1")
+	if _, b := bob.do("GET", "/api/machines/box1/panes/p1/chat", nil); strings.Contains(string(b), "hello") {
+		t.Fatalf("the new owner was served the old machine's chat: %s", b)
+	}
+	if _, b := bob.do("GET", "/api/machines/box1/tree", nil); strings.Contains(string(b), "pane_id") {
+		t.Fatalf("the new owner was served the old tree: %s", b)
+	}
+}
+
+// An id the hub has no record of belongs to no tenant: only the operator sees it.
+func TestUnknownMachineIDsBelongToNoTenant(t *testing.T) {
+	a, _ := newApp(t, nil)
+	if got := a.machineTenant("ghost"); got != "" {
+		t.Fatalf("ghost tenant %q", got)
+	}
+	if (auth.User{Tenant: "acme", Admin: true}).Sees("") {
+		t.Fatal("a tenant admin sees records of no tenant")
+	}
+	if !(auth.User{Tenant: store.DefaultTenant, Admin: true}).Sees("") {
+		t.Fatal("the operator must see them")
+	}
+	if (auth.User{Tenant: store.DefaultTenant}).Sees("") {
+		t.Fatal("a non-admin of default sees records of no tenant")
+	}
+}

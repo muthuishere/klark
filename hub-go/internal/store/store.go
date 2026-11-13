@@ -379,8 +379,8 @@ func (s *Store) Tenants() ([]Tenant, error) {
 }
 
 // MachineTenant is the tenant of a machine id: its own row, else its fleet's
-// row (fleet machines link as <fleet>:<host>), else the default tenant
-// (machines from HUB_MACHINES).
+// row (fleet machines link as <fleet>:<host>), else "" (no tenant: the caller
+// decides; machines from HUB_MACHINES are resolved before this).
 func (s *Store) MachineTenant(id string) string {
 	var t string
 	if s.db.QueryRow(`SELECT tenant FROM machines WHERE lower(name) = lower(?)`, id).Scan(&t) == nil {
@@ -389,7 +389,7 @@ func (s *Store) MachineTenant(id string) string {
 	if fleet, _, ok := strings.Cut(id, ":"); ok && s.db.QueryRow(`SELECT tenant FROM machines WHERE lower(name) = lower(?) AND fleet = 1`, fleet).Scan(&t) == nil {
 		return t
 	}
-	return DefaultTenant
+	return ""
 }
 
 // ---- settings ----------------------------------------------------------------

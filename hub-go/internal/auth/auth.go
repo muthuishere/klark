@@ -40,9 +40,10 @@ type User struct {
 func (u User) Operator() bool { return u.Admin && strings.EqualFold(u.Tenant, store.DefaultTenant) }
 
 // Sees reports whether u may see something that belongs to tenant t.
+// t "" means no tenant (a machine id the hub has no record of): operator only.
 func (u User) Sees(t string) bool {
 	if t == "" {
-		t = store.DefaultTenant
+		return u.Operator()
 	}
 	return u.Operator() || strings.EqualFold(u.Tenant, t)
 }

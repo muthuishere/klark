@@ -184,6 +184,12 @@ func (a *App) adminAddMachine(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, 400, "name must be 1-64 characters without spaces, '/', ':', '*', ',' or '='")
 		return
 	}
+	for _, m := range a.Cfg.Machines {
+		if strings.EqualFold(m.Name, name) {
+			jsonErr(w, 409, "a machine with this name exists")
+			return
+		}
+	}
 	me, _ := auth.FromContext(r.Context())
 	tenant, ok := a.adminTenant(w, me, b.Tenant)
 	if !ok {
@@ -209,7 +215,7 @@ func (a *App) adminAddMachine(w http.ResponseWriter, r *http.Request) {
 // can only have their session dropped (the token comes from the environment).
 func (a *App) adminRevokeMachine(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("id")
-	if me, _ := auth.FromContext(r.Context()); !me.Sees(a.Store.MachineTenant(name)) {
+	if me, _ := auth.FromContext(r.Context()); !me.Sees(a.machineTenant(name)) {
 		jsonErr(w, 404, "no such machine")
 		return
 	}
@@ -222,10 +228,10 @@ func (a *App) adminRevokeMachine(w http.ResponseWriter, r *http.Request) {
 	revoked := err == nil
 	for _, in := range a.Runtime.Machines() {
 		if strings.EqualFold(in.ID, name) || strings.HasPrefix(strings.ToLower(in.ID), strings.ToLower(name)+":") {
-			a.Runtime.Revoke(in.ID)
 			revoked = true
 		}
 	}
+	a.forgetMachine(name)
 	for _, m := range a.Cfg.Machines {
 		if strings.EqualFold(m.Name, name) {
 			revoked = true
