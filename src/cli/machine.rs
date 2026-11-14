@@ -19,7 +19,8 @@ const HELP: &str = "Usage:
 
 Add prepares the remote Klark installation and starts its server before saving.
 Missing or incompatible installations require approval in an interactive terminal.
-Changes apply automatically to open local Klark clients.
+Saved machines belong to the current Klark session (KLARK_SESSION, or klark -s <name> machine ...);
+other sessions do not see them. Changes apply automatically to that session's open clients.
 Removing or disabling a machine leaves its remote sessions running.
 Saved machines contain only a label, SSH target, explicit Klark session, and enabled state.
 SSH credentials and key material remain owned by OpenSSH.";
@@ -85,7 +86,7 @@ fn list(args: &[String]) -> std::io::Result<i32> {
         return Ok(0);
     }
     if rows.is_empty() {
-        println!("No saved SSH machines.");
+        println!("No saved SSH machines in {}.", session_label());
         return Ok(0);
     }
     for row in rows {
@@ -385,8 +386,11 @@ fn add(args: &[String]) -> std::io::Result<i32> {
         crate::client::endpoint::SshMetadataCache::new(id.as_str(), &target, &session)?
             .store(&metadata);
     }
-    println!("Saved SSH machine {id}. Remote server is ready.");
-    println!("Open Klark clients connect automatically.");
+    println!(
+        "Saved SSH machine {id} in {}. Remote server is ready.",
+        session_label()
+    );
+    println!("Open clients of this session connect automatically.");
     Ok(0)
 }
 
@@ -568,6 +572,14 @@ fn one_profile_id(args: &[String], usage: &str) -> std::io::Result<Option<Profil
             eprintln!("error: {error}");
             Ok(None)
         }
+    }
+}
+
+/// The session whose machines these commands change.
+fn session_label() -> String {
+    match crate::session::active_name() {
+        Some(name) => format!("session {name}"),
+        None => "the default session".to_string(),
     }
 }
 
