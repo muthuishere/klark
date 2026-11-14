@@ -225,13 +225,16 @@ pub(crate) fn render_sidebar(
             .fg(palette.overlay0)
             .add_modifier(Modifier::BOLD),
     );
-    // The product name, right-aligned on the spaces header row.
+    // The session name and the product name, right-aligned on the spaces header row, so several
+    // sessions open side by side can be told apart. A narrow sidebar shortens the session name
+    // first, then drops it.
     const BRAND: &str = "klark ";
     let brand_w = BRAND.len() as u16;
     if workspace_area.width >= brand_w + 9 {
+        let brand_x = workspace_area.right().saturating_sub(brand_w + 1);
         put_text(
             buffer,
-            workspace_area.right().saturating_sub(brand_w + 1),
+            brand_x,
             workspace_area.y,
             brand_w,
             BRAND,
@@ -239,6 +242,20 @@ pub(crate) fn render_sidebar(
                 .fg(palette.accent)
                 .add_modifier(Modifier::BOLD),
         );
+        let session = header_session_name();
+        // Room left of the brand after " spaces" and a space on each side.
+        let room = brand_x.saturating_sub(workspace_area.x + 8) as usize;
+        if let Some(label) = fit_session_label(&session, room) {
+            let w = unicode_width::UnicodeWidthStr::width(label.as_str()) as u16;
+            put_text(
+                buffer,
+                brand_x.saturating_sub(w + 1),
+                workspace_area.y,
+                w,
+                &label,
+                Style::default().fg(palette.overlay1),
+            );
+        }
     }
 
     let entries = workspace_entries(snapshot, state.collapsed_groups);
@@ -799,5 +816,54 @@ pub(in crate::client::shell) fn render_workspace_rows(
                 buffer[(x, y)].set_bg(background);
             }
         }
+    }
+}
+
+/// The session this client shows: its name, or "default".
+fn header_session_name() -> String {
+    crate::session::active_name()
+        .unwrap_or_else(|| crate::session::DEFAULT_SESSION_NAME.to_string())
+}
+
+/// The session name as it fits in `room` columns: whole, or cut with "…" when at least four
+/// columns are free, else nothing.
+fn fit_session_label(name: &str, room: usize) -> Option<String> {
+    use unicode_width::UnicodeWidthChar;
+    let full = unicode_width::UnicodeWidthStr::width(name);
+    if full <= room {
+        return Some(name.to_string());
+    }
+    if room < 4 {
+        return None;
+    }
+    let mut out = String::new();
+    let mut used = 0;
+    for ch in name.chars() {
+        let w = ch.width().unwrap_or(0);
+        if used + w + 1 > room {
+            break;
+        }
+        out.push(ch);
+        used += w;
+    }
+    out.push('…');
+    Some(out)
+}
+
+#[cfg(test)]
+mod session_label_tests {
+    use super::fit_session_label;
+
+    #[test]
+    fn session_label_fits_shortens_or_drops() {
+        assert_eq!(
+            fit_session_label("muthuoss", 10).as_deref(),
+            Some("muthuoss")
+        );
+        assert_eq!(
+            fit_session_label("deemwar-one-os", 8).as_deref(),
+            Some("deemwar…")
+        );
+        assert_eq!(fit_session_label("deemwar-one-os", 3), None);
     }
 }
