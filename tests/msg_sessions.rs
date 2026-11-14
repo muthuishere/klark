@@ -290,12 +290,12 @@ fn msg_send_crosses_sessions_and_lands_as_agent_prompt() {
     assert!(lines
         .iter()
         .any(|l| l["dir"] == "sent" && l["to"] == "testbox/work/rev"));
-    // The sender was a plain CLI, not an agent, so the reply has nowhere to go
-    // and says so, naming the recorded sender's agent.
+    // The sender was a plain CLI, not a pane, so the reply is saved in the
+    // message log for it (klark msg send --wait-reply reads it there).
     let reply = env.msg(Some("work"), Some(&pane), &["reply", "done"]);
-    assert!(!reply.status.success());
+    assert!(reply.status.success(), "{}", text(&reply));
     assert!(
-        String::from_utf8_lossy(&reply.stderr).contains("no agent cli"),
+        text(&reply).contains("reply was saved"),
         "{}",
         text(&reply)
     );
