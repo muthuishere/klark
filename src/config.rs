@@ -1,5 +1,6 @@
 use crossterm::event::{KeyCode, KeyModifiers};
 
+mod hooks;
 mod io;
 mod keybinds;
 mod model;
@@ -38,6 +39,7 @@ pub use self::{
     window_title::{WindowTitlePart, WindowTitleTemplate, WindowTitleToken},
 };
 
+pub use self::hooks::{validate_name as validate_hook_name, HookDef, HooksConfig, RestartPolicy};
 pub(crate) use self::keybinds::parse_key_combo;
 pub(crate) use self::write::{update_file_at, write_edit, ConfigEdit};
 pub(crate) use self::{

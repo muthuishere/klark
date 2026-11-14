@@ -139,7 +139,7 @@ fn feeds_menu_entry_opens_overlay_and_acts_on_highlighted_feed() {
     state.set_pane_surface(surface());
     let index = super::super::global_menu::global_menu_items(&snapshot())
         .iter()
-        .position(|(label, _)| *label == "feeds")
+        .position(|(label, _)| *label == "jobs")
         .expect("feeds menu entry");
     let settings = super::super::global_menu::global_menu_items(&snapshot())
         .iter()
@@ -376,4 +376,32 @@ fn feeds_overlay_moving_selection_drops_stop_confirmation() {
     };
     assert_eq!(feeds.confirm_stop, None);
     assert_eq!(feeds.message, None);
+}
+
+#[test]
+fn jobs_panel_switches_to_the_hooks_tab() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(snapshot()));
+    state.set_pane_surface(surface());
+    let mut outcome = ClientShellInput::default();
+    state.open_feeds_overlay(&mut outcome);
+    let tab = |state: &ClientShellState| match &state.overlay {
+        Some(ClientShellOverlay::Feeds(jobs)) => Some(jobs.tab),
+        _ => None,
+    };
+    assert_eq!(tab(&state), Some(JobsTab::Feeds));
+    state.handle_input_bytes(b"\t");
+    assert_eq!(tab(&state), Some(JobsTab::Hooks));
+    let frame = state.compose(120, 30).expect("jobs panel");
+    let text = frame
+        .cells
+        .chunks(frame.width as usize)
+        .map(|row| row.iter().map(|c| c.symbol.as_str()).collect::<String>())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(text.contains("hooks"), "{text}");
+    assert!(text.contains("e restart"), "{text}");
+    state.handle_input_bytes(b"\t");
+    assert_eq!(tab(&state), Some(JobsTab::Feeds));
+    state.handle_input_bytes(b"\x1b");
 }

@@ -429,10 +429,23 @@ pub(super) struct ClientSettingsOverlay {
     pub(super) feeds: crate::config::FeedsConfig,
 }
 
-/// The global menu's `feeds` overlay (ADR 0015): the endpoint's feeds,
-/// fetched with `feed.list`, with stop and start on the highlighted one.
+/// The jobs panel's tabs.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(super) enum JobsTab {
+    #[default]
+    Feeds,
+    Hooks,
+}
+
+/// The global menu's jobs panel: the endpoint's feeds (ADR 0015), fetched
+/// with `feed.list`, with stop and start on the highlighted one; and this
+/// machine's hooks (issue #11), read from the hooks supervisor's status.
 #[derive(Debug, Default)]
 pub(super) struct ClientFeedsOverlay {
+    pub(super) tab: JobsTab,
+    pub(super) hooks: Vec<crate::hooks::HookStatus>,
+    pub(super) hooks_running: bool,
+    pub(super) hook_selected: usize,
     pub(super) feeds: Vec<crate::api::schema::FeedInfo>,
     pub(super) selected: usize,
     pub(super) loading: bool,

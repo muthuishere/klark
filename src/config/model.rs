@@ -408,6 +408,7 @@ pub struct Config {
     pub experimental: ExperimentalConfig,
     pub remote: RemoteConfig,
     pub feeds: FeedsConfig,
+    pub hooks: super::HooksConfig,
 }
 
 #[derive(Debug)]
