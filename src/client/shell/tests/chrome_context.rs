@@ -409,6 +409,7 @@ fn global_menu_opens_from_sidebar_and_routes_client_actions() {
     assert!(text.contains("keybinds"));
     assert!(text.contains("reload config"));
     assert!(text.contains("detach"));
+    assert!(text.contains("add machine"));
 
     let keybinds = state.hits.global_menu_rows[3].0;
     let help = state.handle_raw_events(vec![RawInputEvent::Mouse(crossterm::event::MouseEvent {
@@ -421,7 +422,7 @@ fn global_menu_opens_from_sidebar_and_routes_client_actions() {
     assert!(matches!(state.overlay, Some(ClientShellOverlay::Help(_))));
 
     state.overlay = Some(ClientShellOverlay::GlobalMenu(ClientGlobalMenuOverlay {
-        highlighted: 5,
+        highlighted: 6,
     }));
     let detach = state.handle_input_bytes(b"\r");
     assert!(detach.detach);
@@ -527,4 +528,20 @@ fn close_confirmation_error_becomes_client_owned_overlay_and_stable_workspace_cl
         crate::api::schema::Method::WorkspaceClose(params)
             if params.workspace_id == "ws_1" && !params.close_group
     ));
+}
+
+#[test]
+fn global_menu_add_machine_opens_the_builtin_popup() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(snapshot()));
+    state.set_pane_surface(surface());
+    let index = super::super::global_menu::global_menu_items(state.snapshot.as_deref().unwrap())
+        .iter()
+        .position(|(label, _)| *label == "add machine")
+        .expect("add machine in the global menu");
+    let mut outcome = ClientShellInput::default();
+    state.activate_global_menu_item(index, &mut outcome);
+    assert!(state.popup_pending);
+    let sent = format!("{:?}", outcome.actions);
+    assert!(sent.contains(crate::app::ADD_MACHINE_COMMAND_ID), "{sent}");
 }
