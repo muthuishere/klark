@@ -210,7 +210,7 @@ fn reconnect(args: &[String]) -> std::io::Result<i32> {
 
 #[derive(Debug, PartialEq, Eq)]
 struct AddArgs {
-    target: String,
+    target: Option<String>,
     label: Option<String>,
     session: Option<String>,
 }
@@ -251,10 +251,6 @@ fn parse_add_args(args: &[String]) -> Result<AddArgs, String> {
             _ => unreachable!("validated machine add option"),
         }
     }
-    let target = target.ok_or_else(|| {
-        "usage: klark machine add <ssh-target> [--label <label>] [--remote-session <name>]"
-            .to_owned()
-    })?;
     Ok(AddArgs {
         target,
         label,
@@ -306,6 +302,22 @@ fn add(args: &[String]) -> std::io::Result<i32> {
         Ok(args) => args,
         Err(error) => {
             eprintln!("{error}");
+            return Ok(2);
+        }
+    };
+    let target = match target {
+        Some(target) => target,
+        // Asked for in a terminal (the menu's "add machine" opens one).
+        None if std::io::stdin().is_terminal() && std::io::stderr().is_terminal() => {
+            match prompt_target()? {
+                Some(target) => target,
+                None => return Ok(1),
+            }
+        }
+        None => {
+            eprintln!(
+                "usage: klark machine add <ssh-target> [--label <label>] [--remote-session <name>]"
+            );
             return Ok(2);
         }
     };
@@ -575,6 +587,22 @@ fn one_profile_id(args: &[String], usage: &str) -> std::io::Result<Option<Profil
     }
 }
 
+/// Asks for the SSH target in a terminal; an empty answer cancels.
+fn prompt_target() -> std::io::Result<Option<String>> {
+    use std::io::Write;
+    eprintln!("Add a machine to {}.", session_label());
+    eprint!("SSH target (user@host or a Host from ~/.ssh/config): ");
+    std::io::stderr().flush()?;
+    let mut line = String::new();
+    std::io::stdin().read_line(&mut line)?;
+    let target = line.trim();
+    if target.is_empty() {
+        eprintln!("Cancelled.");
+        return Ok(None);
+    }
+    Ok(Some(target.to_owned()))
+}
+
 /// The session whose machines these commands change.
 fn session_label() -> String {
     match crate::session::active_name() {
@@ -623,7 +651,7 @@ mod tests {
             assert_eq!(
                 parse_add_args(&args).unwrap(),
                 AddArgs {
-                    target: "workstation.coder".into(),
+                    target: Some("workstation.coder".into()),
                     label: Some("coder".into()),
                     session: session.map(str::to_owned),
                 },
@@ -669,9 +697,12 @@ mod tests {
 
     #[test]
     fn add_parser_rejects_incomplete_duplicate_and_extra_arguments() {
+        // No target parses: add asks for one in a terminal and fails with usage otherwise.
+        for args in [vec![], vec!["--label", "coder"]] {
+            let args = args.into_iter().map(str::to_owned).collect::<Vec<_>>();
+            assert_eq!(parse_add_args(&args).unwrap().target, None, "{args:?}");
+        }
         for args in [
-            vec![],
-            vec!["--label", "coder"],
             vec!["workstation.coder", "--label"],
             vec!["workstation.coder", "--label", "coder", "--remote-session"],
             vec!["--label", "coder", "--label", "other", "workstation.coder"],

@@ -5,6 +5,7 @@ pub(super) enum ClientGlobalMenuAction {
     Binding(crate::input::KeybindAction),
     WhatsNew,
     Feeds,
+    AddMachine,
 }
 
 pub(super) fn global_menu_attention(snapshot: &ClientShellSnapshot) -> bool {
@@ -52,6 +53,7 @@ pub(super) fn global_menu_items(
             ClientGlobalMenuAction::WhatsNew,
         ));
     }
+    items.push(("add machine", ClientGlobalMenuAction::AddMachine));
     items.push((
         "detach",
         ClientGlobalMenuAction::Binding(crate::input::KeybindAction::Detach),
@@ -111,7 +113,34 @@ impl ClientShellState {
             }
             ClientGlobalMenuAction::WhatsNew => self.open_release_notes(),
             ClientGlobalMenuAction::Feeds => self.open_feeds_overlay(outcome),
+            ClientGlobalMenuAction::AddMachine => self.open_add_machine_popup(outcome),
         }
         outcome.repaint = true;
+    }
+}
+
+impl ClientShellState {
+    /// Opens a popup on this session's server running `klark machine add`; the machine is saved
+    /// to this session only.
+    fn open_add_machine_popup(&mut self, outcome: &mut ClientShellInput) {
+        let Some(snapshot) = self.snapshot.as_deref() else {
+            return;
+        };
+        let params = crate::api::schema::CommandInvokeParams {
+            command_id: crate::app::ADD_MACHINE_COMMAND_ID.to_string(),
+            workspace_id: snapshot.focused_workspace_id.clone(),
+            tab_id: snapshot.focused_tab_id.clone(),
+            pane_id: snapshot.focused_pane_id.clone(),
+            selection: None,
+        };
+        self.popup_pending = true;
+        self.popup_pending_deadline = None;
+        if !self.push_endpoint_method_with_kind(
+            crate::api::schema::Method::CommandInvoke(params),
+            PendingEndpointKind::PopupCommand,
+            outcome,
+        ) {
+            self.popup_pending = false;
+        }
     }
 }

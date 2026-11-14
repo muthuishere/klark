@@ -70,6 +70,9 @@ impl App {
         &self,
         id: &str,
     ) -> Option<crate::config::CustomCommandKeybind> {
+        if id == ADD_MACHINE_COMMAND_ID {
+            return add_machine_command();
+        }
         self.endpoint_commands
             .entries
             .iter()
@@ -781,4 +784,28 @@ mod tests {
         );
         assert!(!format!("{manifest:?}").contains("secret-command"));
     }
+}
+
+/// The global menu's "add machine": a popup on this session's server that runs `klark machine add`,
+/// which asks for the SSH target and saves the machine to this session only.
+pub(crate) const ADD_MACHINE_COMMAND_ID: &str = "klark.builtin.add-machine";
+
+fn add_machine_command() -> Option<crate::config::CustomCommandKeybind> {
+    let exe = std::env::current_exe().ok()?.display().to_string();
+    #[cfg(windows)]
+    let command = format!("\"{exe}\" machine add & echo. & pause");
+    #[cfg(not(windows))]
+    let command = format!(
+        "'{}' machine add; printf '\\nPress Enter to close. '; read _",
+        exe.replace('\'', "'\\''")
+    );
+    Some(crate::config::CustomCommandKeybind {
+        bindings: Default::default(),
+        label: "add machine".into(),
+        command,
+        action: crate::config::CustomCommandAction::Popup,
+        description: Some("Add an SSH machine to this session".into()),
+        width: None,
+        height: None,
+    })
 }
