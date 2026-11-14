@@ -87,6 +87,14 @@ impl ClientShellState {
     }
 
     pub(super) fn select_feed_row(&mut self, index: usize) {
+        if let Some(ClientShellOverlay::Feeds(jobs)) = self.overlay.as_mut() {
+            if jobs.tab == JobsTab::Hooks {
+                if index < jobs.hooks.len() {
+                    jobs.hook_selected = index;
+                }
+                return;
+            }
+        }
         if let Some(ClientShellOverlay::Feeds(feeds)) = self.overlay.as_mut() {
             if index < feeds.feeds.len() && index != feeds.selected {
                 feeds.selected = index;
@@ -182,7 +190,27 @@ impl ClientShellState {
             KeyCode::Esc | KeyCode::Char('q') => {
                 self.overlay = None;
                 outcome.repaint = true;
+                return true;
             }
+            KeyCode::Tab | KeyCode::BackTab | KeyCode::Left | KeyCode::Right => {
+                self.switch_jobs_tab();
+                outcome.repaint = true;
+                return true;
+            }
+            _ => {}
+        }
+        if matches!(
+            self.overlay,
+            Some(ClientShellOverlay::Feeds(ClientFeedsOverlay {
+                tab: JobsTab::Hooks,
+                ..
+            }))
+        ) {
+            self.route_hooks_key(code);
+            outcome.repaint = true;
+            return true;
+        }
+        match code {
             KeyCode::Up | KeyCode::Char('k') => {
                 self.move_feed_selection(-1);
                 outcome.repaint = true;
@@ -202,4 +230,87 @@ impl ClientShellState {
         }
         true
     }
+
+    fn switch_jobs_tab(&mut self) {
+        let Some(ClientShellOverlay::Feeds(jobs)) = self.overlay.as_mut() else {
+            return;
+        };
+        jobs.tab = match jobs.tab {
+            JobsTab::Feeds => JobsTab::Hooks,
+            JobsTab::Hooks => JobsTab::Feeds,
+        };
+        jobs.message = None;
+        jobs.confirm_stop = None;
+        if jobs.tab == JobsTab::Hooks {
+            refresh_hooks(jobs);
+        }
+    }
+
+    /// Keys of the hooks tab: ↑↓/jk select, s start, x stop, e restart,
+    /// r refresh. A hook stopped here stays stopped until started again.
+    fn route_hooks_key(&mut self, code: KeyCode) {
+        let Some(ClientShellOverlay::Feeds(jobs)) = self.overlay.as_mut() else {
+            return;
+        };
+        let last = jobs.hooks.len().saturating_sub(1);
+        let name = jobs
+            .hooks
+            .get(jobs.hook_selected)
+            .map(|h| (h.name.clone(), h.kind == "start"));
+        match code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                jobs.hook_selected = jobs.hook_selected.saturating_sub(1);
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                jobs.hook_selected = (jobs.hook_selected + 1).min(last);
+            }
+            KeyCode::Char('r') => refresh_hooks(jobs),
+            KeyCode::Char(c @ ('s' | 'x' | 'e')) => {
+                let Some((name, start_hook)) = name else {
+                    return;
+                };
+                if !start_hook {
+                    jobs.message = Some(format!(
+                        "{name} is a stop hook: it runs when the hooks stop"
+                    ));
+                    return;
+                }
+                let result = if !jobs.hooks_running {
+                    if c == 's' || c == 'e' {
+                        crate::hooks::start_pinned()
+                            .map(|()| "starting the hooks supervisor (all start hooks)".to_string())
+                    } else {
+                        Ok("hooks are not running".to_string())
+                    }
+                } else {
+                    let action = match c {
+                        's' => crate::hooks::Action::Start,
+                        'x' => crate::hooks::Action::Stop,
+                        _ => crate::hooks::Action::Restart,
+                    };
+                    let word = match c {
+                        's' => "starting",
+                        'x' => "stopping",
+                        _ => "restarting",
+                    };
+                    crate::hooks::send(action, Some(&name)).map(|path| {
+                        // The supervisor handles it within 200 ms.
+                        crate::hooks::wait_handled(&path, std::time::Duration::from_millis(600));
+                        format!("{word} {name}")
+                    })
+                };
+                jobs.message = Some(result.unwrap_or_else(|e| format!("hooks: {e}")));
+                refresh_hooks(jobs);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Reads this machine's hooks and their state.
+fn refresh_hooks(jobs: &mut ClientFeedsOverlay) {
+    let (supervisor, hooks) = crate::hooks::snapshot();
+    jobs.hooks_running = supervisor.is_some();
+    jobs.hooks = hooks;
+    jobs.hook_selected = jobs.hook_selected.min(jobs.hooks.len().saturating_sub(1));
 }
