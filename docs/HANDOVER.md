@@ -70,6 +70,12 @@ Asset names the installers expect: `klark-macos-aarch64`, `klark-macos-x86_64`, 
 
 **macOS:** `cargo build --release` (arm64) and
 `rustup target add x86_64-apple-darwin && cargo build --release --target x86_64-apple-darwin`.
+Then sign and notarize both before computing the `.sha256` files:
+`scripts/macos_sign.sh target/release/klark target/x86_64-apple-darwin/release/klark`.
+It signs with the keychain's "Developer ID Application" certificate (`KLARK_SIGN_IDENTITY` to choose
+another) under the fixed identifier `dev.klark.klark`, so macOS keeps a user's permissions (Full Disk
+Access, folders) across updates. An unsigned build loses them on every update
+([docs/macos-permissions.md](macos-permissions.md)).
 
 **Windows (cross-built on the Mac):** one-time `cargo install xwin`, then
 `python3 scripts/windows_cross.py setup --accept-license` (downloads Microsoft's SDK to

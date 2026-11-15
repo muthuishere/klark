@@ -19,6 +19,65 @@ fn main() {
         .map(|v| to_semver_build(&v))
         .unwrap_or_else(|| "0.0.0-dev".to_string());
     println!("cargo:rustc-env=KLARK_RELEASE_VERSION={version}");
+    embed_macos_info_plist(&version);
+}
+
+/// macOS keeps privacy permissions per app identity. A bare binary has no
+/// bundle identifier, so it is named after a hash that changes every build and
+/// each update looks like a new app. An Info.plist linked into the binary gives
+/// it a stable identifier, a name for the permission prompts and the reasons
+/// they show. Signing (scripts/macos_sign.sh) uses the same identifier.
+fn embed_macos_info_plist(version: &str) {
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("macos") {
+        return;
+    }
+    let Ok(out_dir) = std::env::var("OUT_DIR") else {
+        return;
+    };
+    let short = version.split(['+', '-']).next().unwrap_or(version);
+    let why = "Agents and shells running in Klark panes work with files in your";
+    let plist = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key><string>{id}</string>
+  <key>CFBundleName</key><string>Klark</string>
+  <key>CFBundleDisplayName</key><string>Klark</string>
+  <key>CFBundleExecutable</key><string>klark</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+  <key>CFBundleShortVersionString</key><string>{short}</string>
+  <key>CFBundleVersion</key><string>{version}</string>
+  <key>NSDocumentsFolderUsageDescription</key><string>{why} Documents folder.</string>
+  <key>NSDesktopFolderUsageDescription</key><string>{why} Desktop folder.</string>
+  <key>NSDownloadsFolderUsageDescription</key><string>{why} Downloads folder.</string>
+  <key>NSNetworkVolumesUsageDescription</key><string>{why} network volumes.</string>
+  <key>NSRemovableVolumesUsageDescription</key><string>{why} removable volumes.</string>
+  <key>NSAppleEventsUsageDescription</key><string>Agents and shells running in Klark panes may control other apps when you ask them to.</string>
+</dict>
+</plist>
+"#,
+        id = MACOS_BUNDLE_ID,
+        version = xml_escape(version),
+        short = xml_escape(short),
+    );
+    let path = std::path::Path::new(&out_dir).join("Info.plist");
+    if std::fs::write(&path, plist).is_err() {
+        return;
+    }
+    println!(
+        "cargo:rustc-link-arg-bins=-Wl,-sectcreate,__TEXT,__info_plist,{}",
+        path.display()
+    );
+}
+
+const MACOS_BUNDLE_ID: &str = "dev.klark.klark";
+
+fn xml_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 fn tag_version() -> Option<String> {
