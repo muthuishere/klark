@@ -11,8 +11,8 @@ Agents message each other as prompts. A message lands in the other agent's pane 
 | `work/reviewer` | that agent in the klark session `work` on this machine (the default session is `default`) |
 | `laptop/work/reviewer` | that agent on another machine linked to the same hub |
 
-`klark msg whoami` prints this agent's own address. `klark msg name reviewer` renames it.
-`klark msg ls` lists every agent: those in all running sessions, plus the hub's (`--local` skips the hub). Worktrees are included.
+`klark msg whoami` prints this agent's own address. An agent without a name is named after its folder automatically (`klark`, then `klark-2` for a second agent there); `klark msg name reviewer` renames it, and a name set that way is never replaced.
+`klark msg ls` lists every agent: those in all running sessions, plus the hub's (`--local` skips the hub). Worktrees are included. Each row shows the agent's folder, whether it is the `main` checkout or a `worktree <name>` (with the branch), and its terminal title; `--json` gives `cwd`, `checkout`, `worktree`, `branch` and `title`.
 
 ## Sending
 

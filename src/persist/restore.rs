@@ -464,6 +464,9 @@ fn unavailable_restored_terminal(
                 .and_then(crate::detect::parse_canonical_agent_label),
         ) {
             (Some(name), Some(agent)) => terminal.restore_managed_agent(name.clone(), agent),
+            (Some(name), None) if pane.agent_name_auto => {
+                terminal.set_automatic_agent_name(name.clone())
+            }
             (Some(name), None) => terminal.set_agent_name(name.clone()),
             _ => {}
         }
@@ -534,6 +537,7 @@ fn restore_tab(
 
         let saved_label = saved_pane.and_then(|p| p.label.clone());
         let saved_agent_name = saved_pane.and_then(|p| p.agent_name.clone());
+        let saved_agent_name_auto = saved_pane.is_some_and(|p| p.agent_name_auto);
         let saved_managed_agent = saved_pane
             .and_then(|pane| pane.managed_agent_kind.as_deref())
             .and_then(crate::detect::parse_canonical_agent_label);
@@ -707,6 +711,9 @@ fn restore_tab(
                         terminal.restore_managed_agent(agent_name, agent)
                     }
                     (Some(_), Some(_)) => {}
+                    (Some(agent_name), None) if was_imported && saved_agent_name_auto => {
+                        terminal.set_automatic_agent_name(agent_name)
+                    }
                     (Some(agent_name), None) if was_imported => terminal.set_agent_name(agent_name),
                     (Some(_), None) => {}
                     (None, _) => {}
@@ -1545,6 +1552,7 @@ mod tests {
                             cwd,
                             label: Some("reviewer".into()),
                             agent_name: Some("reviewer".into()),
+                            agent_name_auto: false,
                             managed_agent_kind: Some("opencode".into()),
                             agent_session: Some(super::super::snapshot::PaneAgentSessionSnapshot {
                                 source: "klark:opencode".into(),
@@ -1632,6 +1640,7 @@ mod tests {
                                 cwd: cwd.clone(),
                                 label: None,
                                 agent_name: None,
+                                agent_name_auto: false,
                                 managed_agent_kind: None,
                                 agent_session: None,
                                 agent_resume: None,
@@ -1644,6 +1653,7 @@ mod tests {
                                 cwd: cwd.clone(),
                                 label: None,
                                 agent_name: None,
+                                agent_name_auto: false,
                                 managed_agent_kind: None,
                                 agent_session: None,
                                 agent_resume: None,
@@ -1698,6 +1708,7 @@ mod tests {
                     cwd: cwd.clone(),
                     label: None,
                     agent_name: None,
+                    agent_name_auto: false,
                     managed_agent_kind: None,
                     agent_session: None,
                     agent_resume: None,
@@ -1709,6 +1720,7 @@ mod tests {
             cwd: cwd.clone(),
             label: Some("planner".into()),
             agent_name: Some("planner".into()),
+            agent_name_auto: false,
             managed_agent_kind: None,
             agent_session: Some(super::super::snapshot::PaneAgentSessionSnapshot {
                 source: "klark:codex".into(),
@@ -1861,6 +1873,7 @@ mod tests {
                             cwd,
                             label: None,
                             agent_name: None,
+                            agent_name_auto: false,
                             managed_agent_kind: None,
                             agent_session: Some(super::super::snapshot::PaneAgentSessionSnapshot {
                                 source: "klark:codex".into(),
@@ -2172,6 +2185,7 @@ mod tests {
                 cwd: cwd.clone(),
                 label: None,
                 agent_name: None,
+                agent_name_auto: false,
                 managed_agent_kind: None,
                 agent_session: None,
                 agent_resume: None,

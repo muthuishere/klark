@@ -4,6 +4,8 @@
 //! - `actions.rs` — state mutations (testable without PTYs/async)
 
 pub(crate) mod actions;
+#[cfg(test)]
+mod agent_name_tests;
 mod agent_resume;
 #[cfg(test)]
 mod agent_suspend_tests;
@@ -696,6 +698,7 @@ impl App {
         app.configure_tab_bar_status(&config.ui.tab_bar_right, &config.ui.tab_bar_right_separator);
         app.configure_window_title(&config.ui.window_title);
         app.refresh_restored_workspace_git_metadata();
+        app.assign_automatic_agent_names();
         Ok(app)
     }
 
@@ -759,6 +762,7 @@ impl App {
                 .and_then(|ws| ws.focused_pane_id().map(|pane_id| (idx, pane_id)))
         });
         app.refresh_restored_workspace_git_metadata();
+        app.assign_automatic_agent_names();
         Ok(app)
     }
 

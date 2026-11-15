@@ -1265,7 +1265,22 @@ fn agent_methods_round_trip_over_socket() {
     let agents = listed["result"]["agents"].as_array().unwrap();
     assert_eq!(agents.len(), 1);
     assert_eq!(agents[0]["terminal_id"], terminal_id);
-    assert!(agents[0].get("name").is_none());
+    // An unnamed agent is named after its folder automatically.
+    let auto_name = agents[0]["name"].as_str().unwrap().to_string();
+    // The folder is `hapi-<pid>-<nanos>`: already a valid name, cut to 32.
+    let folder = base.file_name().unwrap().to_string_lossy().into_owned();
+    let expected = folder[..folder.len().min(32)].trim_end_matches('-');
+    assert_eq!(auto_name, expected, "named after {}", base.display());
+    let fetched_by_auto_name = send_request(
+        &socket_path,
+        &format!(
+            r#"{{"id":"agent_get_auto","method":"agent.get","params":{{"target":"{auto_name}"}}}}"#
+        ),
+    );
+    assert_eq!(
+        fetched_by_auto_name["result"]["agent"]["terminal_id"],
+        terminal_id
+    );
     assert_eq!(agents[0]["agent"], "pi");
     assert_eq!(agents[0]["agent_status"], "working");
     assert_eq!(agents[0]["pane_id"], pane_id);

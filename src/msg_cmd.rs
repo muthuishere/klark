@@ -18,13 +18,15 @@ Agents message agents: in this session, in another klark session on this
 machine, or on another machine linked to the same hub (ADR 0009).
 
 Addresses: <agent> | <session>/<agent> | <machine>/<session>/<agent>
-  agent   = an agent name (klark msg name / klark agent rename) or a pane id
+  agent   = an agent name or a pane id; agents are named after their folder
+            automatically (change it: klark msg name / klark agent rename)
   session = a klark session name; the default session is \"default\"
   machine = the name the hub knows the machine by
 
 commands:
   whoami [--json]                        this agent's own address
-  ls [--local] [--json]                  agents in every running session, worktrees included (+ the hub's, unless --local)
+  ls [--local] [--json]                  agents in every running session, worktrees included (+ the hub's, unless --local):
+                                         address, status, kind, main checkout or worktree, folder, title
   send [--from <addr>] [--json] <to> <text...>
                                          deliver a message as a prompt to another agent
   send --wait-reply <secs> <to> <text...>
@@ -480,7 +482,13 @@ fn cmd_ls(args: &[String]) -> R<()> {
         if a.has("--json") {
             println!("{}", serde_json::to_string(&local).unwrap_or_default());
         } else {
-            print_table(local.iter().map(|l| row(l, "local")).collect());
+            let home = home_dir();
+            print_table(
+                local
+                    .iter()
+                    .map(|l| row(l, "local", home.as_deref()))
+                    .collect(),
+            );
         }
         return Ok(());
     }
@@ -511,21 +519,28 @@ fn cmd_ls(args: &[String]) -> R<()> {
     if a.has("--json") {
         println!("{}", Value::Array(rows));
     } else {
+        let home = home_dir();
         print_table(
             rows.iter()
                 .map(|r| {
-                    let s = |k: &str| r.get(k).and_then(Value::as_str).unwrap_or("").to_string();
-                    let place = if r["local"] == json!(true) {
-                        "local"
-                    } else {
-                        "remote"
-                    };
-                    [
-                        s("address"),
-                        shown_status(&s("status")),
-                        s("agent"),
-                        place.to_string(),
-                    ]
+                    let local = r["local"] == json!(true);
+                    match serde_json::from_value::<LocalAgent>(r.clone()) {
+                        Ok(l) if local => row(&l, "local", home.as_deref()),
+                        Ok(l) => row(&l, "remote", None),
+                        Err(_) => {
+                            let s = |k: &str| {
+                                r.get(k).and_then(Value::as_str).unwrap_or("").to_string()
+                            };
+                            [
+                                s("address"),
+                                shown_status(&s("status")),
+                                s("agent"),
+                                if local { "local" } else { "remote" }.to_string(),
+                                String::new(),
+                                String::new(),
+                            ]
+                        }
+                    }
                 })
                 .collect(),
         );
@@ -542,42 +557,154 @@ fn shown_status(status: &str) -> String {
     }
 }
 
-fn row(l: &LocalAgent, place: &str) -> [String; 4] {
+/// Width `klark msg ls` keeps its table within on a terminal whose size is
+/// unknown. When the table is too wide, TITLE gives way first, then FOLDER
+/// (keeping its end), then WHERE (losing the branch before the worktree
+/// name), each down to its minimum. Output that is not a terminal (an agent
+/// reading it, a pipe) is never cut.
+const TABLE_WIDTH: usize = 120;
+const MIN_WHERE_WIDTH: usize = 14;
+const MIN_FOLDER_WIDTH: usize = 12;
+const MIN_TITLE_WIDTH: usize = 16;
+
+fn home_dir() -> Option<String> {
+    std::env::var("HOME").ok().filter(|home| home.len() > 1)
+}
+
+/// One table row: address, status, agent, where, folder, title. WHERE is
+/// the checkout (`main` or `worktree <name>`, with the branch) for a local
+/// agent in git, `local` for one outside git, and `remote` (plus the
+/// checkout, when the other machine reports it) for an agent elsewhere.
+fn row(l: &LocalAgent, place: &str, home: Option<&str>) -> [String; 6] {
+    let mut checkout = match (l.checkout.as_deref(), &l.worktree) {
+        (_, Some(wt)) => format!("worktree {wt}"),
+        (Some(kind), None) => kind.to_string(),
+        (None, None) => String::new(),
+    };
+    if let (false, Some(branch)) = (checkout.is_empty(), &l.branch) {
+        checkout.push_str(&format!(" ({branch})"));
+    }
+    let place = match (place, checkout.is_empty()) {
+        (place, true) => place.to_string(),
+        ("local", false) => checkout,
+        (place, false) => format!("{place} · {checkout}"),
+    };
     [
         l.address.clone(),
         shown_status(&l.status),
         l.agent.clone().unwrap_or_default(),
-        match &l.worktree {
-            Some(wt) => format!("{place} · worktree {wt}"),
-            None => place.to_string(),
-        },
+        place,
+        l.cwd
+            .as_deref()
+            .map(|cwd| short_folder(cwd, home))
+            .unwrap_or_default(),
+        l.title.clone().unwrap_or_default(),
     ]
 }
 
-fn print_table(rows: Vec<[String; 4]>) {
+/// `cwd` with the home folder as `~`.
+fn short_folder(cwd: &str, home: Option<&str>) -> String {
+    match home.and_then(|home| cwd.strip_prefix(home)) {
+        Some(rest) if rest.is_empty() || rest.starts_with('/') => format!("~{rest}"),
+        _ => cwd.to_string(),
+    }
+}
+
+/// At most `width` characters, keeping the end: `…` plus the tail.
+fn ellipsize_start(text: &str, width: usize) -> String {
+    let len = text.chars().count();
+    if len <= width {
+        return text.to_string();
+    }
+    let tail: String = text.chars().skip(len - width.saturating_sub(1)).collect();
+    format!("…{tail}")
+}
+
+/// A WHERE cell in `width`: without its `(branch)` when it does not fit, and
+/// cut only if still too long.
+fn fit_where(cell: &str, width: usize) -> String {
+    if cell.chars().count() <= width {
+        return cell.to_string();
+    }
+    match cell.rfind(" (").filter(|_| cell.ends_with(')')) {
+        Some(at) => ellipsize(&cell[..at], width),
+        None => ellipsize(cell, width),
+    }
+}
+
+/// At most `width` characters, ending in `…` when cut.
+fn ellipsize(text: &str, width: usize) -> String {
+    if text.chars().count() <= width {
+        return text.to_string();
+    }
+    let mut out: String = text.chars().take(width.saturating_sub(1)).collect();
+    out.push('…');
+    out
+}
+
+fn print_table(rows: Vec<[String; 6]>) {
     if rows.is_empty() {
         println!("no agents found (are any klark sessions running agents?)");
         return;
     }
-    let head = ["ADDRESS", "STATUS", "AGENT", "WHERE"].map(String::from);
-    let mut w = [0usize; 4];
+    let width = std::io::IsTerminal::is_terminal(&std::io::stdout()).then(|| {
+        crossterm::terminal::size()
+            .ok()
+            .map(|(cols, _)| usize::from(cols))
+            .filter(|cols| *cols > 0)
+            .unwrap_or(TABLE_WIDTH)
+    });
+    print!("{}", render_table(&rows, width));
+}
+
+/// The table, fitted into `width` columns; `None` keeps every cell whole.
+fn render_table(rows: &[[String; 6]], width: Option<usize>) -> String {
+    let head = ["ADDRESS", "STATUS", "AGENT", "WHERE", "FOLDER", "TITLE"].map(String::from);
+    let mut w = [0usize; 6];
     for r in std::iter::once(&head).chain(rows.iter()) {
         for (i, c) in r.iter().enumerate() {
-            w[i] = w[i].max(c.len());
+            w[i] = w[i].max(c.chars().count());
         }
     }
-    for r in std::iter::once(&head).chain(rows.iter()) {
-        println!(
-            "{:<w0$}  {:<w1$}  {:<w2$}  {}",
-            r[0],
-            r[1],
-            r[2],
-            r[3],
-            w0 = w[0],
-            w1 = w[1],
-            w2 = w[2]
-        );
+    let min = [0, 0, 0, MIN_WHERE_WIDTH, MIN_FOLDER_WIDTH, MIN_TITLE_WIDTH];
+    let natural = w;
+    let total = |w: &[usize; 6]| w.iter().sum::<usize>() + 2 * (w.len() - 1);
+    let table_width = width.unwrap_or(usize::MAX);
+    for column in [5, 4, 3] {
+        let excess = total(&w).saturating_sub(table_width);
+        w[column] -= excess.min(w[column].saturating_sub(min[column]));
     }
+    // Dropping branches can leave WHERE narrower than its budget: give the
+    // room back to FOLDER, then TITLE.
+    w[3] = std::iter::once(head[3].chars().count())
+        .chain(rows.iter().map(|r| fit_where(&r[3], w[3]).chars().count()))
+        .max()
+        .unwrap_or(w[3]);
+    for column in [4, 5] {
+        let spare = table_width.saturating_sub(total(&w));
+        w[column] = natural[column].min(w[column] + spare);
+    }
+    let mut out = String::new();
+    for r in std::iter::once(&head).chain(rows.iter()) {
+        let cells = [
+            r[0].clone(),
+            r[1].clone(),
+            r[2].clone(),
+            fit_where(&r[3], w[3]),
+            ellipsize_start(&r[4], w[4]),
+            ellipsize(&r[5], w[5]),
+        ];
+        let mut line = String::new();
+        for (i, cell) in cells.iter().enumerate() {
+            line.push_str(cell);
+            if i < 5 {
+                line.push_str(&" ".repeat(w[i] - cell.chars().count() + 2));
+            }
+        }
+        out.push_str(line.trim_end());
+        out.push('\n');
+    }
+    out
 }
 
 fn fetch_hub_agents() -> Result<Vec<Value>, String> {
@@ -1330,6 +1457,10 @@ mod tests {
             status: "idle".into(),
             address: String::new(),
             worktree: None,
+            cwd: None,
+            checkout: None,
+            branch: None,
+            title: None,
         };
         a.address = format!("m1/{session}/{}", a.handle());
         a
@@ -1443,6 +1574,142 @@ mod tests {
             keys,
             ["address", "agent", "name", "pane_id", "session", "status"]
         );
+    }
+
+    #[test]
+    fn agent_list_gives_folder_checkout_branch_and_title() {
+        let base = scratch("ls-fields");
+        let main = base.join("klark");
+        let wt = base.join("klark-agent-names");
+        let gitdir = main.join(".git/worktrees/klark-agent-names");
+        std::fs::create_dir_all(&gitdir).unwrap();
+        std::fs::create_dir_all(&wt).unwrap();
+        std::fs::write(main.join(".git/HEAD"), "ref: refs/heads/master\n").unwrap();
+        std::fs::write(gitdir.join("HEAD"), "ref: refs/heads/agent-pane-names\n").unwrap();
+        std::fs::write(
+            wt.join(".git"),
+            "gitdir: ../klark/.git/worktrees/klark-agent-names\n",
+        )
+        .unwrap();
+        let result = json!({"agents": [
+            {"name": "klark", "agent": "claude", "agent_status": "working", "pane_id": "w1:p1",
+             "cwd": main.display().to_string(), "terminal_title_stripped": "Review PR 42"},
+            {"name": "klark-agent-names", "agent": "codex", "agent_status": "idle", "pane_id": "w1:p2",
+             "cwd": "/elsewhere", "foreground_cwd": wt.display().to_string(), "terminal_title_stripped": ""},
+            {"agent": "claude", "agent_status": "idle", "pane_id": "w1:p3", "cwd": "/"}
+        ]});
+        let got = agents_from_list("work", "m1", &result);
+        let v = serde_json::to_value(&got).unwrap();
+        assert_eq!(v[0]["address"], "m1/work/klark");
+        assert_eq!(v[0]["cwd"], main.display().to_string());
+        assert_eq!(v[0]["checkout"], "main");
+        assert_eq!(v[0]["branch"], "master");
+        assert_eq!(v[0]["title"], "Review PR 42");
+        assert!(v[0].get("worktree").is_none());
+        assert_eq!(
+            v[1]["cwd"],
+            wt.display().to_string(),
+            "the agent's own folder"
+        );
+        assert_eq!(v[1]["checkout"], "worktree");
+        assert_eq!(v[1]["worktree"], "klark-agent-names");
+        assert_eq!(v[1]["branch"], "agent-pane-names");
+        assert!(v[1].get("title").is_none(), "an empty title is left out");
+        // Pane ids still address an unnamed agent; no git, no checkout fields.
+        assert_eq!(v[2]["address"], "m1/work/w1:p3");
+        assert!(v[2].get("checkout").is_none() && v[2].get("branch").is_none());
+
+        let home = base.display().to_string();
+        let rows: Vec<_> = got.iter().map(|l| row(l, "local", Some(&home))).collect();
+        assert_eq!(rows[0][3], "main (master)");
+        assert_eq!(rows[0][4], "~/klark");
+        assert_eq!(rows[1][3], "worktree klark-agent-names (agent-pane-names)");
+        assert_eq!(rows[2][3], "local");
+        assert_eq!(rows[2][4], "/");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn ls_table_for_a_pipe_keeps_every_cell_whole() {
+        let title = "A very long terminal title an agent needs to read in full, every word";
+        let mut a = agent("w", Some("portfolio-plan"), "p1");
+        a.title = Some(title.into());
+        a.cwd = Some("/Users/someone/a/deeply/nested/workspace/portfolio-plan".into());
+        let table = render_table(&[row(&a, "local", None)], None);
+        assert!(table.contains(title), "{table}");
+        assert!(table.contains("/Users/someone/a/deeply/nested/workspace/portfolio-plan"));
+        assert!(!table.contains('…'), "{table}");
+    }
+
+    #[test]
+    fn ls_table_fits_120_columns_and_cuts_long_cells() {
+        let mut a = agent("deemwar-one-os", Some("portfolio-plan"), "w62:p1");
+        a.address = "LocalMacbookpro/deemwar-one-os/portfolio-plan".into();
+        a.status = "working".into();
+        a.cwd = Some("/Users/x/deemwarworkspace/agents/portfolio-plan".into());
+        a.checkout = Some("main".into());
+        a.branch = Some("main".into());
+        a.title = Some(
+            "Portfolio status: reconcile every open position against the broker statements".into(),
+        );
+        let mut b = agent("deemwar-one-os", Some("wfnexus-main"), "w63:p1");
+        b.address = "LocalMacbookpro/deemwar-one-os/wfnexus-main".into();
+        b.status = "unknown".into();
+        b.cwd = Some("/Users/x/deemwarworkspace/worktrees/very/deep/nested/wfnexus-main".into());
+        b.checkout = Some("worktree".into());
+        b.worktree = Some("wfnexus-main".into());
+        b.branch = Some("feature/a-rather-long-branch-name".into());
+        b.title = Some("Fix login".into());
+        let mut c = agent("deemwar-one-os", None, "w6F:p1");
+        c.address = "LocalMacbookpro/deemwar-one-os/w6F:p1".into();
+        let rows: Vec<_> = [a, b, c]
+            .iter()
+            .map(|l| row(l, "local", Some("/Users/x")))
+            .collect();
+        let table = render_table(&rows, Some(TABLE_WIDTH));
+        println!("{table}");
+        let lines: Vec<&str> = table.lines().collect();
+        assert_eq!(lines.len(), 4);
+        assert!(lines[0].starts_with("ADDRESS"));
+        assert!(lines[0].trim_end().ends_with("TITLE"));
+        for line in &lines {
+            assert!(
+                line.chars().count() <= 120,
+                "{} > 120: {line}",
+                line.chars().count()
+            );
+        }
+        assert!(
+            lines[1].contains("…portfolio-plan  "),
+            "folder is cut, keeping its end"
+        );
+        assert!(lines[1].contains("main (main)"));
+        assert!(lines[1].contains("Portfolio") && lines[1].ends_with('…'));
+        assert!(
+            lines[2].contains("worktree wfnexus-main  "),
+            "the worktree name survives; the branch gives way"
+        );
+        assert!(lines[2].ends_with("Fix login"));
+        assert!(lines[2].contains("  -  "), "unknown status shows as -");
+        assert!(lines[3].starts_with("LocalMacbookpro/deemwar-one-os/w6F:p1"));
+        assert!(lines[3].ends_with("local"), "outside git: just local");
+        let remote = row(&agent("work", Some("rev"), "p1"), "remote", None);
+        assert_eq!(remote[3], "remote");
+        let mut r = agent("work", Some("rev"), "p1");
+        r.checkout = Some("main".into());
+        assert_eq!(row(&r, "remote", None)[3], "remote · main");
+        // A short table is not padded out to 120 columns.
+        let short = render_table(
+            &[row(&agent("w", Some("a"), "p1"), "local", None)],
+            Some(TABLE_WIDTH),
+        );
+        assert!(short.lines().all(|l| l.chars().count() < 60), "{short}");
+        // Columns line up: every row's STATUS starts where the header's does.
+        let status_col = lines[0].find("STATUS").unwrap();
+        for line in &lines[1..] {
+            let prefix: String = line.chars().take(status_col).collect();
+            assert!(prefix.ends_with("  "), "{line}");
+        }
     }
 
     #[test]
@@ -1585,7 +1852,7 @@ mod tests {
         let l = agent("work", Some("rev"), "p1");
         let mut l2 = l.clone();
         l2.status = "unknown".into();
-        assert_eq!(row(&l2, "local")[1], "-");
+        assert_eq!(row(&l2, "local", None)[1], "-");
         // JSON keeps the raw value.
         assert_eq!(serde_json::to_value(&l2).unwrap()["status"], "unknown");
     }
