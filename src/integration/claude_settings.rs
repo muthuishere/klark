@@ -71,12 +71,12 @@ pub(crate) fn install(content: &str, settings_path: &Path, hook_path: &Path) -> 
         "claude settings",
         "claude settings hooks",
     )?;
-    let canonical = canonical_hook_value(hook_path);
+    let canonical = canonical_hook_value(hook_path)?;
     apply_value_removals(hooks, hook_path, Some(&canonical))?;
     ensure_command_hook(
         hooks,
         "SessionStart",
-        hook_command(hook_path, Some("session")),
+        hook_command(hook_path, Some("session"))?,
         10,
         Some(SESSION_START_MATCHER),
     )?;
@@ -237,7 +237,12 @@ fn rewrite(
         None => return Ok(content.to_string()),
     };
 
-    let canonical = canonical_hook_value(hook_path);
+    // Uninstall only removes, so it must not fail when the current command
+    // cannot be built; nothing then matches the canonical value.
+    let canonical = match kind {
+        EditKind::Install => canonical_hook_value(hook_path)?,
+        EditKind::Uninstall => canonical_hook_value(hook_path).unwrap_or(Value::Null),
+    };
     let mut canonical_preserved = false;
     for policy in HOOK_REMOVALS {
         let commands = removal_commands(policy, hook_path);
@@ -261,7 +266,7 @@ fn rewrite(
                         append_session_entry_compact(&root.to_string(), hook_path, settings_path)?;
                     return verify_updated(updated, settings_path, desired);
                 }
-                session_start.append(canonical_hook_input(hook_path));
+                session_start.append(canonical_hook_input(hook_path)?);
             }
             None if direct_children_are_compact(&hooks.children()) => {
                 let updated =
@@ -273,7 +278,7 @@ fn rewrite(
                     .append("SessionStart", CstInputValue::Array(Vec::new()))
                     .array_value()
                     .ok_or_else(|| io::Error::other("failed to create SessionStart hook array"))?;
-                session_start.append(canonical_hook_input(hook_path));
+                session_start.append(canonical_hook_input(hook_path)?);
             }
         }
     }
@@ -347,27 +352,27 @@ fn removal_commands(policy: &HookRemoval, hook_path: &Path) -> Vec<String> {
         .collect()
 }
 
-fn canonical_hook_value(hook_path: &Path) -> Value {
-    serde_json_value!({
+fn canonical_hook_value(hook_path: &Path) -> io::Result<Value> {
+    Ok(serde_json_value!({
         "matcher": SESSION_START_MATCHER,
         "hooks": [{
             "type": "command",
-            "command": hook_command(hook_path, Some("session")),
+            "command": hook_command(hook_path, Some("session"))?,
             "timeout": 10,
         }],
-    })
+    }))
 }
 
-fn canonical_hook_input(hook_path: &Path) -> CstInputValue {
-    let command = hook_command(hook_path, Some("session"));
-    json!({
+fn canonical_hook_input(hook_path: &Path) -> io::Result<CstInputValue> {
+    let command = hook_command(hook_path, Some("session"))?;
+    Ok(json!({
         matcher: SESSION_START_MATCHER,
         hooks: [{
             "type": "command",
             command: command,
             timeout: 10u64,
         }],
-    })
+    }))
 }
 
 fn append_hooks_property_compact(
@@ -517,7 +522,7 @@ fn append_to_container(
 }
 
 fn canonical_hook_json(hook_path: &Path) -> io::Result<String> {
-    let command = serde_json::to_string(&hook_command(hook_path, Some("session")))?;
+    let command = serde_json::to_string(&hook_command(hook_path, Some("session"))?)?;
     Ok(format!(
         "{{\"matcher\":\"{SESSION_START_MATCHER}\",\"hooks\":[{{\"type\":\"command\",\"command\":{command},\"timeout\":10}}]}}"
     ))
@@ -700,7 +705,8 @@ mod tests {
     #[test]
     fn install_is_a_byte_exact_noop_for_a_canonical_hook() {
         let (settings_path, hook_path) = paths();
-        let command = serde_json::to_string(&hook_command(hook_path, Some("session"))).unwrap();
+        let command =
+            serde_json::to_string(&hook_command(hook_path, Some("session")).unwrap()).unwrap();
         let input = format!(
             "{{\"hooks\":{{\"SessionStart\":[{{\"hooks\":[{{\"timeout\":10,\"command\":{command},\"type\":\"command\"}}],\"matcher\":\"{SESSION_START_MATCHER}\"}}]}},\"escaped\":\"\\u0061\"}}  \r\n\r\n"
         );
@@ -713,7 +719,8 @@ mod tests {
     #[test]
     fn install_migrates_wildcard_session_start_and_preserves_user_hook() {
         let (settings_path, hook_path) = paths();
-        let command = serde_json::to_string(&hook_command(hook_path, Some("session"))).unwrap();
+        let command =
+            serde_json::to_string(&hook_command(hook_path, Some("session")).unwrap()).unwrap();
         let user_hook = r#"{ "type" : "command", "command" : "echo keep", "timeout" : 3 }"#;
         let input = format!(
             "{{\n  \"hooks\": {{\n    \"SessionStart\": [{{\"matcher\":\"*\",\"hooks\":[{{\"type\":\"command\",\"command\":{command},\"timeout\":10}},{user_hook}]}}]\n  }}\n}}\n\n"
@@ -727,7 +734,7 @@ mod tests {
         assert_eq!(groups[0]["matcher"], "*");
         assert_eq!(groups[0]["hooks"].as_array().unwrap().len(), 1);
         assert_eq!(groups[0]["hooks"][0]["command"], "echo keep");
-        assert_eq!(groups[1], canonical_hook_value(hook_path));
+        assert_eq!(groups[1], canonical_hook_value(hook_path).unwrap());
         assert_eq!(
             install(&installed, settings_path, hook_path).unwrap(),
             installed
@@ -747,7 +754,8 @@ mod tests {
     fn install_preserves_canonical_session_start_position_during_migration() {
         let (settings_path, hook_path) = paths();
         let canonical = canonical_hook_json(hook_path).unwrap();
-        let old_command = serde_json::to_string(&hook_command(hook_path, Some("working"))).unwrap();
+        let old_command =
+            serde_json::to_string(&hook_command(hook_path, Some("working")).unwrap()).unwrap();
         let session_start = format!(
             "\"SessionStart\":[{canonical},{{\"matcher\":\"foreign\",\"hooks\":[{{\"type\":\"command\",\"command\":\"echo keep\"}}]}}]"
         );
@@ -768,7 +776,8 @@ mod tests {
     #[test]
     fn install_removes_only_owned_commands_from_shared_hook_groups() {
         let (settings_path, hook_path) = paths();
-        let old_command = serde_json::to_string(&hook_command(hook_path, Some("working"))).unwrap();
+        let old_command =
+            serde_json::to_string(&hook_command(hook_path, Some("working")).unwrap()).unwrap();
         let input = format!(
             concat!(
                 "{{\n",
@@ -805,7 +814,8 @@ mod tests {
     #[test]
     fn uninstall_preserves_unrelated_hook_text() {
         let (settings_path, hook_path) = paths();
-        let command = serde_json::to_string(&hook_command(hook_path, Some("session"))).unwrap();
+        let command =
+            serde_json::to_string(&hook_command(hook_path, Some("session")).unwrap()).unwrap();
         let input = format!(
             concat!(
                 "{{\n",

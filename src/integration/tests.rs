@@ -16,11 +16,11 @@ use std::path::{Path, PathBuf};
 use serde_json::{json, Map, Value};
 
 #[test]
-fn windows_powershell_encoded_hook_command_preserves_script_invocation() {
+fn legacy_powershell_encoded_hook_command_preserves_script_invocation() {
     use base64::Engine;
 
     let hook_path = Path::new(r"C:\Users\O'Neil λ\App Data\hooks\klark-agent-state.ps1");
-    let command = powershell_encoded_hook_command(hook_path, "session");
+    let command = legacy_powershell_encoded_hook_command(hook_path, "session");
     let encoded = command
         .strip_prefix("powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand ")
         .expect("encoded PowerShell command");
@@ -39,13 +39,243 @@ fn windows_powershell_encoded_hook_command_preserves_script_invocation() {
     );
 }
 
-#[cfg(windows)]
+/// The exact strings older Windows releases wrote into agent configs; install
+/// and uninstall must keep matching them to clean them up.
 #[test]
-fn windows_antigravity_cli_hook_command_uses_encoded_powershell() {
-    let hook_path = Path::new(r"C:\Users\reporter\.gemini\config\hooks\klark-agent-state.ps1");
+fn legacy_powershell_hook_commands_match_what_older_releases_wrote() {
+    let hook_path = Path::new(r"C:\Users\me\.claude\hooks\klark-agent-state.ps1");
     assert_eq!(
-        antigravity_cli_hook_command(hook_path, "session"),
-        powershell_encoded_hook_command(hook_path, "session")
+        legacy_powershell_file_hook_command(hook_path, Some("session")),
+        r#"powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Users\me\.claude\hooks\klark-agent-state.ps1" session"#
+    );
+    assert_eq!(
+        legacy_powershell_file_hook_command(hook_path, None),
+        r#"powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Users\me\.claude\hooks\klark-agent-state.ps1""#
+    );
+    assert_eq!(
+        legacy_powershell_encoded_hook_command(
+            Path::new(r"C:\m\hooks\klark-agent-state.ps1"),
+            "working"
+        ),
+        "powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand \
+         JgAgACcAQwA6AFwAbQBcAGgAbwBvAGsAcwBcAGsAbABhAHIAawAtAGEAZwBlAG4AdAAtAHMAdABhAHQAZQAuAHAAcwAxACcAIAB3AG8AcgBrAGkAbgBnAA=="
+    );
+}
+
+#[test]
+fn windows_hook_command_is_the_unquoted_forward_slash_short_path() {
+    let hook_path = Path::new(r"C:\Users\Muthu O'Neil λ\.claude\hooks\klarkhk.cmd");
+    assert_eq!(
+        command_from_short_hook_path(
+            r"C:\Users\MUTHUO~1\CLAUDE~1\hooks\klarkhk.cmd",
+            hook_path,
+            Some("session")
+        )
+        .unwrap(),
+        "C:/Users/MUTHUO~1/CLAUDE~1/hooks/klarkhk.cmd session"
+    );
+    assert_eq!(
+        command_from_short_hook_path(r"\\?\C:\a\klarkhk.cmd", hook_path, None).unwrap(),
+        "C:/a/klarkhk.cmd"
+    );
+    assert_eq!(
+        command_from_short_hook_path(r"\\?\UNC\server\share\klarkhk.cmd", hook_path, None).unwrap(),
+        "//server/share/klarkhk.cmd"
+    );
+}
+
+#[test]
+fn windows_hook_command_refuses_a_path_unsafe_unquoted() {
+    // 8.3 names can be off for a drive (or absent on ReFS); then the long
+    // path comes back and install must fail instead of writing a command
+    // that breaks in cmd.exe, PowerShell or Git Bash.
+    let hook_path = Path::new(r"C:\Users\Muthu Ishere\.claude\hooks\klarkhk.cmd");
+    for unsafe_path in [
+        r"C:\Users\Muthu Ishere\.claude\hooks\klarkhk.cmd",
+        r"C:\Users\a&b\hooks\klarkhk.cmd",
+        r"C:\Users\a(b)\hooks\klarkhk.cmd",
+        r"C:\Users\a;b\hooks\klarkhk.cmd",
+        r"C:\Users\O'Neil\hooks\klarkhk.cmd",
+        r"C:\Users\a`b\hooks\klarkhk.cmd",
+        r"C:\Users\a$b\hooks\klarkhk.cmd",
+        r"C:\Users\a%b%\hooks\klarkhk.cmd",
+        r"C:\Users\a!b\hooks\klarkhk.cmd",
+        r"C:\Users\a^b\hooks\klarkhk.cmd",
+        r"C:\Users\a,b\hooks\klarkhk.cmd",
+        r"C:\Users\a=b\hooks\klarkhk.cmd",
+        r"C:\Users\@me\hooks\klarkhk.cmd",
+        r"C:\Users\a{b}\hooks\klarkhk.cmd",
+        r"C:\Users\λ\hooks\klarkhk.cmd",
+        "",
+    ] {
+        let err = command_from_short_hook_path(unsafe_path, hook_path, Some("session"))
+            .expect_err(unsafe_path);
+        let message = err.to_string();
+        assert!(
+            message.contains(&hook_path.display().to_string()),
+            "error names the hook path: {message}"
+        );
+        // The auto-installer treats "<x> not found at <p>. install <x> first"
+        // as "agent not set up" and stays quiet; this error must not look so.
+        assert!(
+            !(message.contains(" not found at ") && message.trim_end().ends_with(" first")),
+            "{message}"
+        );
+    }
+}
+
+#[test]
+fn windows_cmd_hooks_hand_everything_to_klark() {
+    for (name, asset, version, json) in windows_hook_assets() {
+        assert!(asset.starts_with("@echo off\r\n"), "{name}");
+        assert!(
+            !asset.replace("\r\n", "").contains('\n'),
+            "{name} hook must use CRLF line endings"
+        );
+        assert!(
+            !asset.contains('(') && !asset.contains(')'),
+            "{name}: no blocks"
+        );
+        assert_eq!(parse_integration_version(asset), Some(version), "{name}");
+        assert!(
+            asset.contains(&format!("rem KLARK_INTEGRATION_ID={name}\r\n")),
+            "{name}"
+        );
+        assert!(
+            asset.contains(&format!(
+                "\"%KLARK_HOOK_EXE%\" integration hook {name} %* 2>nul\r\n"
+            )),
+            "{name}"
+        );
+        assert!(
+            asset.contains("if not \"%KLARK_ENV%\"==\"1\" goto done\r\n"),
+            "{name}"
+        );
+        assert!(asset.ends_with("exit /b 0\r\n"), "{name}");
+        assert!(!asset.to_lowercase().contains("powershell"), "{name}");
+        // `{}` is echoed only when klark did not run (it prints it itself).
+        assert_eq!(
+            asset.matches("echo {}").count(),
+            usize::from(json),
+            "{name}"
+        );
+        if json {
+            assert!(
+                asset.contains("if \"%errorlevel%\"==\"0\" exit /b 0\r\n:done\r\necho {}\r\n"),
+                "{name}"
+            );
+        }
+        assert!(super::hook_run::HookAgent::parse(name).is_some(), "{name}");
+        assert_eq!(
+            super::hook_run::HookAgent::parse(name)
+                .unwrap()
+                .prints_empty_json(),
+            json,
+            "{name}"
+        );
+    }
+}
+
+fn windows_hook_assets() -> [(&'static str, &'static str, u32, bool); 13] {
+    [
+        (
+            "antigravity_cli",
+            WINDOWS_ANTIGRAVITY_CLI_HOOK_ASSET,
+            ANTIGRAVITY_CLI_INTEGRATION_VERSION,
+            true,
+        ),
+        (
+            "claude",
+            WINDOWS_CLAUDE_HOOK_ASSET,
+            CLAUDE_INTEGRATION_VERSION,
+            false,
+        ),
+        (
+            "codex",
+            WINDOWS_CODEX_HOOK_ASSET,
+            CODEX_INTEGRATION_VERSION,
+            false,
+        ),
+        (
+            "copilot",
+            WINDOWS_COPILOT_HOOK_ASSET,
+            COPILOT_INTEGRATION_VERSION,
+            false,
+        ),
+        (
+            "cursor",
+            WINDOWS_CURSOR_HOOK_ASSET,
+            CURSOR_INTEGRATION_VERSION,
+            true,
+        ),
+        (
+            "devin",
+            WINDOWS_DEVIN_HOOK_ASSET,
+            DEVIN_INTEGRATION_VERSION,
+            false,
+        ),
+        (
+            "droid",
+            WINDOWS_DROID_HOOK_ASSET,
+            DROID_INTEGRATION_VERSION,
+            false,
+        ),
+        (
+            "grok",
+            WINDOWS_GROK_HOOK_ASSET,
+            GROK_INTEGRATION_VERSION,
+            false,
+        ),
+        (
+            "kimi",
+            WINDOWS_KIMI_HOOK_ASSET,
+            KIMI_INTEGRATION_VERSION,
+            false,
+        ),
+        (
+            "letta",
+            WINDOWS_LETTA_HOOK_ASSET,
+            LETTA_INTEGRATION_VERSION,
+            false,
+        ),
+        (
+            "mastracode",
+            WINDOWS_MASTRACODE_HOOK_ASSET,
+            MASTRACODE_INTEGRATION_VERSION,
+            false,
+        ),
+        (
+            "qodercli",
+            WINDOWS_QODERCLI_HOOK_ASSET,
+            QODERCLI_INTEGRATION_VERSION,
+            false,
+        ),
+        (
+            "qwen",
+            WINDOWS_QWEN_HOOK_ASSET,
+            QWEN_INTEGRATION_VERSION,
+            false,
+        ),
+    ]
+}
+
+#[test]
+fn integration_version_marker_parses_in_rem_comments() {
+    assert_eq!(
+        parse_integration_version("@echo off\r\nrem KLARK_INTEGRATION_VERSION=7\r\n"),
+        Some(7)
+    );
+    assert_eq!(
+        parse_integration_version("# KLARK_INTEGRATION_VERSION=3\n"),
+        Some(3)
+    );
+    assert_eq!(
+        parse_integration_version("// KLARK_INTEGRATION_VERSION=4"),
+        Some(4)
+    );
+    assert_eq!(
+        parse_integration_version("remark KLARK_INTEGRATION_VERSION=4"),
+        None
     );
 }
 
@@ -149,7 +379,7 @@ fn clear_integration_path_env() {
 }
 
 fn kimi_hook_command(hook_path: &Path, action: &str) -> String {
-    hook_command(hook_path, Some(action))
+    hook_command(hook_path, Some(action)).unwrap()
 }
 
 fn kimi_config_hooks(config: &str) -> Vec<toml::Value> {
@@ -1137,7 +1367,7 @@ fn claude_v9_integration_status_is_outdated_until_reinstalled() {
 
     assert_eq!(claude.path, hook_path);
     assert_eq!(claude.installed_version, Some(9));
-    assert_eq!(claude.expected_version, 11);
+    assert_eq!(claude.expected_version, 12);
     assert_eq!(claude.state, IntegrationStatusKind::Outdated);
 
     install_claude().unwrap();
@@ -1146,7 +1376,7 @@ fn claude_v9_integration_status_is_outdated_until_reinstalled() {
         hook_path,
         CLAUDE_INTEGRATION_VERSION,
     );
-    assert_eq!(status.installed_version, Some(11));
+    assert_eq!(status.installed_version, Some(CLAUDE_INTEGRATION_VERSION));
     assert_eq!(status.state, IntegrationStatusKind::Current);
 
     std::env::remove_var("HOME");
@@ -1176,71 +1406,18 @@ fn claude_v2_integration_status_is_outdated() {
 
     assert_eq!(claude.path, hook_path);
     assert_eq!(claude.installed_version, Some(2));
-    assert_eq!(claude.expected_version, 11);
+    assert_eq!(claude.expected_version, 12);
     assert_eq!(claude.state, IntegrationStatusKind::Outdated);
 
     std::env::remove_var("HOME");
     let _ = fs::remove_dir_all(base);
 }
 
-#[test]
-fn windows_hooks_decode_stdin_as_utf8() {
-    // Windows PowerShell decodes `[Console]::In` with the console input code
-    // page, which corrupts UTF-8 hook payloads on non-UTF-8 locales such as
-    // Korean Windows (CP949) and makes the hook silently drop the session.
-    // Every bundled PowerShell hook must read the raw stdin stream as UTF-8.
-    // See #5253.
-    for (name, asset) in [
-        (
-            "antigravity_cli",
-            include_str!("assets/antigravity_cli/klark-agent-state.ps1"),
-        ),
-        (
-            "claude",
-            include_str!("assets/claude/klark-agent-state.ps1"),
-        ),
-        ("codex", include_str!("assets/codex/klark-agent-state.ps1")),
-        (
-            "copilot",
-            include_str!("assets/copilot/klark-agent-state.ps1"),
-        ),
-        (
-            "cursor",
-            include_str!("assets/cursor/klark-agent-state.ps1"),
-        ),
-        ("devin", include_str!("assets/devin/klark-agent-state.ps1")),
-        ("droid", include_str!("assets/droid/klark-agent-state.ps1")),
-        ("grok", include_str!("assets/grok/klark-agent-state.ps1")),
-        ("kimi", include_str!("assets/kimi/klark-agent-state.ps1")),
-        (
-            "letta",
-            include_str!("assets/letta/klark-agent-session.ps1"),
-        ),
-        (
-            "mastracode",
-            include_str!("assets/mastracode/klark-agent-state.ps1"),
-        ),
-        (
-            "qodercli",
-            include_str!("assets/qodercli/klark-agent-state.ps1"),
-        ),
-        ("qwen", include_str!("assets/qwen/klark-agent-session.ps1")),
-    ] {
-        assert!(
-            !asset.contains("[Console]::In.ReadToEnd()"),
-            "{name} hook must not decode stdin with the console input code page"
-        );
-        assert!(
-            asset.contains("[Console]::OpenStandardInput()")
-                && asset.contains("[System.Text.Encoding]::UTF8"),
-            "{name} hook must decode raw stdin as UTF-8"
-        );
-    }
-}
-
+/// The installed `.cmd` passes its arguments and stdin to
+/// `klark integration hook claude`. Only runs on Windows.
 #[cfg(windows)]
 #[test]
-fn claude_windows_hook_reports_utf8_session_path() {
+fn claude_windows_cmd_hook_hands_args_and_stdin_to_klark() {
     use std::io::Write;
     use std::process::{Command, Stdio};
 
@@ -1251,32 +1428,25 @@ fn claude_windows_hook_reports_utf8_session_path() {
     let previous_home = std::env::var_os("HOME");
     std::env::set_var("HOME", &home);
     let installed = install_claude().unwrap();
-
-    let capture = base.join("args.txt");
-    let fake_klark = base.join("klark-capture.ps1");
-    fs::write(
-        &fake_klark,
-        "$capture = $env:KLARK_TEST_CAPTURE\n[System.IO.File]::WriteAllText($capture, ($args -join \"`n\"), [System.Text.UTF8Encoding]::new($false))\n",
-    )
-    .unwrap();
-
-    // A Korean profile path: decoded with a non-UTF-8 console input code page
-    // (CP949 on Korean Windows) it garbles the JSON and the hook exits silently.
-    let transcript = "C:\\Users\\\u{d55c}\u{ae00}\\transcript.jsonl";
-    let payload = format!(
-        r#"{{"hook_event_name":"SessionStart","session_id":"claude-session","transcript_path":{}}}"#,
-        serde_json::to_string(transcript).unwrap()
+    assert_eq!(
+        installed.hook_path.file_name().unwrap(),
+        WINDOWS_HOOK_INSTALL_NAME
     );
 
-    let mut child = Command::new("powershell")
-        .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
-        .arg(&installed.hook_path)
+    let capture = base.join("args.txt");
+    let fake_klark = base.join("klark-capture.cmd");
+    fs::write(
+        &fake_klark,
+        "@echo off\r\n>\"%KLARK_TEST_CAPTURE%\" echo %*\r\nmore >\"%KLARK_TEST_CAPTURE%.stdin\"\r\nexit /b 0\r\n",
+    )
+    .unwrap();
+    let payload = r#"{"hook_event_name":"SessionStart","session_id":"claude-session"}"#;
+
+    let mut child = Command::new(&installed.hook_path)
         .arg("session")
         .env("KLARK_ENV", "1")
-        .env("KLARK_PANE_ID", "w1:p2")
         .env("KLARK_BIN_PATH", &fake_klark)
         .env("KLARK_TEST_CAPTURE", &capture)
-        .env_remove("CURSOR_VERSION")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1289,17 +1459,101 @@ fn claude_windows_hook_reports_utf8_session_path() {
         .write_all(payload.as_bytes())
         .unwrap();
     let output = child.wait_with_output().unwrap();
-    assert!(
-        output.status.success(),
-        "hook failed: stderr={}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    assert!(output.status.success());
 
     let args = fs::read_to_string(&capture).unwrap();
-    assert!(args.contains("report-agent-session"), "captured: {args}");
-    assert!(args.contains("--agent-session-id"), "captured: {args}");
-    assert!(args.contains("claude-session"), "captured: {args}");
-    assert!(args.contains(transcript), "captured: {args}");
+    assert_eq!(args.trim(), "integration hook claude session");
+    let stdin = fs::read_to_string(base.join("args.txt.stdin")).unwrap();
+    assert!(stdin.contains("claude-session"), "captured: {stdin}");
+
+    if let Some(home) = previous_home {
+        std::env::set_var("HOME", home);
+    } else {
+        std::env::remove_var("HOME");
+    }
+    let _ = fs::remove_dir_all(base);
+}
+
+/// An older Windows release left a PowerShell hook and PowerShell commands;
+/// the next install replaces both, and uninstall clears either form.
+#[cfg(windows)]
+#[test]
+fn windows_install_replaces_powershell_hooks_from_older_releases() {
+    let _lock = integration_env_lock();
+    let base = unique_base();
+    let home = base.join("home");
+    let claude_dir = home.join(".claude");
+    let hooks_dir = claude_dir.join("hooks");
+    let mastracode_hooks = home.join(".mastracode").join("hooks");
+    fs::create_dir_all(&hooks_dir).unwrap();
+    fs::create_dir_all(&mastracode_hooks).unwrap();
+    let previous_home = std::env::var_os("HOME");
+    std::env::set_var("HOME", &home);
+
+    let old_hook = hooks_dir.join("klark-agent-state.ps1");
+    fs::write(
+        &old_hook,
+        "# KLARK_INTEGRATION_ID=claude\n# KLARK_INTEGRATION_VERSION=11\n",
+    )
+    .unwrap();
+    let old_command = legacy_powershell_file_hook_command(&old_hook, Some("session"));
+    fs::write(
+        claude_dir.join("settings.json"),
+        serde_json::to_string(&json!({
+            "hooks": {"SessionStart": [{
+                "matcher": "*",
+                "hooks": [
+                    {"type": "command", "command": old_command, "timeout": 10},
+                    {"type": "command", "command": "echo keep", "timeout": 10}
+                ]
+            }]}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let claude_status = || {
+        installed_integration_statuses()
+            .into_iter()
+            .find(|status| status.target == crate::api::schema::IntegrationTarget::Claude)
+            .unwrap()
+    };
+    let before = claude_status();
+    assert_eq!(before.state, IntegrationStatusKind::Outdated);
+    assert_eq!(before.installed_version, Some(11));
+
+    let installed = install_claude().unwrap();
+    assert!(!old_hook.exists());
+    let settings = fs::read_to_string(&installed.settings_path).unwrap();
+    assert!(!settings.contains("powershell"), "{settings}");
+    assert!(settings.contains("echo keep"));
+    let command = hook_command(&installed.hook_path, Some("session")).unwrap();
+    assert!(settings.contains(&command), "{settings}");
+    assert!(!command.contains('\\') && !command.to_lowercase().contains(".ps1"));
+    assert_eq!(claude_status().state, IntegrationStatusKind::Current);
+
+    // MastraCode's old entries were -EncodedCommand ones.
+    let old_mastracode = mastracode_hooks.join("klark-agent-state.ps1");
+    fs::write(&old_mastracode, "# KLARK_INTEGRATION_ID=mastracode\n").unwrap();
+    let encoded = legacy_powershell_encoded_hook_command(&old_mastracode, "working");
+    fs::write(
+        home.join(".mastracode").join("hooks.json"),
+        serde_json::to_string(&json!({
+            "UserPromptSubmit": [{"type": "command", "command": encoded, "timeout": 10000}]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let installed = install_mastracode().unwrap();
+    assert!(!old_mastracode.exists());
+    let hooks = fs::read_to_string(&installed.hooks_path).unwrap();
+    assert!(!hooks.contains("powershell"), "{hooks}");
+    assert!(hooks.contains(&hook_command(&installed.hook_path, Some("working")).unwrap()));
+
+    uninstall_claude().unwrap();
+    let settings = fs::read_to_string(claude_dir.join("settings.json")).unwrap();
+    assert!(!settings.contains(&command));
+    assert!(settings.contains("echo keep"));
 
     if let Some(home) = previous_home {
         std::env::set_var("HOME", home);
@@ -1435,7 +1689,7 @@ fn codex_v2_integration_status_is_outdated() {
 
     assert_eq!(codex.path, hook_path);
     assert_eq!(codex.installed_version, Some(2));
-    assert_eq!(codex.expected_version, 10);
+    assert_eq!(codex.expected_version, 11);
     assert_eq!(codex.state, IntegrationStatusKind::Outdated);
 
     std::env::remove_var("HOME");
@@ -1567,7 +1821,7 @@ fn install_codex_removes_turn_status_hooks_from_previous_integration() {
     let codex_dir = home.join(".codex");
     fs::create_dir_all(&codex_dir).unwrap();
     let hook_path = codex_dir.join(CODEX_HOOK_INSTALL_NAME);
-    let hook = |action| json!({"type": "command", "command": hook_command(&hook_path, Some(action)), "timeout": 10});
+    let hook = |action| json!({"type": "command", "command": hook_command(&hook_path, Some(action)).unwrap(), "timeout": 10});
     let hooks = json!({
         "hooks": {
             "SessionStart": [{"hooks": [hook("session")]}],
@@ -2114,7 +2368,7 @@ fn install_devin_removes_legacy_lifecycle_hook_entries() {
                 {
                     "hooks": [{
                         "type": "command",
-                        "command": hook_command(&hook_path, Some(action)),
+                        "command": hook_command(&hook_path, Some(action)).unwrap(),
                         "timeout": 10
                     }]
                 }
@@ -2132,7 +2386,7 @@ fn install_devin_removes_legacy_lifecycle_hook_entries() {
     let settings: Value =
         serde_json::from_str(&fs::read_to_string(devin_dir.join("config.json")).unwrap()).unwrap();
     for (event, action) in DEVIN_REMOVED_LIFECYCLE_HOOK_EVENTS {
-        let legacy_command = hook_command(&hook_path, Some(action));
+        let legacy_command = hook_command(&hook_path, Some(action)).unwrap();
         let entries = settings["hooks"][event].as_array();
         assert!(
             entries.is_none_or(|entries| {
@@ -2158,7 +2412,7 @@ fn install_devin_removes_legacy_lifecycle_hook_entries() {
             continue;
         }
 
-        let session_command = hook_command(&hook_path, Some("session"));
+        let session_command = hook_command(&hook_path, Some("session")).unwrap();
         let entries = entries.unwrap();
         assert!(
             entries.iter().any(|entry| {
@@ -4135,8 +4389,8 @@ fn install_qwen_writes_session_hook_and_preserves_settings() {
     assert!(settings.get("permissions").is_some());
     let hook_asset = fs::read_to_string(&installed.hook_path).unwrap();
     assert!(hook_asset.contains("KLARK_INTEGRATION_ID=qwen"));
-    assert!(hook_asset.contains("KLARK_INTEGRATION_VERSION=2"));
-    assert!(hook_asset.contains("klark:qwen"));
+    assert!(hook_asset.contains("KLARK_INTEGRATION_VERSION=3"));
+    assert_eq!(hook_asset, QWEN_HOOK_ASSET);
 
     install_qwen().unwrap();
     let settings: Value =
@@ -4423,7 +4677,11 @@ fn install_cursor_writes_hook_and_updates_hooks_json() {
     assert_eq!(session_start.len(), 1);
     assert_eq!(
         session_start[0].get("command").and_then(Value::as_str),
-        Some(hook_command(&installed.hook_path, Some("session")).as_str())
+        Some(
+            hook_command(&installed.hook_path, Some("session"))
+                .unwrap()
+                .as_str()
+        )
     );
     assert!(hooks.get("beforeSubmitPrompt").is_none());
     assert!(hooks.get("beforeShellExecution").is_none());
@@ -4594,7 +4852,7 @@ fn install_mastracode_writes_hook_and_updates_hooks_json() {
         let command = entries[0].get("command").and_then(Value::as_str).unwrap();
         assert_eq!(
             command,
-            mastracode_hook_command(&installed.hook_path, action)
+            hook_command(&installed.hook_path, Some(action)).unwrap()
         );
         assert_eq!(
             entries[0].get("type").and_then(Value::as_str),
@@ -4650,12 +4908,15 @@ fn install_grok_writes_hook_and_config() {
 
     let config: Value =
         serde_json::from_str(&fs::read_to_string(&installed.config_path).unwrap()).unwrap();
-    assert_eq!(config, grok_hook_config(&installed.hook_path));
+    assert_eq!(config, grok_hook_config(&installed.hook_path).unwrap());
     let session_start = config["hooks"]["SessionStart"].as_array().unwrap();
     assert_eq!(session_start.len(), 1);
     let command = grok_session_command(&config);
     #[cfg(windows)]
-    assert_eq!(command, hook_command(&installed.hook_path, Some("session")));
+    assert_eq!(
+        command,
+        hook_command(&installed.hook_path, Some("session")).unwrap()
+    );
     #[cfg(not(windows))]
     {
         assert!(command.starts_with("sh "));
@@ -4682,12 +4943,12 @@ fn install_mastracode_removes_v1_lifecycle_hooks() {
         serde_json::to_string(&json!({
             "SessionStart": [{
                 "type": "command",
-                "command": hook_command(&hook_path, Some("idle")),
+                "command": hook_command(&hook_path, Some("idle")).unwrap(),
                 "timeout": MASTRACODE_HOOK_TIMEOUT_MS
             }],
             "SessionEnd": [{
                 "type": "command",
-                "command": hook_command(&hook_path, Some("release")),
+                "command": hook_command(&hook_path, Some("release")).unwrap(),
                 "timeout": MASTRACODE_HOOK_TIMEOUT_MS
             }]
         }))
@@ -4707,7 +4968,7 @@ fn install_mastracode_removes_v1_lifecycle_hooks() {
     assert_eq!(session_start.len(), 1);
     assert_eq!(
         session_start[0]["command"].as_str().unwrap(),
-        mastracode_hook_command(&hook_path, "session")
+        hook_command(&hook_path, Some("session")).unwrap()
     );
 
     if let Some(home) = original_home {
@@ -4993,7 +5254,7 @@ fn install_antigravity_cli_writes_hook_and_updates_hooks_json() {
         let command = handler.get("command").and_then(Value::as_str).unwrap();
         assert_eq!(
             command,
-            antigravity_cli_hook_command(&installed.hook_path, action)
+            hook_command(&installed.hook_path, Some(action)).unwrap()
         );
     }
 
@@ -5034,7 +5295,7 @@ fn antigravity_cli_v3_install_is_outdated_until_reinstalled() {
     fs::write(
         hook_dir.join(ANTIGRAVITY_CLI_HOOK_INSTALL_NAME),
         ANTIGRAVITY_CLI_HOOK_ASSET
-            .replace("KLARK_INTEGRATION_VERSION=4", "KLARK_INTEGRATION_VERSION=3"),
+            .replace("KLARK_INTEGRATION_VERSION=5", "KLARK_INTEGRATION_VERSION=3"),
     )
     .unwrap();
     std::env::set_var(ANTIGRAVITY_CLI_CONFIG_DIR_ENV_VAR, &agy_dir);
@@ -5048,7 +5309,10 @@ fn antigravity_cli_v3_install_is_outdated_until_reinstalled() {
     let outdated = status();
     assert_eq!(outdated.state, IntegrationStatusKind::Outdated);
     assert_eq!(outdated.installed_version, Some(3));
-    assert_eq!(outdated.expected_version, 4);
+    assert_eq!(
+        outdated.expected_version,
+        ANTIGRAVITY_CLI_INTEGRATION_VERSION
+    );
 
     install_antigravity_cli().unwrap();
     assert_eq!(status().state, IntegrationStatusKind::Current);
@@ -5134,7 +5398,7 @@ fn grok_v1_integration_status_is_outdated() {
     .unwrap();
     fs::write(
         hooks_dir.join(GROK_HOOK_CONFIG_INSTALL_NAME),
-        serde_json::to_string(&grok_hook_config(&hook_path)).unwrap(),
+        serde_json::to_string(&grok_hook_config(&hook_path).unwrap()).unwrap(),
     )
     .unwrap();
 
@@ -5227,7 +5491,7 @@ fn grok_status_reports_outdated_when_hook_config_missing_or_broken() {
     assert_eq!(grok_state(), IntegrationStatusKind::Outdated);
 
     // Correct command but not a command-type hook: grok will not execute it.
-    let session_command = grok_session_command(&grok_hook_config(&hook_path));
+    let session_command = grok_session_command(&grok_hook_config(&hook_path).unwrap());
     fs::write(
         &config_path,
         format!(
@@ -5239,13 +5503,13 @@ fn grok_status_reports_outdated_when_hook_config_missing_or_broken() {
     assert_eq!(grok_state(), IntegrationStatusKind::Outdated);
 
     // A matcher can prevent the expected hook from running.
-    let mut config = grok_hook_config(&hook_path);
+    let mut config = grok_hook_config(&hook_path).unwrap();
     config["hooks"]["SessionStart"][0]["matcher"] = json!("(");
     fs::write(&config_path, serde_json::to_string(&config).unwrap()).unwrap();
     assert_eq!(grok_state(), IntegrationStatusKind::Outdated);
 
     // A malformed sibling group makes grok reject the event's hook groups.
-    let mut config = grok_hook_config(&hook_path);
+    let mut config = grok_hook_config(&hook_path).unwrap();
     config["hooks"]["SessionStart"]
         .as_array_mut()
         .unwrap()

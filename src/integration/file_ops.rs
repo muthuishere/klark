@@ -37,6 +37,48 @@ pub(crate) fn remove_legacy_bash_hook_file(_hook_path: &Path) -> io::Result<bool
     Ok(false)
 }
 
+/// The PowerShell hook files older Windows releases installed beside the
+/// current hook (`klark-agent-session.ps1` for Qwen and Letta).
+#[cfg(windows)]
+pub(crate) fn legacy_powershell_hook_paths(hook_path: &Path) -> Vec<std::path::PathBuf> {
+    super::LEGACY_POWERSHELL_HOOK_NAMES
+        .iter()
+        .map(|name| hook_path.with_file_name(name))
+        .collect()
+}
+
+/// Removes klark-owned leftovers of older Windows installs: the bash hook and
+/// the PowerShell hooks. A file without klark's marker is left alone.
+pub(crate) fn remove_legacy_hook_files(hook_path: &Path) -> io::Result<bool> {
+    #[cfg(windows)]
+    {
+        let mut removed = remove_legacy_bash_hook_file(hook_path)?;
+        for legacy_path in legacy_powershell_hook_paths(hook_path) {
+            removed |= remove_klark_owned_file(&legacy_path)?;
+        }
+        Ok(removed)
+    }
+
+    #[cfg(not(windows))]
+    {
+        remove_legacy_bash_hook_file(hook_path)
+    }
+}
+
+#[cfg(windows)]
+fn remove_klark_owned_file(path: &Path) -> io::Result<bool> {
+    let content = match fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(err) => return Err(err),
+    };
+    if !content.contains("KLARK_INTEGRATION_ID=") {
+        return Ok(false);
+    }
+    fs::remove_file(path)?;
+    Ok(true)
+}
+
 pub(crate) fn remove_dir_all_if_exists(path: &Path) -> io::Result<bool> {
     match fs::remove_dir_all(path) {
         Ok(()) => Ok(true),

@@ -410,7 +410,9 @@ fn grok_hook_config_is_valid(hook_path: &Path) -> bool {
     fs::read_to_string(config_path)
         .ok()
         .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
-        .is_some_and(|config| config == super::targets::grok_hook_config(hook_path))
+        .is_some_and(|config| {
+            super::targets::grok_hook_config(hook_path).is_ok_and(|expected| config == expected)
+        })
 }
 
 fn opencode_tui_integration_is_valid(plugin_path: &Path, expected_version: u32) -> bool {
@@ -446,7 +448,7 @@ fn integration_state_for_path(
     expected_version: u32,
 ) -> (super::IntegrationStatusKind, Option<u32>) {
     if !path.is_file() {
-        return (super::IntegrationStatusKind::NotInstalled, None);
+        return legacy_windows_hook_state(path);
     }
 
     let installed_version = fs::read_to_string(path)
@@ -459,6 +461,34 @@ fn integration_state_for_path(
     };
 
     (state, installed_version)
+}
+
+/// An older Windows release installed a PowerShell hook under another name;
+/// it reads as outdated so the next install or update replaces it.
+#[cfg(windows)]
+fn legacy_windows_hook_state(path: &Path) -> (super::IntegrationStatusKind, Option<u32>) {
+    let is_hook_file = path.extension().is_some_and(|extension| extension == "cmd");
+    let legacy = is_hook_file
+        .then(|| super::file_ops::legacy_powershell_hook_paths(path))
+        .unwrap_or_default()
+        .into_iter()
+        .find_map(|legacy_path| {
+            fs::read_to_string(legacy_path)
+                .ok()
+                .filter(|content| content.contains("KLARK_INTEGRATION_ID="))
+        });
+    match legacy {
+        Some(content) => (
+            super::IntegrationStatusKind::Outdated,
+            parse_integration_version(&content),
+        ),
+        None => (super::IntegrationStatusKind::NotInstalled, None),
+    }
+}
+
+#[cfg(not(windows))]
+fn legacy_windows_hook_state(_path: &Path) -> (super::IntegrationStatusKind, Option<u32>) {
+    (super::IntegrationStatusKind::NotInstalled, None)
 }
 
 pub(crate) fn integration_status_at(
@@ -522,6 +552,10 @@ pub(crate) fn parse_integration_version(content: &str) -> Option<u32> {
             .trim_start_matches('/')
             .trim_start_matches('#')
             .trim();
+        // Windows `.cmd` hooks carry the marker in a `rem` comment.
+        let marker_line = marker_line
+            .strip_prefix("rem ")
+            .map_or(marker_line, str::trim_start);
         marker_line
             .strip_prefix(super::INTEGRATION_VERSION_MARKER)?
             .trim()

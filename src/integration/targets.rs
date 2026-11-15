@@ -8,16 +8,15 @@ use super::claude_settings::{
     install as install_claude_settings, uninstall as uninstall_claude_settings,
 };
 use super::command::hook_command;
-#[cfg(windows)]
-use super::command::powershell_encoded_hook_command;
 #[cfg(not(windows))]
 use super::command::shell_single_quote;
 use super::config_edit::{
     build_codex_config_with_hooks, build_kimi_config_with_hooks, ensure_command_hook,
     ensure_direct_command_hook, ensure_flat_command_hook, ensure_hermes_plugin_enabled,
-    ensure_hooks_object, ensure_simple_command_hook, hooks_object_if_present,
-    remove_direct_hook_commands, remove_flat_command_hook, remove_hermes_plugin_enabled,
-    remove_hook_commands, remove_kimi_config_block, remove_simple_command_hook,
+    ensure_hooks_object, ensure_simple_command_hook, hook_command_variants,
+    hooks_object_if_present, remove_direct_hook_commands, remove_flat_hook_commands,
+    remove_hermes_plugin_enabled, remove_hook_commands, remove_kimi_config_block,
+    remove_simple_command_hook, remove_simple_hook_commands,
 };
 use super::config_file::{check_config_targets, write_config};
 use super::env::{
@@ -26,7 +25,7 @@ use super::env::{
     omp_extension_dir, opencode_dir, opencode_state_dir, pi_extension_dir, qodercli_dir, qwen_dir,
 };
 use super::file_ops::{
-    make_executable, remove_dir_all_if_exists, remove_file_if_exists, remove_legacy_bash_hook_file,
+    make_executable, remove_dir_all_if_exists, remove_file_if_exists, remove_legacy_hook_files,
 };
 use super::opencode_config::{
     add_cli_plugin, add_tui_plugin, remove_cli_plugin, remove_tui_plugin,
@@ -63,6 +62,15 @@ use super::{
     QODERCLI_HOOK_EVENTS, QODERCLI_HOOK_INSTALL_NAME, QODERCLI_REMOVED_LIFECYCLE_HOOK_EVENTS,
     QWEN_HOOK_ASSET, QWEN_HOOK_EVENTS, QWEN_HOOK_INSTALL_NAME,
 };
+
+/// Cursor events older releases hooked; install and uninstall clear them.
+const CURSOR_REMOVED_HOOK_EVENTS: [&str; 5] = [
+    "beforeSubmitPrompt",
+    "beforeShellExecution",
+    "beforeMCPExecution",
+    "stop",
+    "sessionEnd",
+];
 
 fn ensure_extension_dir(dir: &Path, agent: &str) -> io::Result<()> {
     if dir.is_dir() {
@@ -135,6 +143,8 @@ pub(crate) fn install_claude() -> io::Result<ClaudeInstallPaths> {
     fs::create_dir_all(&hooks_dir)?;
 
     let hook_path = hooks_dir.join(CLAUDE_HOOK_INSTALL_NAME);
+    // Fail before writing anything when no safe hook command exists.
+    hook_command(&hook_path, None)?;
     fs::write(&hook_path, CLAUDE_HOOK_ASSET)?;
     make_executable(&hook_path)?;
 
@@ -145,7 +155,7 @@ pub(crate) fn install_claude() -> io::Result<ClaudeInstallPaths> {
         "{}".to_string()
     };
     let updated_settings = install_claude_settings(&existing_settings, &settings_path, &hook_path)?;
-    remove_legacy_bash_hook_file(&hook_path)?;
+    remove_legacy_hook_files(&hook_path)?;
 
     if updated_settings != existing_settings {
         write_config(&settings_path, updated_settings)?;
@@ -168,6 +178,8 @@ pub(crate) fn install_codex() -> io::Result<CodexInstallPaths> {
     }
 
     let hook_path = dir.join(CODEX_HOOK_INSTALL_NAME);
+    // Fail before writing anything when no safe hook command exists.
+    hook_command(&hook_path, None)?;
     fs::write(&hook_path, CODEX_HOOK_ASSET)?;
     make_executable(&hook_path)?;
 
@@ -196,11 +208,11 @@ pub(crate) fn install_codex() -> io::Result<CodexInstallPaths> {
     ensure_command_hook(
         hooks,
         "SessionStart",
-        hook_command(&hook_path, Some("session")),
+        hook_command(&hook_path, Some("session"))?,
         10,
         None,
     )?;
-    remove_legacy_bash_hook_file(&hook_path)?;
+    remove_legacy_hook_files(&hook_path)?;
 
     write_config(&hooks_path, serde_json::to_string_pretty(&hooks_file)?)?;
 
@@ -236,6 +248,8 @@ pub(crate) fn install_kimi() -> io::Result<KimiInstallPaths> {
     fs::create_dir_all(&hooks_dir)?;
 
     let hook_path = hooks_dir.join(KIMI_HOOK_INSTALL_NAME);
+    // Fail before writing anything when no safe hook command exists.
+    hook_command(&hook_path, None)?;
     fs::write(&hook_path, KIMI_HOOK_ASSET)?;
     make_executable(&hook_path)?;
 
@@ -245,11 +259,11 @@ pub(crate) fn install_kimi() -> io::Result<KimiInstallPaths> {
     } else {
         String::new()
     };
-    let new_config = build_kimi_config_with_hooks(&existing_config, &hook_path);
+    let new_config = build_kimi_config_with_hooks(&existing_config, &hook_path)?;
     if new_config != existing_config {
         write_config(&config_path, new_config)?;
     }
-    remove_legacy_bash_hook_file(&hook_path)?;
+    remove_legacy_hook_files(&hook_path)?;
 
     Ok(KimiInstallPaths {
         hook_path,
@@ -271,6 +285,8 @@ pub(crate) fn install_copilot() -> io::Result<CopilotInstallPaths> {
     fs::create_dir_all(&hooks_dir)?;
 
     let hook_path = hooks_dir.join(COPILOT_HOOK_INSTALL_NAME);
+    // Fail before writing anything when no safe hook command exists.
+    hook_command(&hook_path, None)?;
     fs::write(&hook_path, COPILOT_HOOK_ASSET)?;
     make_executable(&hook_path)?;
 
@@ -292,7 +308,7 @@ pub(crate) fn install_copilot() -> io::Result<CopilotInstallPaths> {
         "copilot settings",
         "copilot settings hooks",
     )?;
-    let command = hook_command(&hook_path, None);
+    let command = hook_command(&hook_path, None)?;
     for event in COPILOT_REMOVED_LIFECYCLE_HOOK_EVENTS {
         remove_direct_hook_commands(hooks, event, &hook_path, None)?;
     }
@@ -302,7 +318,7 @@ pub(crate) fn install_copilot() -> io::Result<CopilotInstallPaths> {
     for event in COPILOT_HOOK_EVENTS {
         ensure_direct_command_hook(hooks, event, command.clone(), 10, None)?;
     }
-    remove_legacy_bash_hook_file(&hook_path)?;
+    remove_legacy_hook_files(&hook_path)?;
 
     write_config(&settings_path, serde_json::to_string_pretty(&settings)?)?;
 
@@ -323,6 +339,8 @@ pub(crate) fn install_devin() -> io::Result<DevinInstallPaths> {
     }
 
     let hook_path = dir.join(DEVIN_HOOK_INSTALL_NAME);
+    // Fail before writing anything when no safe hook command exists.
+    hook_command(&hook_path, None)?;
     fs::write(&hook_path, DEVIN_HOOK_ASSET)?;
     make_executable(&hook_path)?;
 
@@ -354,12 +372,12 @@ pub(crate) fn install_devin() -> io::Result<DevinInstallPaths> {
         ensure_command_hook(
             hooks,
             event,
-            hook_command(&hook_path, Some(action)),
+            hook_command(&hook_path, Some(action))?,
             10,
             None,
         )?;
     }
-    remove_legacy_bash_hook_file(&hook_path)?;
+    remove_legacy_hook_files(&hook_path)?;
 
     write_config(&settings_path, serde_json::to_string_pretty(&settings)?)?;
 
@@ -383,6 +401,8 @@ pub(crate) fn install_droid() -> io::Result<DroidInstallPaths> {
     fs::create_dir_all(&hooks_dir)?;
 
     let hook_path = hooks_dir.join(DROID_HOOK_INSTALL_NAME);
+    // Fail before writing anything when no safe hook command exists.
+    hook_command(&hook_path, None)?;
     fs::write(&hook_path, DROID_HOOK_ASSET)?;
     make_executable(&hook_path)?;
 
@@ -415,12 +435,12 @@ pub(crate) fn install_droid() -> io::Result<DroidInstallPaths> {
         ensure_command_hook(
             hooks,
             event,
-            hook_command(&hook_path, Some(action)),
+            hook_command(&hook_path, Some(action))?,
             10,
             None,
         )?;
     }
-    remove_legacy_bash_hook_file(&hook_path)?;
+    remove_legacy_hook_files(&hook_path)?;
 
     write_config(&settings_path, serde_json::to_string_pretty(&settings)?)?;
 
@@ -590,7 +610,7 @@ pub(crate) fn uninstall_claude() -> io::Result<ClaudeUninstallResult> {
     }
 
     let removed_hook_file =
-        remove_file_if_exists(&hook_path)? | remove_legacy_bash_hook_file(&hook_path)?;
+        remove_file_if_exists(&hook_path)? | remove_legacy_hook_files(&hook_path)?;
 
     Ok(ClaudeUninstallResult {
         hook_path,
@@ -639,7 +659,7 @@ pub(crate) fn uninstall_codex() -> io::Result<CodexUninstallResult> {
     }
 
     let removed_hook_file =
-        remove_file_if_exists(&hook_path)? | remove_legacy_bash_hook_file(&hook_path)?;
+        remove_file_if_exists(&hook_path)? | remove_legacy_hook_files(&hook_path)?;
 
     Ok(CodexUninstallResult {
         hook_path,
@@ -667,7 +687,7 @@ pub(crate) fn uninstall_kimi() -> io::Result<KimiUninstallResult> {
     }
 
     let removed_hook_file =
-        remove_file_if_exists(&hook_path)? | remove_legacy_bash_hook_file(&hook_path)?;
+        remove_file_if_exists(&hook_path)? | remove_legacy_hook_files(&hook_path)?;
 
     Ok(KimiUninstallResult {
         hook_path,
@@ -713,7 +733,7 @@ pub(crate) fn uninstall_copilot() -> io::Result<CopilotUninstallResult> {
     }
 
     let removed_hook_file =
-        remove_file_if_exists(&hook_path)? | remove_legacy_bash_hook_file(&hook_path)?;
+        remove_file_if_exists(&hook_path)? | remove_legacy_hook_files(&hook_path)?;
 
     Ok(CopilotUninstallResult {
         hook_path,
@@ -759,7 +779,7 @@ pub(crate) fn uninstall_devin() -> io::Result<DevinUninstallResult> {
     }
 
     let removed_hook_file =
-        remove_file_if_exists(&hook_path)? | remove_legacy_bash_hook_file(&hook_path)?;
+        remove_file_if_exists(&hook_path)? | remove_legacy_hook_files(&hook_path)?;
 
     Ok(DevinUninstallResult {
         hook_path,
@@ -832,7 +852,7 @@ pub(crate) fn uninstall_droid() -> io::Result<DroidUninstallResult> {
     }
 
     let removed_hook_file =
-        remove_file_if_exists(&hook_path)? | remove_legacy_bash_hook_file(&hook_path)?;
+        remove_file_if_exists(&hook_path)? | remove_legacy_hook_files(&hook_path)?;
 
     Ok(DroidUninstallResult {
         hook_path,
@@ -937,6 +957,8 @@ pub(crate) fn install_qodercli() -> io::Result<QodercliInstallPaths> {
     fs::create_dir_all(&hooks_dir)?;
 
     let hook_path = hooks_dir.join(QODERCLI_HOOK_INSTALL_NAME);
+    // Fail before writing anything when no safe hook command exists.
+    hook_command(&hook_path, None)?;
     fs::write(&hook_path, QODERCLI_HOOK_ASSET)?;
     make_executable(&hook_path)?;
 
@@ -973,12 +995,12 @@ pub(crate) fn install_qodercli() -> io::Result<QodercliInstallPaths> {
         ensure_command_hook(
             hooks,
             event,
-            hook_command(&hook_path, Some(action)),
+            hook_command(&hook_path, Some(action))?,
             10,
             Some("*"),
         )?;
     }
-    remove_legacy_bash_hook_file(&hook_path)?;
+    remove_legacy_hook_files(&hook_path)?;
 
     write_config(&settings_path, serde_json::to_string_pretty(&settings)?)?;
 
@@ -1002,6 +1024,8 @@ pub(crate) fn install_qwen() -> io::Result<QwenInstallPaths> {
     fs::create_dir_all(&hooks_dir)?;
 
     let hook_path = hooks_dir.join(QWEN_HOOK_INSTALL_NAME);
+    // Fail before writing anything when no safe hook command exists.
+    hook_command(&hook_path, None)?;
     fs::write(&hook_path, QWEN_HOOK_ASSET)?;
     make_executable(&hook_path)?;
 
@@ -1028,11 +1052,12 @@ pub(crate) fn install_qwen() -> io::Result<QwenInstallPaths> {
         ensure_command_hook(
             hooks,
             event,
-            hook_command(&hook_path, Some(action)),
+            hook_command(&hook_path, Some(action))?,
             10_000,
             Some("*"),
         )?;
     }
+    remove_legacy_hook_files(&hook_path)?;
 
     write_config(&settings_path, serde_json::to_string_pretty(&settings)?)?;
 
@@ -1192,7 +1217,7 @@ pub(crate) fn install_letta() -> io::Result<LettaInstallPaths> {
         "letta settings hooks",
     )?;
     remove_hook_commands(hooks, "SessionStart", &hook_path, Some("session"))?;
-    ensure_letta_session_hook(hooks, hook_command(&hook_path, Some("session")))?;
+    ensure_letta_session_hook(hooks, hook_command(&hook_path, Some("session"))?)?;
 
     let settings_contents = serde_json::to_string_pretty(&settings)?;
     let (hook_staged, hook_backup) =
@@ -1236,6 +1261,7 @@ pub(crate) fn install_letta() -> io::Result<LettaInstallPaths> {
     if settings_had_original {
         cleanup_letta_install_artifact(&settings_backup);
     }
+    remove_legacy_hook_files(&hook_path)?;
 
     Ok(LettaInstallPaths {
         hook_path,
@@ -1254,6 +1280,8 @@ pub(crate) fn install_cursor() -> io::Result<CursorInstallPaths> {
     }
 
     let hook_path = dir.join(CURSOR_HOOK_INSTALL_NAME);
+    // Fail before writing anything when no safe hook command exists.
+    hook_command(&hook_path, None)?;
     fs::write(&hook_path, CURSOR_HOOK_ASSET)?;
     make_executable(&hook_path)?;
 
@@ -1284,13 +1312,19 @@ pub(crate) fn install_cursor() -> io::Result<CursorInstallPaths> {
         "cursor hooks file",
         "cursor hooks file hooks",
     )?;
-    let session_command = hook_command(&hook_path, Some("session"));
-    remove_simple_command_hook(hooks, "beforeSubmitPrompt", &session_command)?;
-    remove_simple_command_hook(hooks, "beforeShellExecution", &session_command)?;
-    remove_simple_command_hook(hooks, "beforeMCPExecution", &session_command)?;
-    remove_simple_command_hook(hooks, "stop", &session_command)?;
-    remove_simple_command_hook(hooks, "sessionEnd", &session_command)?;
+    let session_command = hook_command(&hook_path, Some("session"))?;
+    for event in CURSOR_REMOVED_HOOK_EVENTS {
+        remove_simple_hook_commands(hooks, event, &hook_path, Some("session"))?;
+    }
+    // Drop entries older releases wrote (PowerShell on Windows) but keep a
+    // current one where it is.
+    for command in hook_command_variants(&hook_path, Some("session")) {
+        if command != session_command {
+            remove_simple_command_hook(hooks, "sessionStart", &command)?;
+        }
+    }
     ensure_simple_command_hook(hooks, "sessionStart", session_command)?;
+    remove_legacy_hook_files(&hook_path)?;
 
     write_config(&hooks_path, serde_json::to_string_pretty(&hooks_file)?)?;
 
@@ -1336,7 +1370,7 @@ pub(crate) fn uninstall_qodercli() -> io::Result<QodercliUninstallResult> {
     }
 
     let removed_hook_file =
-        remove_file_if_exists(&hook_path)? | remove_legacy_bash_hook_file(&hook_path)?;
+        remove_file_if_exists(&hook_path)? | remove_legacy_hook_files(&hook_path)?;
 
     Ok(QodercliUninstallResult {
         hook_path,
@@ -1378,7 +1412,8 @@ pub(crate) fn uninstall_qwen() -> io::Result<QwenUninstallResult> {
         }
     }
 
-    let removed_hook_file = remove_file_if_exists(&hook_path)?;
+    let removed_hook_file =
+        remove_file_if_exists(&hook_path)? | remove_legacy_hook_files(&hook_path)?;
 
     Ok(QwenUninstallResult {
         hook_path,
@@ -1418,7 +1453,8 @@ pub(crate) fn uninstall_letta() -> io::Result<LettaUninstallResult> {
         }
     }
 
-    let removed_hook_file = remove_file_if_exists(&hook_path)?;
+    let removed_hook_file =
+        remove_file_if_exists(&hook_path)? | remove_legacy_hook_files(&hook_path)?;
 
     Ok(LettaUninstallResult {
         hook_path,
@@ -1447,16 +1483,10 @@ pub(crate) fn uninstall_cursor() -> io::Result<CursorUninstallResult> {
             "cursor hooks file",
             "cursor hooks file hooks",
         )? {
-            let session_command = hook_command(&hook_path, Some("session"));
-            updated_hooks |= remove_simple_command_hook(hooks, "sessionStart", &session_command)?;
-            updated_hooks |=
-                remove_simple_command_hook(hooks, "beforeSubmitPrompt", &session_command)?;
-            updated_hooks |=
-                remove_simple_command_hook(hooks, "beforeShellExecution", &session_command)?;
-            updated_hooks |=
-                remove_simple_command_hook(hooks, "beforeMCPExecution", &session_command)?;
-            updated_hooks |= remove_simple_command_hook(hooks, "stop", &session_command)?;
-            updated_hooks |= remove_simple_command_hook(hooks, "sessionEnd", &session_command)?;
+            for event in std::iter::once("sessionStart").chain(CURSOR_REMOVED_HOOK_EVENTS) {
+                updated_hooks |=
+                    remove_simple_hook_commands(hooks, event, &hook_path, Some("session"))?;
+            }
         }
 
         if updated_hooks {
@@ -1464,7 +1494,8 @@ pub(crate) fn uninstall_cursor() -> io::Result<CursorUninstallResult> {
         }
     }
 
-    let removed_hook_file = remove_file_if_exists(&hook_path)?;
+    let removed_hook_file =
+        remove_file_if_exists(&hook_path)? | remove_legacy_hook_files(&hook_path)?;
 
     Ok(CursorUninstallResult {
         hook_path,
@@ -1474,17 +1505,6 @@ pub(crate) fn uninstall_cursor() -> io::Result<CursorUninstallResult> {
     })
 }
 
-pub(crate) fn mastracode_hook_command(hook_path: &Path, action: &str) -> String {
-    #[cfg(windows)]
-    {
-        powershell_encoded_hook_command(hook_path, action)
-    }
-    #[cfg(not(windows))]
-    {
-        hook_command(hook_path, Some(action))
-    }
-}
-
 pub(crate) fn install_mastracode() -> io::Result<MastracodeInstallPaths> {
     let mastracode_home = mastracode_dir()?;
     check_config_targets(&mastracode_home, &["hooks.json"])?;
@@ -1492,6 +1512,8 @@ pub(crate) fn install_mastracode() -> io::Result<MastracodeInstallPaths> {
     fs::create_dir_all(&hook_dir)?;
 
     let hook_path = hook_dir.join(MASTRACODE_HOOK_INSTALL_NAME);
+    // Fail before writing anything when no safe hook command exists.
+    hook_command(&hook_path, None)?;
     fs::write(&hook_path, MASTRACODE_HOOK_ASSET)?;
     make_executable(&hook_path)?;
 
@@ -1512,18 +1534,18 @@ pub(crate) fn install_mastracode() -> io::Result<MastracodeInstallPaths> {
     })?;
 
     for (event, action) in MASTRACODE_REMOVED_HOOK_EVENTS {
-        remove_flat_command_hook(hooks, event, &hook_command(&hook_path, Some(action)))?;
-        remove_flat_command_hook(hooks, event, &mastracode_hook_command(&hook_path, action))?;
+        remove_flat_hook_commands(hooks, event, &hook_path, Some(action))?;
     }
     for (event, action) in MASTRACODE_HOOK_EVENTS {
-        remove_flat_command_hook(hooks, event, &hook_command(&hook_path, Some(action)))?;
+        remove_flat_hook_commands(hooks, event, &hook_path, Some(action))?;
         ensure_flat_command_hook(
             hooks,
             event,
-            mastracode_hook_command(&hook_path, action),
+            hook_command(&hook_path, Some(action))?,
             MASTRACODE_HOOK_TIMEOUT_MS,
         )?;
     }
+    remove_legacy_hook_files(&hook_path)?;
 
     write_config(&hooks_path, serde_json::to_string_pretty(&hooks_file)?)?;
 
@@ -1558,13 +1580,7 @@ pub(crate) fn uninstall_mastracode() -> io::Result<MastracodeUninstallResult> {
             .into_iter()
             .chain(MASTRACODE_REMOVED_HOOK_EVENTS)
         {
-            updated_hooks |=
-                remove_flat_command_hook(hooks, event, &hook_command(&hook_path, Some(action)))?;
-            updated_hooks |= remove_flat_command_hook(
-                hooks,
-                event,
-                &mastracode_hook_command(&hook_path, action),
-            )?;
+            updated_hooks |= remove_flat_hook_commands(hooks, event, &hook_path, Some(action))?;
         }
 
         if updated_hooks {
@@ -1572,7 +1588,8 @@ pub(crate) fn uninstall_mastracode() -> io::Result<MastracodeUninstallResult> {
         }
     }
 
-    let removed_hook_file = remove_file_if_exists(&hook_path)?;
+    let removed_hook_file =
+        remove_file_if_exists(&hook_path)? | remove_legacy_hook_files(&hook_path)?;
 
     Ok(MastracodeUninstallResult {
         hook_path,
@@ -1596,6 +1613,8 @@ pub(crate) fn install_antigravity_cli() -> io::Result<AntigravityCliInstallPaths
     fs::create_dir_all(&hooks_dir)?;
 
     let hook_path = hooks_dir.join(ANTIGRAVITY_CLI_HOOK_INSTALL_NAME);
+    // Fail before writing anything when no safe hook command exists.
+    hook_command(&hook_path, None)?;
     fs::write(&hook_path, ANTIGRAVITY_CLI_HOOK_ASSET)?;
     make_executable(&hook_path)?;
 
@@ -1619,8 +1638,9 @@ pub(crate) fn install_antigravity_cli() -> io::Result<AntigravityCliInstallPaths
     // other named hook untouched.
     hooks.insert(
         ANTIGRAVITY_CLI_HOOK_BLOCK_NAME.to_string(),
-        antigravity_cli_hook_block(&hook_path),
+        antigravity_cli_hook_block(&hook_path)?,
     );
+    remove_legacy_hook_files(&hook_path)?;
 
     write_config(&hooks_path, serde_json::to_string_pretty(&hooks_file)?)?;
 
@@ -1630,32 +1650,21 @@ pub(crate) fn install_antigravity_cli() -> io::Result<AntigravityCliInstallPaths
     })
 }
 
-pub(crate) fn antigravity_cli_hook_command(hook_path: &Path, action: &str) -> String {
-    #[cfg(windows)]
-    {
-        powershell_encoded_hook_command(hook_path, action)
-    }
-    #[cfg(not(windows))]
-    {
-        hook_command(hook_path, Some(action))
-    }
-}
-
 /// Builds the Klark-owned `hooks.json` block for Antigravity CLI.
 ///
 /// Every event Klark registers takes a flat handler list; the `matcher`/`hooks`
 /// group is only valid for the tool events, which Klark does not use.
-fn antigravity_cli_hook_block(hook_path: &Path) -> Value {
+fn antigravity_cli_hook_block(hook_path: &Path) -> io::Result<Value> {
     let mut block = Map::new();
     for (event, action) in ANTIGRAVITY_CLI_HOOK_EVENTS {
         let handler = json!({
             "type": "command",
-            "command": antigravity_cli_hook_command(hook_path, action),
+            "command": hook_command(hook_path, Some(action))?,
             "timeout": ANTIGRAVITY_CLI_HOOK_TIMEOUT_SEC,
         });
         block.insert(event.to_string(), json!([handler]));
     }
-    Value::Object(block)
+    Ok(Value::Object(block))
 }
 
 pub(crate) fn uninstall_antigravity_cli() -> io::Result<AntigravityCliUninstallResult> {
@@ -1685,7 +1694,8 @@ pub(crate) fn uninstall_antigravity_cli() -> io::Result<AntigravityCliUninstallR
         }
     }
 
-    let removed_hook_file = remove_file_if_exists(&hook_path)?;
+    let removed_hook_file =
+        remove_file_if_exists(&hook_path)? | remove_legacy_hook_files(&hook_path)?;
 
     Ok(AntigravityCliUninstallResult {
         hook_path,
@@ -1697,23 +1707,23 @@ pub(crate) fn uninstall_antigravity_cli() -> io::Result<AntigravityCliUninstallR
 
 /// The complete Klark-owned Grok hook config. Installation and status share
 /// this value so any config drift is reported as outdated.
-fn grok_hook_command(hook_path: &Path) -> String {
+fn grok_hook_command(hook_path: &Path) -> io::Result<String> {
     #[cfg(windows)]
     {
         hook_command(hook_path, Some("session"))
     }
     #[cfg(not(windows))]
     {
-        format!(
+        Ok(format!(
             "sh {} session",
             shell_single_quote(&hook_path.display().to_string())
-        )
+        ))
     }
 }
 
-pub(crate) fn grok_hook_config(hook_path: &Path) -> Value {
-    let session_command = grok_hook_command(hook_path);
-    json!({
+pub(crate) fn grok_hook_config(hook_path: &Path) -> io::Result<Value> {
+    let session_command = grok_hook_command(hook_path)?;
+    Ok(json!({
         "hooks": {
             "SessionStart": [
                 {
@@ -1727,7 +1737,7 @@ pub(crate) fn grok_hook_config(hook_path: &Path) -> Value {
                 }
             ]
         }
-    })
+    }))
 }
 
 pub(crate) fn install_grok() -> io::Result<GrokInstallPaths> {
@@ -1746,14 +1756,17 @@ pub(crate) fn install_grok() -> io::Result<GrokInstallPaths> {
     fs::create_dir_all(&hooks_dir)?;
 
     let hook_path = hooks_dir.join(GROK_HOOK_INSTALL_NAME);
+    // Fail before writing anything when no safe hook command exists.
+    hook_command(&hook_path, None)?;
     fs::write(&hook_path, GROK_HOOK_ASSET)?;
     make_executable(&hook_path)?;
 
     let config_path = hooks_dir.join(GROK_HOOK_CONFIG_INSTALL_NAME);
     fs::write(
         &config_path,
-        serde_json::to_string_pretty(&grok_hook_config(&hook_path))?,
+        serde_json::to_string_pretty(&grok_hook_config(&hook_path)?)?,
     )?;
+    remove_legacy_hook_files(&hook_path)?;
 
     Ok(GrokInstallPaths {
         hook_path,
@@ -1768,7 +1781,8 @@ pub(crate) fn uninstall_grok() -> io::Result<GrokUninstallResult> {
 
     // klark owns both files outright, so removal is a straight delete.
     let removed_config_file = remove_file_if_exists(&config_path)?;
-    let removed_hook_file = remove_file_if_exists(&hook_path)?;
+    let removed_hook_file =
+        remove_file_if_exists(&hook_path)? | remove_legacy_hook_files(&hook_path)?;
 
     Ok(GrokUninstallResult {
         hook_path,

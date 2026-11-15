@@ -104,10 +104,7 @@ impl ClientShellState {
             return Vec::new();
         }
         self.auto_integrations.started = true;
-        // Windows hooks are still PowerShell scripts; they are not installed
-        // unasked until they become .cmd hooks that call klark.exe.
-        if cfg!(windows)
-            || !self.config.auto_install_integrations
+        if !self.config.auto_install_integrations
             || std::env::var_os("KLARK_NO_AUTO_INTEGRATIONS").is_some()
             || !self.active_endpoint_id.is_local()
         {
