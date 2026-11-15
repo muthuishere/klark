@@ -412,7 +412,9 @@ fn agent_list_all_sessions() -> std::io::Result<i32> {
 }
 
 /// Adds `session` and `address` (machine/session/name-or-pane, the form every
-/// TARGET and `klark msg send` accept) to one `agent.list` entry.
+/// TARGET and `klark msg send` accept) to one `agent.list` entry, and where its
+/// folder sits in git: `checkout` (`main` or `worktree`), `worktree` (the
+/// linked worktree's folder name) and `branch`, each only when known.
 fn annotate_agent(agent: &mut serde_json::Value, machine: &str, session: &str) {
     let Some(object) = agent.as_object_mut() else {
         return;
@@ -423,6 +425,21 @@ fn annotate_agent(agent: &mut serde_json::Value, machine: &str, session: &str) {
         .or_else(|| object.get("pane_id").and_then(serde_json::Value::as_str))
         .map(str::to_owned);
     object.insert("session".into(), session.into());
+    let folder = ["foreground_cwd", "cwd"].into_iter().find_map(|key| {
+        object
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .filter(|cwd| !cwd.is_empty())
+    });
+    if let Some(checkout) = folder.and_then(|cwd| crate::agent_index::checkout(cwd.as_ref())) {
+        object.insert("checkout".into(), checkout.kind.into());
+        if let Some(worktree) = checkout.worktree {
+            object.insert("worktree".into(), worktree.into());
+        }
+        if let Some(branch) = checkout.branch {
+            object.insert("branch".into(), branch.into());
+        }
+    }
     if let Some(handle) = handle {
         object.insert(
             "address".into(),
@@ -832,4 +849,43 @@ fn agent_read(params: AgentReadParams) -> std::io::Result<i32> {
         })
     })?;
     super::print_read_response(&response)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::annotate_agent;
+
+    #[test]
+    fn agent_list_entries_gain_address_and_checkout_fields_only() {
+        let base = std::env::temp_dir().join(format!("klark-annotate-{}", std::process::id()));
+        let repo = base.join("repo");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::write(repo.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+
+        let mut agent = serde_json::json!({
+            "name": "repo", "pane_id": "w1:p1", "agent": "claude",
+            "cwd": repo.join("src").display().to_string(),
+            "terminal_title_stripped": "Review"
+        });
+        let before = agent.as_object().unwrap().clone();
+        annotate_agent(&mut agent, "m1", "work");
+        assert_eq!(agent["address"], "m1/work/repo");
+        assert_eq!(agent["session"], "work");
+        assert_eq!(agent["checkout"], "main");
+        assert_eq!(agent["branch"], "main");
+        assert!(agent.get("worktree").is_none());
+        for (key, value) in before {
+            assert_eq!(agent[&key], value, "{key} is kept as it was");
+        }
+
+        let mut unnamed = serde_json::json!({"pane_id": "w1:p2", "cwd": "/"});
+        annotate_agent(&mut unnamed, "m1", "work");
+        assert_eq!(
+            unnamed["address"], "m1/work/w1:p2",
+            "pane ids still address"
+        );
+        assert!(unnamed.get("checkout").is_none());
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }

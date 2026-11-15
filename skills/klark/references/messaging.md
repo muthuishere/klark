@@ -4,7 +4,7 @@ Part of the klark skill; the rules in `SKILL.md` (KLARK_ENV check, safety) apply
 
 ## Agents across sessions and messaging
 
-Every agent has an address `<machine>/<session>/<agent>` (`laptop/work/reviewer`). `agent` is its name, or its pane id (`w1:p1`) if it has none. On this machine the short forms `work/reviewer` and `reviewer` work too.
+Every agent has an address `<machine>/<session>/<agent>` (`laptop/work/reviewer`). `agent` is its name: klark names each agent after its folder (`klark`, `klark-2` for a second one) unless someone named it; the pane id (`w1:p1`) always works as well. On this machine the short forms `work/reviewer` and `reviewer` work too.
 
 Every `klark agent` TARGET (`get read prompt send-keys wait focus rename`) accepts `session/agent` and `machine/session/agent` for this machine. A bare name is looked up in your own session first, then in the other running sessions. `klark agent attach` stays in one session. `klark session list` shows sessions.
 
@@ -25,6 +25,8 @@ klark agent wait work/coder --timeout 900000
 klark agent read work/coder --lines 30
 ```
 
+Who to message: only agents `klark msg ls` lists (panes running a coding agent), never a plain shell, server or editor. Pick by NAME in the address, FOLDER, WHERE (`main` checkout or `worktree <name>`, with the branch) and TITLE (what it is working on); `--json` gives the full `cwd`, `checkout`, `worktree`, `branch` and `title`. If two agents still fit, ask the person.
+
 Etiquette: one ask per message, say what you need back and in what form, include paths/branch/PR the other agent cannot see. Check `klark msg ls` first: don't message a `blocked` agent (it waits on a person). If the target is `working` and the message can wait, use `--wait <secs>` so it lands between turns instead of mid-turn. Remote targets are not waited on. No "thanks"/"ok" messages.
 
 
@@ -36,7 +38,7 @@ Etiquette: one ask per message, say what you need back and in what form, include
 | ask an agent and get the answer back when you are NOT in a klark pane (`KLARK_PANE_ID` unset: a plain shell, a script, a coding agent outside klark) | `klark msg send --wait-reply 600 work/coder "<question>"`; it prints the answer. Never invent a `--from` name: nothing can be typed into it, so the answer only reaches `klark msg log`. |
 | message an agent only once it is idle | `klark msg send --wait 300 work/coder "<text>"` |
 | message every agent in this session; on this machine | `klark msg send --all "<text>"`; `klark msg send --all-sessions "<text>"` |
-| list every agent, with its worktree | `klark msg ls --local` (`--json`; without `--local` also the hub's machines) |
+| list every agent: name, folder, main/worktree, branch, title | `klark msg ls --local` (`--json`; without `--local` also the hub's machines) |
 | recent messages | `klark msg log` (`-n 50`, `--json`) |
 | agents on other machines | `klark msg login --hub <url> --user <name>` (a person types the password); `klark msg status` |
 

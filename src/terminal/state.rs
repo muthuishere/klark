@@ -142,6 +142,13 @@ pub struct TerminalState {
     pub terminal_title: Option<String>,
     pub manual_label: Option<String>,
     pub agent_name: Option<String>,
+    /// The name was derived by klark from the pane's folder, not given by a
+    /// person or agent. An automatic name does not keep a pane listed as an
+    /// agent once its agent is no longer detected.
+    pub agent_name_auto: bool,
+    /// A person or agent cleared the name explicitly (`klark agent rename`
+    /// with no name): do not derive a new one until this agent leaves.
+    agent_name_auto_suppressed: bool,
     agent_name_owner: Option<AgentNameOwner>,
     managed_agent: Option<ManagedAgent>,
     codex_prompt_ready: bool,
@@ -182,6 +189,8 @@ impl TerminalState {
             terminal_title: None,
             manual_label: None,
             agent_name: None,
+            agent_name_auto: false,
+            agent_name_auto_suppressed: false,
             agent_name_owner: None,
             managed_agent: None,
             codex_prompt_ready: false,
@@ -2109,6 +2118,8 @@ impl TerminalState {
 
     pub fn set_agent_name(&mut self, name: String) {
         self.agent_name = (!name.is_empty()).then_some(name);
+        self.agent_name_auto = false;
+        self.agent_name_auto_suppressed = false;
         self.agent_name_owner = self.agent_name.as_ref().and_then(|_| {
             self.hook_authority
                 .as_ref()
@@ -2132,6 +2143,28 @@ impl TerminalState {
                         })
                 })
         });
+    }
+
+    /// Gives the agent a name klark derived itself (see
+    /// `App::assign_automatic_agent_names`); an explicit name always wins.
+    pub fn set_automatic_agent_name(&mut self, name: String) {
+        self.set_agent_name(name);
+        self.agent_name_auto = self.agent_name.is_some();
+    }
+
+    /// Clears the name on request and keeps klark from deriving a new one
+    /// until the current agent leaves the pane.
+    pub fn clear_agent_name_explicitly(&mut self) {
+        self.clear_agent_name();
+        self.agent_name_auto_suppressed = true;
+    }
+
+    /// Whether klark should derive a name for this terminal now.
+    pub fn wants_automatic_agent_name(&self) -> bool {
+        self.agent_name.is_none()
+            && !self.agent_name_auto_suppressed
+            && !self.managed_agent_launch_pending()
+            && self.effective_agent_label().is_some()
     }
 
     pub fn begin_managed_agent(
@@ -2320,6 +2353,8 @@ impl TerminalState {
             self.persisted_agent_session = None;
         }
         self.agent_name = None;
+        self.agent_name_auto = false;
+        self.agent_name_auto_suppressed = false;
         self.agent_name_owner = None;
         self.managed_agent = None;
     }
@@ -2347,7 +2382,8 @@ impl TerminalState {
     }
 
     pub fn is_agent_terminal(&self) -> bool {
-        self.agent_name.is_some() || self.effective_agent_label().is_some()
+        (self.agent_name.is_some() && !self.agent_name_auto)
+            || self.effective_agent_label().is_some()
     }
 
     fn reconcile_agent_name_owner(
@@ -2373,6 +2409,7 @@ impl TerminalState {
                         .is_some_and(|(current, incoming)| current != incoming) =>
             {
                 self.agent_name = None;
+                self.agent_name_auto = false;
                 self.agent_name_owner = None;
             }
             Some(owner) if owner.session_ref.is_none() && session_ref.is_some() => {

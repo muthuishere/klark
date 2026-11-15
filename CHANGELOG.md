@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Changed
+- Agents are named automatically. An agent pane that has no name gets one from the folder it works in (for a linked git worktree, the worktree's folder): lowercased, other characters turned into `-`, at most 32 characters, prefixed with the agent kind when it would not start with a letter, and `-2`, `-3`, … when another pane already uses it. `klark msg ls` addresses now say which agent is which (`laptop/work/klark` instead of `laptop/work/w6:p1`). A name set with `klark msg name`, `klark agent rename` or `agent start --name` is never replaced, and clearing a name (`klark agent rename <target> --clear`) keeps it cleared until that agent leaves the pane. Pane ids still work as targets everywhere.
+- `klark msg ls` shows each agent's folder (`~`-shortened), whether it is the `main` checkout or a `worktree <name>`, its branch, and its terminal title (what it is working on). `--json` adds `cwd`, `checkout`, `branch` and `title`; `klark agent list` adds `checkout`, `worktree` and `branch`. Existing fields are unchanged. Through the hub, `--local --json` is what a linked machine answers, so these fields also reach other machines' listings.
+- The klark skill lets agents message other agents on their own when their work needs it (asking for a review, handing off, reporting back), only panes `klark msg ls` lists (running a coding agent), never a plain shell, server or editor, and to ask the person when two agents still fit. `klark feed` stays user-initiated.
 - klark now has its own version line. This release series starts at 0.10.0 and no longer follows herdr's number (the old `0.9.5.N` meant "herdr 0.9.5 plus patch N"). The herdr commit klark is based on is recorded in `vendor/upstream.json`.
 
 ### Added

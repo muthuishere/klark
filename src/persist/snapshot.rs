@@ -103,6 +103,9 @@ pub struct PaneSnapshot {
     pub label: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_name: Option<String>,
+    /// `agent_name` was derived by klark, not set by a person or agent.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub agent_name_auto: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub managed_agent_kind: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -338,11 +341,12 @@ fn capture_tab(
             .or_else(|| terminal.map(|terminal| terminal.cwd.clone()))
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| "/".into()));
         let label = terminal.and_then(|terminal| terminal.manual_label.clone());
-        let (agent_name, managed_agent_kind) = terminal
+        let (agent_name, agent_name_auto, managed_agent_kind) = terminal
             .filter(|terminal| !terminal.managed_agent_launch_pending())
             .map(|terminal| {
                 (
                     terminal.agent_name.clone(),
+                    terminal.agent_name_auto,
                     terminal
                         .managed_agent_kind()
                         .map(|agent| crate::detect::agent_label(agent).to_string()),
@@ -384,6 +388,7 @@ fn capture_tab(
                 cwd,
                 label,
                 agent_name,
+                agent_name_auto,
                 managed_agent_kind,
                 agent_session,
                 agent_resume,
@@ -632,6 +637,45 @@ mod tests {
     }
 
     #[test]
+    fn automatic_agent_names_persist_as_automatic() {
+        let mut state = state_with_workspaces(&["auto-name-snapshot"]);
+        let root = state.workspaces[0].tabs[0].root_pane;
+        let terminal_id = state.workspaces[0].tabs[0].panes[&root]
+            .attached_terminal_id
+            .clone();
+        let terminal = state.terminals.get_mut(&terminal_id).unwrap();
+        terminal.set_detected_state(
+            Some(crate::detect::Agent::Claude),
+            crate::detect::AgentState::Idle,
+        );
+        terminal.set_automatic_agent_name("klark".into());
+
+        let snapshot = capture_from_state(&state);
+        let pane = &snapshot.workspaces[0].tabs[0].panes[&root.raw()];
+        assert_eq!(pane.agent_name.as_deref(), Some("klark"));
+        assert!(pane.agent_name_auto);
+        let json = serde_json::to_value(pane).unwrap();
+        assert_eq!(json["agent_name_auto"], true);
+
+        // An explicit name writes no flag, and older files read as explicit.
+        state
+            .terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .set_agent_name("reviewer".into());
+        let snapshot = capture_from_state(&state);
+        let pane = &snapshot.workspaces[0].tabs[0].panes[&root.raw()];
+        assert!(!pane.agent_name_auto);
+        assert!(serde_json::to_value(pane)
+            .unwrap()
+            .get("agent_name_auto")
+            .is_none());
+        let old: PaneSnapshot =
+            serde_json::from_str(r#"{"cwd":"/tmp","agent_name":"reviewer"}"#).unwrap();
+        assert!(!old.agent_name_auto);
+    }
+
+    #[test]
     fn layout_fingerprint_survives_json_round_trip() {
         let mut snapshot = parse_snapshot(include_str!(
             "../../tests/fixtures/session/current-klark-session.json"
@@ -703,6 +747,7 @@ mod tests {
                 cwd: PathBuf::from("/home/can/Projects/klark"),
                 label: None,
                 agent_name: None,
+                agent_name_auto: false,
                 managed_agent_kind: None,
                 agent_session: None,
                 agent_resume: None,
@@ -715,6 +760,7 @@ mod tests {
                 cwd: PathBuf::from("/home/can/Projects/website"),
                 label: Some("website".into()),
                 agent_name: None,
+                agent_name_auto: false,
                 managed_agent_kind: None,
                 agent_session: None,
                 agent_resume: None,
@@ -1401,6 +1447,7 @@ mod tests {
                 cwd: PathBuf::from("/tmp/this-directory-does-not-exist-for-klark-test"),
                 label: None,
                 agent_name: None,
+                agent_name_auto: false,
                 managed_agent_kind: None,
                 agent_session: None,
                 agent_resume: None,
@@ -1415,6 +1462,7 @@ mod tests {
                     .unwrap_or_else(|_| PathBuf::from("/tmp")),
                 label: None,
                 agent_name: None,
+                agent_name_auto: false,
                 managed_agent_kind: None,
                 agent_session: None,
                 agent_resume: None,

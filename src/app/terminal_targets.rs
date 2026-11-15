@@ -57,7 +57,8 @@ impl App {
                     .terminals
                     .get(candidate.terminal_id.as_str())
                     .is_some_and(|terminal| {
-                        terminal.agent_name.as_deref() == Some(target)
+                        (terminal.agent_name.as_deref() == Some(target)
+                            && terminal.is_agent_terminal())
                             || terminal.effective_agent_label() == Some(target)
                     })
             })
@@ -91,7 +92,12 @@ impl App {
                 self.state
                     .terminals
                     .get(candidate.terminal_id.as_str())
-                    .is_some_and(|terminal| terminal.agent_name.as_deref() == Some(target))
+                    .is_some_and(|terminal| {
+                        // An automatic name stops resolving once its agent is
+                        // no longer detected: the pane is a shell again.
+                        terminal.agent_name.as_deref() == Some(target)
+                            && terminal.is_agent_terminal()
+                    })
             })
             .collect();
         if let Some(resolved) = self.single_terminal_match(target, name_matches)? {
