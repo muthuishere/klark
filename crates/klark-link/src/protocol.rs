@@ -169,6 +169,9 @@ pub const ALLOWED_CALLS: &[&str] = &[
     "workspace.list",
     "tab.list",
     "pane.list",
+    // Read-only feed status (ADR 0015). feed.start and feed.stop are left
+    // out on purpose: a feed is started and stopped on the machine only.
+    "feed.list",
 ];
 
 pub fn call_allowed(method: &str) -> bool {
@@ -193,6 +196,13 @@ mod tests {
         let raw = r#"{"type":"call","id":"1","method":"pane.read"}"#;
         let msg: HubMessage = serde_json::from_str(raw).unwrap();
         assert!(matches!(msg, HubMessage::Call { params, .. } if params.is_null()));
+    }
+
+    #[test]
+    fn feed_status_is_readable_but_not_controllable_from_the_hub() {
+        assert!(call_allowed("feed.list"));
+        assert!(!call_allowed("feed.start"));
+        assert!(!call_allowed("feed.stop"));
     }
 
     #[test]

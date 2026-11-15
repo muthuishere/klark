@@ -15,4 +15,5 @@ export const transport: Transport = {
   keys: (m, a, keys) => t().keys(m, a, keys),
   upload: (m, a, file) => t().upload(m, a, file),
   fileUrl: (m, a, path, line) => t().fileUrl(m, a, path, line),
+  feeds: (m) => t().feeds!(m),
 };

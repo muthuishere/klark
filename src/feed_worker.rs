@@ -146,7 +146,7 @@ fn check_every_ms(reachable: bool, all_down: bool) -> u64 {
 }
 
 #[cfg(unix)]
-fn shell_command(command: &str) -> Command {
+pub(crate) fn shell_command(command: &str) -> Command {
     if let Some((shell, mode)) = PANE_SHELL.get() {
         let config = crate::pane::PaneShellConfig::new(shell, *mode);
         match crate::pane::pane_shell_run_command(config, command) {
@@ -164,7 +164,7 @@ fn shell_command(command: &str) -> Command {
 }
 
 #[cfg(windows)]
-fn shell_command(command: &str) -> Command {
+pub(crate) fn shell_command(command: &str) -> Command {
     let shell = std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".into());
     use std::os::windows::process::CommandExt;
     let mut c = Command::new(shell);

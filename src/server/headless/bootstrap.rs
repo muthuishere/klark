@@ -97,6 +97,8 @@ pub fn run_server() -> io::Result<()> {
         server.app.run_plugin_startup_hooks();
         // The session is restored: bring its feeds back (ADR 0015).
         crate::feed_cmd::spawn_resume();
+        // The machine's start hooks, once for every session (issue #11).
+        crate::hooks::ensure_running();
         // macOS: ask once for Full Disk Access instead of prompt after prompt.
         if crate::permissions::watch_from_server() {
             server.app.state.toast = Some(crate::app::state::ToastNotification {
@@ -221,6 +223,7 @@ fn run_handoff_import_server(socket_path: &Path, token: &str) -> io::Result<()> 
         print_ready_message(&api::socket_path(), &client_socket_path());
         server.app.run_plugin_startup_hooks();
         crate::feed_cmd::spawn_resume();
+        crate::hooks::ensure_running();
         // A live handoff keeps the status current without a second reminder.
         let _ = crate::permissions::watch_from_server();
         server.run().await

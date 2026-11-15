@@ -28,6 +28,7 @@ usage:
   klark feed add <agent> \"<instruction>\" --stream \"<command>\" [--message-gap <secs>] [options]
   klark feed add <agent> \"<instruction>\" --follow <path>      [--message-gap <secs>] [options]
   klark feed add <agent> \"<instruction>\" --poll \"<command>\"   [--interval <secs>] [options]
+  klark feed add <agent> \"<instruction>\" --hook <name>       [--message-gap <secs>] [options]
   klark feed list [--json]                    every feed: agents, state, last output, last sent, creator
   klark feed show <id>                        everything about one feed, including its settings
   klark feed set [<setting> [<value>]]        show or change the defaults for new feeds ([feeds] in config.toml)
@@ -44,6 +45,7 @@ sources (exactly one):
   --stream \"<command>\"   a command that keeps running; its new lines are sent
   --follow <path>        a file klark follows itself (rotation, truncation, restarts)
   --poll \"<command>\"     a command run again and again; only what is new is sent
+  --hook <name>          a klark hook's output (klark hooks list): its log, followed
 
 options (defaults from klark feed set):
   --message-gap <secs>   least time between two messages to one agent (stream, follow; default 30, min 5)
@@ -173,6 +175,7 @@ pub struct AddArgs {
 const WITH_VALUE: &[&str] = &[
     "--stream",
     "--follow",
+    "--hook",
     "--poll",
     "--message-gap",
     "--interval",
@@ -315,19 +318,29 @@ fn parse_add(args: &[String], floor: u64, defaults: &Defaults) -> R<AddArgs> {
                 "--stream" => Some(Source::Stream(v)),
                 "--follow" => Some(Source::Follow(v)),
                 "--poll" => Some(Source::Poll(v)),
+                // A hook's output (issue #11): its log, followed.
+                "--hook" => Some(Source::Follow(
+                    crate::hooks::log_path(&v).display().to_string(),
+                )),
                 _ => None,
             }
         })
         .collect();
+    let hook = value("--hook");
+    if let Some(h) = hook.as_deref() {
+        if crate::config::validate_hook_name(h).is_err() {
+            return Err(Fail::Usage(format!("--hook {h:?}: not a hook name")));
+        }
+    }
     let source = match sources.as_slice() {
         [one] => one.clone(),
         [] => return Err(Fail::Usage(
-            "say what to watch: --stream \"<command>\", --follow <path> or --poll \"<command>\""
+            "say what to watch: --stream \"<command>\", --follow <path>, --poll \"<command>\" or --hook <name>"
                 .into(),
         )),
         _ => {
             return Err(Fail::Usage(
-                "give exactly one of --stream, --follow, --poll".into(),
+                "give exactly one of --stream, --follow, --poll, --hook".into(),
             ))
         }
     };
@@ -401,7 +414,14 @@ fn parse_add(args: &[String], floor: u64, defaults: &Defaults) -> R<AddArgs> {
             "--diff needs lines, unified or a command".into(),
         ));
     }
-    let name = value("--name");
+    let name = value("--name").or_else(|| {
+        hook.as_ref().map(|h| {
+            format!("hook-{}", h.replace('.', "-"))
+                .chars()
+                .take(40)
+                .collect()
+        })
+    });
     if let Some(n) = &name {
         if n.is_empty()
             || n.len() > 40
@@ -428,7 +448,9 @@ fn parse_add(args: &[String], floor: u64, defaults: &Defaults) -> R<AddArgs> {
         stale_secs,
         diff,
         filter: value("--filter").filter(|f| !f.trim().is_empty()),
-        label: value("--label").filter(|l| !l.trim().is_empty()),
+        label: value("--label")
+            .filter(|l| !l.trim().is_empty())
+            .or_else(|| hook.clone()),
         name,
         cwd: value("--cwd"),
         restore: defaults.restore && !has("--no-restore"),
@@ -1868,6 +1890,24 @@ mod tests {
             Err(Fail::Usage(e)) => e,
             other => panic!("expected a usage error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn hook_source_follows_the_hook_log() {
+        let a = parse_add(
+            &args(&["claude-1", "tell me when it fails", "--hook", "os-proxy"]),
+            5,
+            &Defaults::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            a.source,
+            Source::Follow(crate::hooks::log_path("os-proxy").display().to_string())
+        );
+        assert_eq!(a.label.as_deref(), Some("os-proxy"));
+        assert_eq!(a.name.as_deref(), Some("hook-os-proxy"));
+        assert!(usage_err(&["a", "b", "--hook", "bad name"]).contains("not a hook name"));
+        assert!(usage_err(&["a", "b", "--hook", "x", "--stream", "y"]).contains("exactly one"));
     }
 
     #[test]

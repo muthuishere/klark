@@ -1566,7 +1566,9 @@ fn feed_methods_round_trip_and_are_not_callable_through_the_hub_link() {
     let json = serde_json::to_value(ResponseResult::FeedStopped { id: "f1".into() }).unwrap();
     assert_eq!(json["type"], "feed_stopped");
 
-    for name in ["feed.list", "feed.stop", "feed.start"] {
+    // The hub shows feeds read-only (K5): it may list them, never start or stop them.
+    assert!(klark_link::protocol::call_allowed("feed.list"));
+    for name in ["feed.stop", "feed.start"] {
         assert!(
             !klark_link::protocol::call_allowed(name),
             "{name} must not be callable through the hub link"
