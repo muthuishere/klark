@@ -92,7 +92,11 @@ impl Harness {
         } else {
             "klark"
         };
-        let state = root.join("state").join(app).join("client");
+        // Saved machines belong to the caller's session (KLARK_SESSION below).
+        let state = root
+            .join("state")
+            .join(app)
+            .join("client/sessions/wrong-inherited-session");
         let session = root.join("config").join(app).join("sessions/fleet");
         fs::create_dir_all(&state).unwrap();
         fs::create_dir_all(&session).unwrap();
