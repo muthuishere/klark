@@ -73,7 +73,10 @@ esac
 
 struct Harness {
     root: PathBuf,
+    /// The caller session's client state (its saved machines).
     state: PathBuf,
+    /// Shared client state: SSH metadata is cached per profile, not per session.
+    client: PathBuf,
     remote: UnixListener,
     local: UnixListener,
     protocol: u64,
@@ -136,6 +139,7 @@ exec "$TEST_REMOTE_KLARK" "$@"
             .unwrap();
         let status: Value = serde_json::from_slice(&status.stdout).unwrap();
         Self {
+            client: root.join("state").join(app).join("client"),
             root,
             state,
             remote,
@@ -493,7 +497,7 @@ fn machine_api_recovers_a_ping_timeout_without_child_exit_before_one_mutation() 
     let harness = Harness::new();
     harness.warm_metadata();
     let metadata = harness
-        .state
+        .client
         .join("ssh-metadata")
         .join(format!("{PROFILE_ID}.json"));
     let before = fs::read(&metadata).unwrap();
@@ -523,7 +527,7 @@ fn machine_api_cold_discovery_recovery_consumes_the_command_retry() {
         harness.warm_metadata();
         let (control, listener) = harness.managed_control();
         let metadata = harness
-            .state
+            .client
             .join("ssh-metadata")
             .join(format!("{PROFILE_ID}.json"));
         fs::remove_file(metadata).unwrap();
@@ -562,7 +566,7 @@ fn machine_api_cold_discovery_recovery_consumes_the_command_retry() {
 fn machine_remove_deletes_only_that_profiles_metadata() {
     let harness = Harness::new();
     harness.warm_metadata();
-    let directory = harness.state.join("ssh-metadata");
+    let directory = harness.client.join("ssh-metadata");
     let other = directory.join("fedcba9876543210fedcba9876543210.json");
     fs::write(&other, "other machine metadata").unwrap();
     let before = harness.ssh_calls();
@@ -586,7 +590,7 @@ fn machine_api_bad_or_unwritable_metadata_does_not_block_commands() {
     let harness = Harness::new();
     harness.warm_metadata();
     let path = harness
-        .state
+        .client
         .join("ssh-metadata")
         .join(format!("{PROFILE_ID}.json"));
     fs::write(&path, "broken metadata").unwrap();
