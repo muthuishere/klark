@@ -105,7 +105,10 @@ impl Report {
         match (s.2, s.1) {
             (false, _) => eprintln!("klark expose: connected to {base}"),
             (true, 0) => {}
-            (true, n) => eprintln!("klark expose: reconnected to {base} after {n} {}", if n == 1 { "try" } else { "tries" }),
+            (true, n) => eprintln!(
+                "klark expose: reconnected to {base} after {n} {}",
+                if n == 1 { "try" } else { "tries" }
+            ),
         }
         *s = (None, 0, true);
     }

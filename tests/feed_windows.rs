@@ -142,10 +142,7 @@ impl Env {
     /// A stand-in agent named `rev`; returns its pane id.
     fn fake_agent(&self) -> String {
         let fake = echo_agent();
-        let created = self.call(
-            "workspace.create",
-            json!({"cwd": self.base, "focus": true}),
-        );
+        let created = self.call("workspace.create", json!({"cwd": self.base, "focus": true}));
         let pane = created["result"]["root_pane"]["pane_id"]
             .as_str()
             .unwrap_or_else(|| panic!("workspace.create: {created}"))
@@ -221,12 +218,15 @@ impl Env {
     }
 
     fn feed_state(&self, id: &str) -> Option<(bool, String)> {
-        self.list().into_iter().find(|f| f["id"] == json!(id)).map(|f| {
-            (
-                f["running"].as_bool().unwrap_or(false),
-                f["state"].as_str().unwrap_or("").to_string(),
-            )
-        })
+        self.list()
+            .into_iter()
+            .find(|f| f["id"] == json!(id))
+            .map(|f| {
+                (
+                    f["running"].as_bool().unwrap_or(false),
+                    f["state"].as_str().unwrap_or("").to_string(),
+                )
+            })
     }
 
     fn wait_seen(&self, pane: &str, marker: &str, secs: u64) {

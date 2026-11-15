@@ -16,7 +16,6 @@ mod agent_resume;
 mod agent_view_eval;
 mod api;
 mod app;
-mod housekeeping;
 mod build_info;
 mod checksum;
 mod cli;
@@ -29,6 +28,8 @@ mod expose_cmd;
 mod feed;
 mod feed_cmd;
 mod feed_worker;
+mod hooks;
+mod housekeeping;
 mod hub_cmd;
 mod msg_cmd;
 mod offer_cmd;
@@ -787,6 +788,10 @@ fn main() -> io::Result<()> {
         feed_cmd::run(&args[2..]);
     }
 
+    if args.get(1).map(|s| s.as_str()) == Some("hooks") {
+        hooks::run(&args[2..]);
+    }
+
     if args.get(1).map(|s| s.as_str()) == Some("offer") {
         offer_cmd::run(&args[2..]);
     }
@@ -832,7 +837,9 @@ fn main() -> io::Result<()> {
         println!();
         println!("Usage: klark [options]");
         println!("       klark --session [name] [options]");
-        println!("       klark --continue | -c      (session named after this folder: create or attach)");
+        println!(
+            "       klark --continue | -c      (session named after this folder: create or attach)"
+        );
         println!("       klark --machine <label-or-id> <command>");
         println!("       klark --remote <ssh-target> [--session <name>]");
         println!("       klark session attach <name>");

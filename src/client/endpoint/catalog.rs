@@ -370,16 +370,22 @@ pub(super) fn store_private_json(
         .map_err(|error| format!("failed to persist {description} directory: {error}"))
 }
 
+/// Saved machines belong to one session: a named session keeps its own list under
+/// client/sessions/<name>/, the default session keeps client/ itself.
+fn client_dir() -> PathBuf {
+    let dir = crate::config::state_dir().join("client");
+    match crate::session::active_name() {
+        Some(name) => dir.join("sessions").join(name),
+        None => dir,
+    }
+}
+
 pub(crate) fn catalog_path() -> PathBuf {
-    crate::config::state_dir()
-        .join("client")
-        .join("endpoints.json")
+    client_dir().join("endpoints.json")
 }
 
 fn selection_path() -> PathBuf {
-    crate::config::state_dir()
-        .join("client")
-        .join("endpoint-selection.json")
+    client_dir().join("endpoint-selection.json")
 }
 
 #[cfg(test)]
@@ -578,5 +584,27 @@ mod tests {
             ..EndpointCatalog::default()
         };
         assert!(catalog.validate().is_err());
+    }
+
+    #[test]
+    fn saved_machines_belong_to_the_current_session() {
+        let _guard = crate::config::test_config_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let previous = std::env::var(crate::session::SESSION_ENV_VAR).ok();
+        std::env::set_var(crate::session::SESSION_ENV_VAR, "work");
+        let work = (catalog_path(), selection_path());
+        std::env::remove_var(crate::session::SESSION_ENV_VAR);
+        let default = (catalog_path(), selection_path());
+        match previous {
+            Some(v) => std::env::set_var(crate::session::SESSION_ENV_VAR, v),
+            None => std::env::remove_var(crate::session::SESSION_ENV_VAR),
+        }
+        assert!(work.0.ends_with("client/sessions/work/endpoints.json"));
+        assert!(work
+            .1
+            .ends_with("client/sessions/work/endpoint-selection.json"));
+        assert!(default.0.ends_with("client/endpoints.json"));
+        assert!(!default.0.to_string_lossy().contains("sessions"));
     }
 }

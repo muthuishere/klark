@@ -924,10 +924,14 @@ fn mobile_items(
     }
 
     items.push(MobileItem::section("menu", palette));
-    for (index, (label, _)) in super::global_menu::global_menu_items(snapshot)
+    for (index, (label, action)) in super::global_menu::global_menu_items(snapshot)
         .into_iter()
         .enumerate()
     {
+        // Adding a machine needs a terminal for SSH sign-in; the phone layout leaves it out.
+        if action == super::global_menu::ClientGlobalMenuAction::AddMachine {
+            continue;
+        }
         items.push(MobileItem {
             lines: vec![Line::from(Span::styled(
                 format!("  {label}"),

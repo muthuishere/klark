@@ -1640,7 +1640,11 @@ mod tests {
         let me = "m/default/cli-7";
         append_log(&dir, &entry("sent", "m/w/rev", me, "old answer")).unwrap();
         let seen = tail_log(&dir, usize::MAX).len();
-        append_log(&dir, &entry("sent", "m/w/rev", "m/default/cli-8", "not mine")).unwrap();
+        append_log(
+            &dir,
+            &entry("sent", "m/w/rev", "m/default/cli-8", "not mine"),
+        )
+        .unwrap();
         append_log(&dir, &entry("received", "m/w/rev", me, "not a reply")).unwrap();
         append_log(&dir, &entry("sent", "m/w/rev", me, "the answer")).unwrap();
         let got = wait_for_reply(&dir, seen, me, 1).unwrap();
