@@ -27,6 +27,8 @@ const CLIENT_MESSAGE_CLIENT_SHELL_FOCUS: u32 = 18;
 const CLIENT_MESSAGE_ENDPOINT_CONTROL: u32 = 20;
 
 pub fn isolate_klark_test_process(command: &mut CommandBuilder) {
+    // Never write to the real agent configs from a test client.
+    command.env("KLARK_NO_AUTO_INTEGRATIONS", "1");
     command.env_remove("KLARK_STARTUP_CWD");
     command.env_remove("KLARK_SESSION");
 }

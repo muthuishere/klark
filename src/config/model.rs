@@ -1140,6 +1140,10 @@ pub struct AdvancedConfig {
     /// Maximum scrollback buffer size in bytes retained per pane terminal. Default: 10000000.
     #[serde(alias = "scrollback_lines")]
     pub scrollback_limit_bytes: usize,
+    /// When klark opens, add klark's hook to every agent CLI found on this machine (and update
+    /// old ones), so agents resume after a restart. A hook you remove is not added again.
+    /// Default: true.
+    pub auto_install_integrations: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1412,6 +1416,7 @@ impl Default for AdvancedConfig {
     fn default() -> Self {
         Self {
             scrollback_limit_bytes: DEFAULT_SCROLLBACK_LIMIT_BYTES,
+            auto_install_integrations: true,
         }
     }
 }
