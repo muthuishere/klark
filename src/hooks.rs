@@ -444,6 +444,12 @@ fn spawn_hook(def: &HookDef) -> std::io::Result<Child> {
         c.env(k, v);
     }
     c.env("KLARK_HOOK", &def.name);
+    // A hook belongs to no session but may use klark (`klark session list --json`
+    // and each session's socket), like a program in a pane.
+    c.env("KLARK_ENV", "1");
+    if let Ok(exe) = std::env::current_exe() {
+        c.env("KLARK_BIN_PATH", exe);
+    }
     c.stdin(Stdio::null()).stdout(log.try_clone()?).stderr(log);
     #[cfg(unix)]
     {

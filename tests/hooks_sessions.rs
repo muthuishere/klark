@@ -263,3 +263,66 @@ run = "exec sleep 600"
         .unwrap();
     assert!(String::from_utf8_lossy(&logs.stdout).contains("klark hooks: start flaky"));
 }
+
+/// The dmcp case: with restart = "on-failure" an exit 0 is a clean stop and is
+/// not restarted; `restart` and `start` run it again; hooks get KLARK_ENV=1;
+/// `hooks list --json` answers with or without a supervisor.
+#[test]
+fn on_failure_clean_exit_stays_exited_and_can_be_run_again() {
+    let env = Env::new(
+        r#"
+[[hooks.start]]
+name = "dmcp"
+run = "echo $KLARK_ENV > $BASE/env; echo run >> $BASE/runs; exit 0"
+restart = "on-failure"
+"#,
+    );
+    let hook = |env: &Env| -> Value {
+        env.hooks()["hooks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|h| h["name"] == "dmcp")
+            .cloned()
+            .expect("dmcp in hooks list --json")
+    };
+
+    // No supervisor yet: the list still answers, exit 0, supervisor null.
+    let out = env
+        .cmd()
+        .args(["hooks", "list", "--json"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    assert!(env.hooks()["supervisor"].is_null());
+    assert_eq!(hook(&env)["state"], "not running");
+
+    let out = env.cmd().args(["hooks", "start"]).output().unwrap();
+    assert!(out.status.success(), "{out:?}");
+    wait_for("the first run", Duration::from_secs(10), || {
+        env.lines("runs") == 1 && hook(&env)["state"] == "exited"
+    });
+    let h = hook(&env);
+    assert_eq!(h["last_exit"], 0, "{h}");
+    assert_eq!(h["restart"], "on-failure", "{h}");
+    assert_eq!(
+        fs::read_to_string(env.base.join("env")).unwrap().trim(),
+        "1",
+        "hooks get KLARK_ENV=1"
+    );
+    // Longer than the first backoff: a clean exit is not restarted.
+    thread::sleep(Duration::from_secs(3));
+    assert_eq!(env.lines("runs"), 1, "exit 0 must not be restarted");
+
+    for (verb, runs) in [("restart", 2), ("start", 3)] {
+        let out = env.cmd().args(["hooks", verb, "dmcp"]).output().unwrap();
+        assert!(out.status.success(), "hooks {verb} dmcp: {out:?}");
+        wait_for(
+            &format!("the run after {verb}"),
+            Duration::from_secs(10),
+            || env.lines("runs") == runs && hook(&env)["state"] == "exited",
+        );
+    }
+    thread::sleep(Duration::from_secs(2));
+    assert_eq!(env.lines("runs"), 3);
+}

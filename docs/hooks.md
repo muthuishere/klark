@@ -37,7 +37,12 @@ run  = "./scripts/flush.sh"
   minute or more. A hook stopped by hand stays stopped until started again.
 - **Commands** run through your shell (`$SHELL -c`, `cmd /C` on Windows) in their
   own process group, so stopping one stops everything it started. `cwd` accepts
-  `~`; the default is your home folder. `KLARK_HOOK` is set to the hook's name.
+  `~`; the default is your home folder. `KLARK_HOOK` is set to the hook's name,
+  `KLARK_ENV=1` and `KLARK_BIN_PATH` too, so a hook can use klark: it belongs to no
+  session, and reaches all of them with `klark session list --json` and each
+  session's socket.
+- **`restart = "on-failure"`** treats an exit 0 as a clean stop: the hook stays
+  `exited` until `klark hooks start <name>` or `restart <name>` runs it again.
 - **Logs.** Each hook's output goes to `<config>/hooks/<name>.log` (one rotation
   at 5 MB). The supervisor's own log is `<config>/hooks/supervisor.log`.
   Environment values are never written to a log or shown.
@@ -54,6 +59,13 @@ klark hooks stop [<name>]          stop one hook; with no name, stop all and run
 klark hooks restart [<name>]       restart one hook, or all
 klark hooks logs <name> [-n N] [-f]
 ```
+
+`klark hooks list --json` works from any shell, with or without a klark server:
+`{"supervisor": <pid or null>, "pinned": bool, "hooks": [{"name", "kind", "state",
+"pid", "restarts", "last_exit", "started_at", "restart", "detail"}]}`. `state` is
+`running`, `starting`, `backoff` (waiting to restart), `exited` (ended, not restarted),
+`failed` (ended with an error, not restarted), `stopped` (stopped by hand) or
+`not running` (no supervisor); stop hooks show `waiting`, `done` or `failed`.
 
 The global menu's **jobs** panel has a **hooks** tab with the same controls
 (`s` start, `x` stop, `e` restart, `r` refresh; `tab` switches to feeds).
