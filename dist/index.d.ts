@@ -1,4 +1,4 @@
-export type { ChatItem, ItemKind, Offer, Choice, Blocked, ChatPayload, MachineInfo, Workspace, Tab, PaneInfo, Tree, MachineTree } from './types';
+export type { ChatItem, ItemKind, Offer, Choice, Blocked, ChatPayload, MachineInfo, Workspace, Tab, PaneInfo, Tree, MachineTree, FeedInfo } from './types';
 export { httpTransport, TransportError, type Transport, type EventHandlers, type HttpTransportOptions } from './transport';
 export { connectSSE, backoff, type SseOptions, type SseState } from './sse';
 export { buildRows, mergeItems, pairCalls, phrase, verb, toolIcon, type ChatRowModel, type ToolCall } from './chat';

@@ -86,6 +86,7 @@ function httpTransport(basePath = "/", o = {}) {
   const t = {
     machines: () => req(`${base}api/machines`),
     tree: (m) => req(`${base}api/machines/${enc(m)}/tree`),
+    feeds: (m) => req(`${base}api/machines/${enc(m)}/feeds`).then((r) => r.feeds ?? []),
     getChat: (m, a) => req(`${pane(m, a)}/chat`),
     events: (m, a, { frames }, h) => connectSSE(`${pane(m, a)}/events${frames ? "?frames=1" : ""}`, {
       events: ["chat", "frame", "size", "offer"],

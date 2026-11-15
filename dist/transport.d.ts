@@ -1,5 +1,5 @@
 import { type SseState } from './sse';
-import type { ChatPayload, MachineInfo, Offer, Tree } from './types';
+import type { ChatPayload, MachineInfo, Offer, Tree, FeedInfo } from './types';
 /** What a live pane/agent stream delivers. Frames come only when `frames` was asked for. */
 export interface EventHandlers {
     chat?: (p: ChatPayload) => void;
@@ -40,6 +40,8 @@ export interface Transport {
     }>;
     /** The link for a file path an agent mentioned (line 0/undefined = none). */
     fileUrl(m: string, a: string, path: string, line?: number): string;
+    /** The machine's feeds, read-only. Optional: a transport without feeds shows none. */
+    feeds?(m: string): Promise<FeedInfo[]>;
 }
 /** An HTTP error: status 0 when the hub did not answer. */
 export declare class TransportError extends Error {
