@@ -160,6 +160,7 @@ impl ClientShellConfig {
             preferences: preferences::ClientChromePreferences::default(),
             startup_config_diagnostic: None,
             startup_onboarding: false,
+            auto_install_integrations: config.advanced.auto_install_integrations,
         }
     }
 

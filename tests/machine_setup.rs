@@ -170,6 +170,8 @@ fn setup_options(
         "PATH",
         format!("{}:/usr/bin:/bin", root.join("bin").display()),
     );
+    // Never write to the real agent configs from a test client.
+    command.env("KLARK_NO_AUTO_INTEGRATIONS", "1");
     command.env("HOME", &root);
     command.env("XDG_CONFIG_HOME", root.join("config"));
     command.env("XDG_STATE_HOME", root.join("state"));
