@@ -89,6 +89,13 @@ pub(super) fn targets_to_install(
         .collect()
 }
 
+/// The install error every target returns when the agent's config folder is
+/// missing: "<agent> config directory not found at <path>. install <agent> first"
+/// (src/integration/targets.rs).
+fn agent_not_set_up(message: &str) -> bool {
+    message.contains(" not found at ") && message.trim_end().ends_with(" first")
+}
+
 impl ClientShellState {
     /// Called on the client's tick. Starts the check once, as soon as the
     /// local machine's session is shown.
@@ -97,7 +104,10 @@ impl ClientShellState {
             return Vec::new();
         }
         self.auto_integrations.started = true;
-        if !self.config.auto_install_integrations
+        // Windows hooks are still PowerShell scripts; they are not installed
+        // unasked until they become .cmd hooks that call klark.exe.
+        if cfg!(windows)
+            || !self.config.auto_install_integrations
             || std::env::var_os("KLARK_NO_AUTO_INTEGRATIONS").is_some()
             || !self.active_endpoint_id.is_local()
         {
@@ -154,6 +164,9 @@ impl ClientShellState {
                         self.auto_integrations.installed.push(label);
                     }
                     Ok(_) => self.auto_integrations.failed.push(label),
+                    // The agent is on PATH but has never run, so its config folder
+                    // does not exist yet. Not a failure: try again at the next start.
+                    Err(error) if agent_not_set_up(&error.message) => {}
                     Err(error) => self
                         .auto_integrations
                         .failed
@@ -209,6 +222,17 @@ mod tests {
             available,
             state,
         }
+    }
+
+    #[test]
+    fn missing_config_folder_is_not_a_failure() {
+        assert!(agent_not_set_up(
+            "claude directory not found at /home/u/.claude. install claude code first"
+        ));
+        assert!(agent_not_set_up(
+            "codex config directory not found at C:\\Users\\u\\.codex. install codex first"
+        ));
+        assert!(!agent_not_set_up("permission denied (os error 13)"));
     }
 
     #[test]
