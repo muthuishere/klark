@@ -32,6 +32,7 @@ mod housekeeping;
 mod hub_cmd;
 mod msg_cmd;
 mod offer_cmd;
+mod permissions;
 mod transcript_cmd;
 use ghostty_vt as ghostty;
 mod fda_notice;
