@@ -1,7 +1,7 @@
 #!/bin/sh
 # managed by klark; reinstalling the integration replaces this file.
 # KLARK_INTEGRATION_ID=letta
-# KLARK_INTEGRATION_VERSION=2
+# KLARK_INTEGRATION_VERSION=3
 
 [ "${1:-}" = "session" ] || exit 0
 [ "${KLARK_ENV:-}" = "1" ] || exit 0

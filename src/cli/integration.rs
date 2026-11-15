@@ -10,6 +10,9 @@ pub(super) fn run_integration_command(args: &[String]) -> std::io::Result<i32> {
         "install" => integration_install(&args[1..]),
         "uninstall" => integration_uninstall(&args[1..]),
         "status" => integration_status(&args[1..]),
+        // Hidden: what klark's Windows `.cmd` hooks run. Not in help or the
+        // clap spec, since only the installed hooks call it.
+        "hook" => Ok(crate::integration::run_hook_command(&args[1..])),
         "help" | "--help" | "-h" => {
             print_integration_help();
             Ok(0)

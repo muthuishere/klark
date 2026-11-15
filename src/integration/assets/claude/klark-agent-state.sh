@@ -3,7 +3,7 @@
 # managed by klark; reinstalling or updating the integration overwrites this file.
 # add custom hooks beside this file instead of editing it.
 # KLARK_INTEGRATION_ID=claude
-# KLARK_INTEGRATION_VERSION=11
+# KLARK_INTEGRATION_VERSION=12
 
 set -eu
 
