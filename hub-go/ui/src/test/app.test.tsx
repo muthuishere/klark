@@ -18,6 +18,7 @@ function hub() {
     m = /^\/api\/machines\/([^/]+)\/panes\/([^/]+)\/chat$/.exec(p);
     if (m) return { body: chatFor(m[1], m[2]) };
     if (/\/(input|keys)$/.test(p)) return { status: 204 };
+    if (/^\/api\/machines\/[^/]+\/feeds$/.test(p)) return { body: { feeds: [{ id: 'f1', label: 'ci-watch', kind: 'poll', agents: ['work/rev'], state: 'running', running: true, last_delivery: 1 }] } };
     m = /^\/api\/files\/([^/]+)$/.exec(p);
     if (m) return { body: files[new URL(u, 'http://x').searchParams.get('path')!].meta };
     if (p.endsWith('/raw')) return { body: files['/Users/me/code/klark/hub-go/cmd/main.go'].body };
@@ -40,6 +41,15 @@ describe('the app against the mock hub', () => {
     expect(screen.getByText(/Where this stands/)).toBeInTheDocument();
     expect(screen.getByLabelText('Message')).toBeInTheDocument();
     expect(calls.every((c) => c.url.startsWith('/klark/'))).toBe(true); // nothing escapes the base path
+  });
+
+  it('lists the machine feeds, read-only', async () => {
+    const calls = hub();
+    mount('/m/macbook');
+    expect(await screen.findByText('ci-watch')).toBeInTheDocument();
+    expect(screen.getByText(/poll → work\/rev/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /stop|start/i })).toBeNull();
+    expect(calls.filter((c) => c.url.includes('/feeds')).every((c) => (c.init.method ?? 'GET') === 'GET')).toBe(true);
   });
 
   it('sends a message as input then Enter', async () => {
