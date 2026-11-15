@@ -5,7 +5,9 @@ use serde_json::{json, Map, Value};
 
 use super::command::{hook_command, legacy_bash_hook_command};
 #[cfg(windows)]
-use super::file_ops::legacy_bash_hook_path;
+use super::command::{legacy_powershell_encoded_hook_command, legacy_powershell_file_hook_command};
+#[cfg(windows)]
+use super::file_ops::{legacy_bash_hook_path, legacy_powershell_hook_paths};
 use super::{
     HERMES_PLUGIN_INSTALL_NAME, KIMI_CONFIG_BLOCK_BEGIN, KIMI_CONFIG_BLOCK_END, KIMI_HOOK_EVENTS,
 };
@@ -365,8 +367,39 @@ pub(crate) fn remove_direct_hook_commands(
     Ok(removed)
 }
 
+pub(crate) fn remove_flat_hook_commands(
+    hooks: &mut Map<String, Value>,
+    event: &str,
+    hook_path: &Path,
+    action: Option<&str>,
+) -> io::Result<bool> {
+    let mut removed = false;
+    for command in hook_command_variants(hook_path, action) {
+        removed |= remove_flat_command_hook(hooks, event, &command)?;
+    }
+    Ok(removed)
+}
+
+pub(crate) fn remove_simple_hook_commands(
+    hooks: &mut Map<String, Value>,
+    event: &str,
+    hook_path: &Path,
+    action: Option<&str>,
+) -> io::Result<bool> {
+    let mut removed = false;
+    for command in hook_command_variants(hook_path, action) {
+        removed |= remove_simple_command_hook(hooks, event, &command)?;
+    }
+    Ok(removed)
+}
+
+/// Every command klark has written for this hook: the current one (skipped
+/// when it cannot be built, so removal still works) and the legacy forms.
 pub(crate) fn hook_command_variants(hook_path: &Path, action: Option<&str>) -> Vec<String> {
-    let mut commands = vec![hook_command(hook_path, action)];
+    let mut commands = Vec::new();
+    if let Ok(command) = hook_command(hook_path, action) {
+        commands.push(command);
+    }
     push_unique_command(&mut commands, legacy_bash_hook_command(hook_path, action));
 
     #[cfg(windows)]
@@ -375,6 +408,18 @@ pub(crate) fn hook_command_variants(hook_path: &Path, action: Option<&str>) -> V
             &mut commands,
             legacy_bash_hook_command(&legacy_bash_hook_path(hook_path), action),
         );
+        for legacy_path in legacy_powershell_hook_paths(hook_path) {
+            push_unique_command(
+                &mut commands,
+                legacy_powershell_file_hook_command(&legacy_path, action),
+            );
+            if let Some(action) = action {
+                push_unique_command(
+                    &mut commands,
+                    legacy_powershell_encoded_hook_command(&legacy_path, action),
+                );
+            }
+        }
     }
 
     commands
@@ -852,7 +897,7 @@ pub(crate) fn build_codex_config_with_hooks(content: &str) -> String {
     join_toml_lines(lines, trailing_newline)
 }
 
-pub(crate) fn build_kimi_config_with_hooks(content: &str, hook_path: &Path) -> String {
+pub(crate) fn build_kimi_config_with_hooks(content: &str, hook_path: &Path) -> io::Result<String> {
     let mut result = remove_kimi_config_block(content)
         .trim_end_matches('\n')
         .to_string();
@@ -864,11 +909,11 @@ pub(crate) fn build_kimi_config_with_hooks(content: &str, hook_path: &Path) -> S
     result.push_str(KIMI_CONFIG_BLOCK_BEGIN);
     result.push('\n');
     for (event, matcher, action) in KIMI_HOOK_EVENTS {
-        result.push_str(&kimi_hook_table(event, matcher, hook_path, action));
+        result.push_str(&kimi_hook_table(event, matcher, hook_path, action)?);
     }
     result.push_str(KIMI_CONFIG_BLOCK_END);
     result.push('\n');
-    result
+    Ok(result)
 }
 
 pub(crate) fn kimi_hook_table(
@@ -876,16 +921,16 @@ pub(crate) fn kimi_hook_table(
     matcher: Option<&str>,
     hook_path: &Path,
     action: &str,
-) -> String {
-    let command = hook_command(hook_path, Some(action));
+) -> io::Result<String> {
+    let command = hook_command(hook_path, Some(action))?;
     let matcher = matcher
         .map(|matcher| format!("matcher = {}\n", toml_basic_string(matcher)))
         .unwrap_or_default();
-    format!(
+    Ok(format!(
         "[[hooks]]\nevent = {}\n{matcher}command = {}\ntimeout = 10\n\n",
         toml_basic_string(event),
         toml_basic_string(&command)
-    )
+    ))
 }
 
 pub(crate) fn remove_kimi_config_block(content: &str) -> String {

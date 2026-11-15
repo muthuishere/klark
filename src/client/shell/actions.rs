@@ -834,6 +834,10 @@ impl ClientShellState {
             | PendingEndpointKind::IntegrationInstall) => {
                 return self.handle_settings_endpoint_result(kind, result);
             }
+            kind @ (PendingEndpointKind::AutoIntegrationList
+            | PendingEndpointKind::AutoIntegrationInstall { .. }) => {
+                return self.handle_auto_integration_result(kind, result);
+            }
             kind @ (PendingEndpointKind::FeedList
             | PendingEndpointKind::FeedStop
             | PendingEndpointKind::FeedStart) => {

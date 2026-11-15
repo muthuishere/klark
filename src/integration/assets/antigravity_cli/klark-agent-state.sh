@@ -3,7 +3,7 @@
 # managed by klark; reinstalling or updating the integration overwrites this file.
 # add custom hooks beside this file instead of editing it.
 # KLARK_INTEGRATION_ID=antigravity_cli
-# KLARK_INTEGRATION_VERSION=4
+# KLARK_INTEGRATION_VERSION=5
 
 # Session-only: this hook reports the Antigravity conversation so Klark can
 # resume the pane. Lifecycle state comes from Klark's screen detection.

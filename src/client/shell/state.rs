@@ -52,6 +52,8 @@ pub(crate) struct ClientShellConfig {
     pub(super) preferences: preferences::ClientChromePreferences,
     pub(super) startup_config_diagnostic: Option<String>,
     pub(super) startup_onboarding: bool,
+    /// `[advanced] auto_install_integrations`.
+    pub(super) auto_install_integrations: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -664,6 +666,12 @@ pub(super) enum PendingEndpointKind {
     ReloadConfig,
     IntegrationList,
     IntegrationInstall,
+    /// The startup check's list and installs (auto_integrations.rs).
+    AutoIntegrationList,
+    AutoIntegrationInstall {
+        label: String,
+        name: String,
+    },
     FeedList,
     FeedStop,
     FeedStart,
@@ -996,6 +1004,7 @@ pub(crate) struct ClientShellState {
     pub(super) local_config_diagnostic: Option<String>,
     pub(super) config_diagnostic: Option<String>,
     pub(super) endpoint_error: Option<String>,
+    pub(super) auto_integrations: super::auto_integrations::AutoIntegrations,
     pub(super) endpoint_error_deadline: Option<std::time::Instant>,
     pub(super) dismissed_product_announcement: Option<(String, String)>,
 }
@@ -1164,6 +1173,7 @@ impl ClientShellState {
             config_diagnostic: local_config_diagnostic.clone(),
             local_config_diagnostic,
             endpoint_error: None,
+            auto_integrations: Default::default(),
             endpoint_error_deadline: None,
             dismissed_product_announcement: None,
         }

@@ -533,6 +533,8 @@ impl ClientShellState {
                 | PendingEndpointKind::ReloadConfig
                 | PendingEndpointKind::IntegrationList
                 | PendingEndpointKind::IntegrationInstall
+                | PendingEndpointKind::AutoIntegrationList
+                | PendingEndpointKind::AutoIntegrationInstall { .. }
                 | PendingEndpointKind::FeedList
                 | PendingEndpointKind::FeedStop
                 | PendingEndpointKind::FeedStart

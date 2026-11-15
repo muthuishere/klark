@@ -1,7 +1,7 @@
 #!/bin/sh
 # managed by klark; reinstalling the integration replaces this file.
 # KLARK_INTEGRATION_ID=kimi
-# KLARK_INTEGRATION_VERSION=8
+# KLARK_INTEGRATION_VERSION=9
 
 action="${1:-}"
 case "$action" in
