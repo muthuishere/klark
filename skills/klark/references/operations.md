@@ -160,3 +160,8 @@ Use `--format ansi` when colors and terminal styling are evidence. Otherwise use
 `--lines` asks Klark for more rows from the pane's available screen and host scrollback. Alternate-screen rows do not enter ordinary host scrollback. For supported idle agents, Klark can collect application-owned history and restore the viewport afterward, but not every application or response can be recovered this way.
 
 If a larger recent read still does not reveal the completed response, ask the agent to write it as Markdown in a temporary directory and reply only with the file path, then read that file on the same machine. Use this only as a fallback; do not request file output in the initial prompt.
+
+## Hooks (machine services)
+
+`[[hooks.start]]` / `[[hooks.stop]]` in `config.toml` are services klark runs once per machine: started with the first klark server, restarted by policy (default `always`), stopped after the last server stops. `klark hooks list [--json]` shows them; `klark hooks start|stop|restart <name>` and `klark hooks logs <name> [-n N] [-f]` control and read them. Only add hooks or stop one when the user asks. `klark feed add <agent> "<instruction>" --hook <name>` sends a hook's new output to an agent. Details: docs/hooks.md in the klark repo.
+

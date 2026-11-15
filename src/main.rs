@@ -28,6 +28,7 @@ mod expose_cmd;
 mod feed;
 mod feed_cmd;
 mod feed_worker;
+mod hooks;
 mod housekeeping;
 mod hub_cmd;
 mod msg_cmd;
@@ -785,6 +786,10 @@ fn main() -> io::Result<()> {
 
     if args.get(1).map(|s| s.as_str()) == Some("feed") {
         feed_cmd::run(&args[2..]);
+    }
+
+    if args.get(1).map(|s| s.as_str()) == Some("hooks") {
+        hooks::run(&args[2..]);
     }
 
     if args.get(1).map(|s| s.as_str()) == Some("offer") {

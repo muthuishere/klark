@@ -28,7 +28,7 @@ pub(super) fn global_menu_items(
             "settings",
             ClientGlobalMenuAction::Binding(crate::input::KeybindAction::Settings),
         ),
-        ("feeds", ClientGlobalMenuAction::Feeds),
+        ("jobs", ClientGlobalMenuAction::Feeds),
         (
             "theme",
             ClientGlobalMenuAction::Binding(crate::input::KeybindAction::Settings),
