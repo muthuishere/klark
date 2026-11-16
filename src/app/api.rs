@@ -968,6 +968,7 @@ impl App {
                     error: ErrorBody {
                         code: "unsupported_in_app_mode".into(),
                         message: "live handoff is only supported by the headless server".into(),
+                        unsent_draft: None,
                     },
                 };
                 return serde_json::to_string(&response).unwrap_or_else(|_| "{}".to_string());

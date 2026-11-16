@@ -35,6 +35,7 @@ pub(super) fn response(request_id: &str, socket_path: &Path) -> ErrorResponse {
                 "no klark server is running at {}; run `{attach_command}` to start or attach it",
                 socket_path.display()
             ),
+            unsent_draft: None,
         },
     }
 }

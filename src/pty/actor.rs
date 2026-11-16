@@ -15,6 +15,11 @@ mod windows {
     use tokio::sync::{mpsc, oneshot};
     use tracing::{debug, warn};
 
+    use crate::pty::enter_guard::{
+        agent_became_blocked_error, agent_blocked_before_typing_error, is_agent_became_blocked,
+        is_agent_blocked_before_typing, EnterGuard,
+    };
+
     pub(crate) struct PtyReadResult {
         pub terminal_responses: Vec<Bytes>,
     }
@@ -50,6 +55,7 @@ mod windows {
             enter: Bytes,
             delay: Duration,
             deadline: Option<Instant>,
+            enter_guard: Option<EnterGuard>,
             reply: std_mpsc::Sender<std::io::Result<()>>,
         },
     }
@@ -59,6 +65,8 @@ mod windows {
         SubmissionPart {
             bytes: Bytes,
             deadline: Option<Instant>,
+            /// Set on Enter only: asked on the writer thread right before the write.
+            enter_guard: Option<EnterGuard>,
             reply: oneshot::Sender<std::io::Result<()>>,
             enter_completion: Option<std_mpsc::Sender<()>>,
         },
@@ -120,6 +128,7 @@ mod windows {
             enter: Bytes,
             delay: Duration,
             deadline: Option<Instant>,
+            enter_guard: Option<EnterGuard>,
         ) -> std::io::Result<std_mpsc::Receiver<std::io::Result<()>>> {
             let accepting = self
                 .accepting
@@ -138,6 +147,7 @@ mod windows {
                     enter,
                     delay,
                     deadline,
+                    enter_guard,
                     reply: reply_tx,
                 })
                 .map_err(|err| match err {
@@ -317,17 +327,20 @@ mod windows {
                 PtyIoWriteCommand::SubmissionPart {
                     bytes,
                     deadline,
+                    enter_guard,
                     reply,
                     enter_completion,
                 } => {
                     let result = if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
                         Err(input_submission_timed_out())
+                    } else if enter_guard.is_some_and(|guard| guard.agent_blocked()) {
+                        // Last check before Enter, on the thread that writes it.
+                        debug!("agent became blocked before prompt Enter; Enter not written");
+                        Err(agent_became_blocked_error())
                     } else {
                         write_and_flush(writer, &bytes)
                     };
-                    let failed = result
-                        .as_ref()
-                        .is_err_and(|err| err.kind() != std::io::ErrorKind::TimedOut);
+                    let failed = result.as_ref().is_err_and(submission_write_failed);
                     // Wake synchronous shutdown directly; it may be blocking the executor
                     // worker that would otherwise receive the async acknowledgement.
                     drop(enter_completion);
@@ -361,29 +374,43 @@ mod windows {
                     enter,
                     delay,
                     deadline,
+                    enter_guard,
                     reply,
                 } => {
                     let result = if deadline.is_some_and(|deadline| {
                         deadline.saturating_duration_since(Instant::now()) <= delay
                     }) {
                         Err(input_submission_timed_out())
+                    } else if enter_guard
+                        .as_ref()
+                        .is_some_and(|guard| guard.agent_blocked())
+                    {
+                        // Queued behind another prompt and the agent is blocked by
+                        // now: its text would be keystrokes into the dialog.
+                        Err(agent_blocked_before_typing_error())
                     } else {
                         let text_deadline =
                             deadline.and_then(|deadline| deadline.checked_sub(delay));
                         async {
-                            write_submission_part(&write_tx, text, text_deadline, None).await?;
+                            write_submission_part(&write_tx, text, text_deadline, None, None)
+                                .await?;
                             // A started text write is committed. Finish Enter even if the caller
                             // stops waiting so a timeout cannot leave a partial prompt.
                             if !delay.is_zero() {
                                 tokio::time::sleep(delay).await;
                             }
-                            write_submission_part(&write_tx, enter, None, Some(&accepting)).await
+                            write_submission_part(
+                                &write_tx,
+                                enter,
+                                None,
+                                enter_guard,
+                                Some(&accepting),
+                            )
+                            .await
                         }
                         .await
                     };
-                    let failed = result
-                        .as_ref()
-                        .is_err_and(|err| err.kind() != std::io::ErrorKind::TimedOut);
+                    let failed = result.as_ref().is_err_and(submission_write_failed);
                     let _ = reply.send(result);
                     if failed {
                         break;
@@ -397,6 +424,7 @@ mod windows {
         write_tx: &std_mpsc::Sender<PtyIoWriteCommand>,
         bytes: Bytes,
         deadline: Option<Instant>,
+        enter_guard: Option<EnterGuard>,
         accepting: Option<&Arc<Mutex<InputAcceptance>>>,
     ) -> std::io::Result<()> {
         let completion = {
@@ -420,6 +448,7 @@ mod windows {
                 .send(PtyIoWriteCommand::SubmissionPart {
                     bytes,
                     deadline,
+                    enter_guard,
                     reply,
                     enter_completion,
                 })
@@ -427,6 +456,14 @@ mod windows {
             completion
         };
         completion.await.unwrap_or_else(|_| Err(pty_actor_closed()))
+    }
+
+    /// A submission error that means the PTY itself failed. A timed-out or
+    /// blocked-agent submission wrote nothing and leaves the pane usable.
+    fn submission_write_failed(err: &std::io::Error) -> bool {
+        err.kind() != std::io::ErrorKind::TimedOut
+            && !is_agent_became_blocked(err)
+            && !is_agent_blocked_before_typing(err)
     }
 
     fn pty_actor_closed() -> std::io::Error {
@@ -515,6 +552,19 @@ mod windows {
                 &Arc<Mutex<InputAcceptance>>,
             ),
         ) -> (RecordingWriter, std::io::Result<()>) {
+            run_recorded_guarded_submission(fail_after, delay, deadline, None, during_delay)
+        }
+
+        fn run_recorded_guarded_submission(
+            fail_after: Option<usize>,
+            delay: Duration,
+            deadline: Option<Instant>,
+            enter_guard: Option<EnterGuard>,
+            during_delay: impl FnOnce(
+                &std_mpsc::Sender<PtyIoWriteCommand>,
+                &Arc<Mutex<InputAcceptance>>,
+            ),
+        ) -> (RecordingWriter, std::io::Result<()>) {
             let (flushed_tx, flushed_rx) = std_mpsc::channel();
             let mut writer = RecordingWriter {
                 writes: Vec::new(),
@@ -532,6 +582,7 @@ mod windows {
                     enter: Bytes::from_static(b"\r"),
                     delay,
                     deadline,
+                    enter_guard,
                     reply: reply_tx,
                 })
                 .unwrap();
@@ -574,6 +625,32 @@ mod windows {
             assert_eq!(writer.writes[2].0, b"\r");
             assert_eq!(writer.writes[3].0, b"user");
             assert!(writer.writes[2].1.duration_since(writer.flushes[0]) >= delay);
+        }
+
+        #[test]
+        fn agent_blocked_during_submission_delay_drops_enter_and_keeps_input_open() {
+            let blocked = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let guard_blocked = Arc::clone(&blocked);
+            let guard =
+                EnterGuard::new(move || guard_blocked.load(std::sync::atomic::Ordering::SeqCst));
+            let (writer, result) = run_recorded_guarded_submission(
+                None,
+                Duration::from_millis(30),
+                None,
+                Some(guard),
+                |_, _| blocked.store(true, std::sync::atomic::Ordering::SeqCst),
+            );
+            let err = result.expect_err("a blocked agent must not receive Enter");
+            assert!(is_agent_became_blocked(&err), "{err}");
+            // No Enter; later ordinary input is still written, so the pane stays usable.
+            assert_eq!(
+                writer
+                    .writes
+                    .iter()
+                    .map(|write| write.0.as_slice())
+                    .collect::<Vec<_>>(),
+                vec![b"prompt".as_slice(), b"user".as_slice()]
+            );
         }
 
         #[test]
@@ -623,6 +700,7 @@ mod windows {
                     enter: Bytes::from_static(b"\r"),
                     delay: Duration::from_millis(30),
                     deadline: None,
+                    enter_guard: None,
                     reply: first_reply_tx,
                 })
                 .unwrap();
@@ -632,6 +710,7 @@ mod windows {
                     enter: Bytes::from_static(b"\r"),
                     delay: Duration::ZERO,
                     deadline: Some(Instant::now() + Duration::from_millis(10)),
+                    enter_guard: None,
                     reply: expired_reply_tx,
                 })
                 .unwrap();
@@ -675,6 +754,7 @@ mod windows {
                     enter: Bytes::from_static(b"\r"),
                     delay: Duration::from_millis(20),
                     deadline: Some(deadline),
+                    enter_guard: None,
                     reply: reply_tx,
                 })
                 .unwrap();
@@ -705,6 +785,7 @@ mod windows {
                 deadline,
                 reply,
                 enter_completion,
+                ..
             } = next_write_command(&write_rx).await
             else {
                 panic!("queued user input cannot overtake Enter");
@@ -744,6 +825,7 @@ mod windows {
                     write_submission_part(
                         &write_tx,
                         Bytes::from_static(b"\r"),
+                        None,
                         None,
                         Some(&input_accepting),
                     )
@@ -816,18 +898,28 @@ mod windows {
         async fn enter_rejects_quiesced_actor_and_failed_enqueue_releases_shutdown_wait() {
             let (write_tx, write_rx) = std_mpsc::channel();
             let accepting = input_acceptance(false);
-            let error =
-                write_submission_part(&write_tx, Bytes::from_static(b"\r"), None, Some(&accepting))
-                    .await
-                    .unwrap_err();
+            let error = write_submission_part(
+                &write_tx,
+                Bytes::from_static(b"\r"),
+                None,
+                None,
+                Some(&accepting),
+            )
+            .await
+            .unwrap_err();
             assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe);
             assert!(write_rx.try_recv().is_err());
             accepting.lock().unwrap().accepting = true;
             drop(write_rx);
-            let error =
-                write_submission_part(&write_tx, Bytes::from_static(b"\r"), None, Some(&accepting))
-                    .await
-                    .unwrap_err();
+            let error = write_submission_part(
+                &write_tx,
+                Bytes::from_static(b"\r"),
+                None,
+                None,
+                Some(&accepting),
+            )
+            .await
+            .unwrap_err();
             assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe);
             let completion = accepting.lock().unwrap().enter_completion.take().unwrap();
             assert!(matches!(

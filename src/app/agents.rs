@@ -369,34 +369,42 @@ impl App {
             AgentStartError::InvalidName => crate::api::schema::ErrorBody {
                 code: "invalid_agent_name".into(),
                 message: INVALID_AGENT_NAME_MESSAGE.into(),
+                unsent_draft: None,
             },
             AgentStartError::UnsupportedKind(kind) => crate::api::schema::ErrorBody {
                 code: "unsupported_agent_kind".into(),
                 message: format!("unsupported interactive agent kind {kind}"),
+                unsent_draft: None,
             },
             AgentStartError::InvalidArgument => crate::api::schema::ErrorBody {
                 code: "invalid_agent_argument".into(),
                 message: "agent arguments cannot be encoded safely for the target shell".into(),
+                unsent_draft: None,
             },
             AgentStartError::InvalidTimeout => crate::api::schema::ErrorBody {
                 code: "invalid_agent_timeout".into(),
                 message: INVALID_AGENT_TIMEOUT_MESSAGE.into(),
+                unsent_draft: None,
             },
             AgentStartError::TargetNotFound(target) => crate::api::schema::ErrorBody {
                 code: "agent_pane_not_found".into(),
                 message: format!("agent target pane {target} not found"),
+                unsent_draft: None,
             },
             AgentStartError::TargetBusy(target) => crate::api::schema::ErrorBody {
                 code: "agent_pane_busy".into(),
                 message: format!("agent target pane {target} is not an available shell"),
+                unsent_draft: None,
             },
             AgentStartError::TargetUnavailable(target) => crate::api::schema::ErrorBody {
                 code: "agent_pane_unavailable".into(),
                 message: format!("agent target pane {target} has no live terminal"),
+                unsent_draft: None,
             },
             AgentStartError::InputFailed(message) => crate::api::schema::ErrorBody {
                 code: "agent_start_input_failed".into(),
                 message,
+                unsent_draft: None,
             },
             AgentStartError::DuplicateName { name, candidates } => crate::api::schema::ErrorBody {
                 code: "agent_name_taken".into(),
@@ -416,6 +424,7 @@ impl App {
                         .collect::<Vec<_>>()
                         .join("; ")
                 ),
+                unsent_draft: None,
             },
         }
     }
@@ -428,6 +437,7 @@ impl App {
             TerminalTargetError::NotFound { target } => crate::api::schema::ErrorBody {
                 code: "agent_not_found".into(),
                 message: format!("agent target {target} not found"),
+                unsent_draft: None,
             },
             TerminalTargetError::Ambiguous { target, candidates } => {
                 crate::api::schema::ErrorBody {
@@ -448,6 +458,7 @@ impl App {
                             .collect::<Vec<_>>()
                             .join("; ")
                     ),
+                    unsent_draft: None,
                 }
             }
         }
@@ -462,14 +473,17 @@ impl App {
             AgentRenameError::InvalidName => crate::api::schema::ErrorBody {
                 code: "invalid_agent_name".into(),
                 message: INVALID_AGENT_NAME_MESSAGE.into(),
+                unsent_draft: None,
             },
             AgentRenameError::NotAgent => crate::api::schema::ErrorBody {
                 code: "agent_not_found".into(),
                 message: "agent target does not currently host an agent".into(),
+                unsent_draft: None,
             },
             AgentRenameError::PendingLaunch => crate::api::schema::ErrorBody {
                 code: "agent_launch_pending".into(),
                 message: "agent name cannot change while startup is pending".into(),
+                unsent_draft: None,
             },
             AgentRenameError::DuplicateName { name, candidates } => crate::api::schema::ErrorBody {
                 code: "agent_name_taken".into(),
@@ -489,6 +503,7 @@ impl App {
                         .collect::<Vec<_>>()
                         .join("; ")
                 ),
+                unsent_draft: None,
             },
         }
     }

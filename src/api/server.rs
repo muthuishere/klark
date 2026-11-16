@@ -288,6 +288,7 @@ fn retired_pane_graphics_method_error(line: &str, id: &str) -> Option<ErrorRespo
         error: ErrorBody {
             code: "unknown_method".into(),
             message: format!("unknown method: {method}"),
+            unsent_draft: None,
         },
     })
 }
@@ -369,6 +370,7 @@ fn handle_connection_with_stop(
                     error: ErrorBody {
                         code: "invalid_request".into(),
                         message: format!("invalid request: {request_error}"),
+                        unsent_draft: None,
                     },
                 });
             write_json_line_allow_disconnect(&mut stream, &response)?;
@@ -1037,6 +1039,7 @@ fn error_response_json(id: String, code: &str, message: String) -> String {
         error: ErrorBody {
             code: code.into(),
             message,
+            unsent_draft: None,
         },
     })
     .unwrap_or_else(|_| {

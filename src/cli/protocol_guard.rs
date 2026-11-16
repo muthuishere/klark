@@ -38,6 +38,7 @@ pub(super) fn mismatch_response(
         error: ErrorBody {
             code: "protocol_mismatch".into(),
             message,
+            unsent_draft: None,
         },
     })
 }

@@ -160,6 +160,7 @@ fn failure(id: &str, message: &str) -> Vec<u8> {
         error: crate::api::schema::ErrorBody {
             code: "surface_rejected".into(),
             message: message.into(),
+            unsent_draft: None,
         },
     })
     .unwrap()

@@ -160,6 +160,10 @@ pub struct TerminalState {
     metadata_report_agents: HashMap<String, Agent>,
     metadata_token_sequence_sources: std::collections::HashSet<String>,
     pub state: AgentState,
+    /// Mirrors `state == Blocked` for threads off the app thread: the PTY
+    /// writer asks it right before an agent prompt's Enter. Kept in step by
+    /// `set_effective_state`.
+    blocked_signal: std::sync::Arc<std::sync::atomic::AtomicBool>,
     pub last_agent_state_change_seq: Option<u64>,
     pub last_agent_completion_seq: Option<u64>,
     pub revision: u64,
@@ -202,6 +206,7 @@ impl TerminalState {
             metadata_report_agents: HashMap::new(),
             metadata_token_sequence_sources: std::collections::HashSet::new(),
             state: AgentState::Unknown,
+            blocked_signal: Default::default(),
             last_agent_state_change_seq: None,
             last_agent_completion_seq: None,
             revision: 0,
@@ -258,9 +263,22 @@ impl TerminalState {
                 .insert(snapshot.authority.source.clone(), sequence);
         }
         self.detected_agent = crate::detect::parse_agent_label(&snapshot.authority.agent_label);
-        self.state = snapshot.authority.state;
+        self.set_effective_state(snapshot.authority.state);
         self.hook_authority = Some(snapshot.authority);
         self.agent_process_acquisition_pending = snapshot.acquisition_pending;
+    }
+
+    fn set_effective_state(&mut self, state: AgentState) {
+        self.state = state;
+        self.blocked_signal.store(
+            state == AgentState::Blocked,
+            std::sync::atomic::Ordering::Release,
+        );
+    }
+
+    /// Shared view of "this terminal's agent is blocked", readable from any thread.
+    pub(crate) fn blocked_signal(&self) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+        std::sync::Arc::clone(&self.blocked_signal)
     }
 
     pub(crate) fn finish_agent_process_acquisition(&mut self) -> bool {
@@ -2370,7 +2388,7 @@ impl TerminalState {
         self.metadata_report_agents.clear();
         self.suppressed_full_lifecycle_hook_reports.clear();
         self.stale_full_lifecycle_hook_sessions.clear();
-        self.state = AgentState::Unknown;
+        self.set_effective_state(AgentState::Unknown);
         self.last_agent_state_change_seq = None;
         self.last_agent_completion_seq = None;
         self.launch_argv = None;
@@ -2468,7 +2486,7 @@ impl TerminalState {
             return None;
         }
 
-        self.state = state;
+        self.set_effective_state(state);
         Some(EffectiveStateChange {
             previous_agent_label,
             previous_known_agent,
@@ -2493,6 +2511,43 @@ mod tests {
 
     fn test_terminal() -> TerminalState {
         TerminalState::new(TerminalId::alloc(), "/tmp".into())
+    }
+
+    #[test]
+    fn blocked_signal_follows_hook_reports_detection_and_respawn() {
+        let mut terminal = test_terminal();
+        let signal = terminal.blocked_signal();
+        let blocked = || signal.load(std::sync::atomic::Ordering::Acquire);
+        assert!(!blocked());
+
+        terminal.set_hook_authority(
+            "claude".into(),
+            "claude".into(),
+            AgentState::Blocked,
+            Some("permission".into()),
+            Some(1),
+        );
+        assert_eq!(terminal.state, AgentState::Blocked);
+        assert!(
+            blocked(),
+            "a hook-reported block is visible off the app thread"
+        );
+
+        terminal.set_hook_authority(
+            "claude".into(),
+            "claude".into(),
+            AgentState::Working,
+            None,
+            Some(2),
+        );
+        assert!(!blocked());
+
+        terminal.clear_hook_authority(Some("claude"), Some(3));
+        terminal.set_detected_state(Some(Agent::Codex), AgentState::Blocked);
+        assert!(blocked(), "a screen-detected block is visible too");
+
+        terminal.clear_agent_runtime_identity_after_respawn();
+        assert!(!blocked());
     }
 
     fn test_session_path(name: &str) -> String {

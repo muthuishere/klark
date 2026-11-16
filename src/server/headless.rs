@@ -1530,6 +1530,7 @@ impl HeadlessServer {
                         error: api::schema::ErrorBody {
                             code: "invalid_params".into(),
                             message: "window title is empty".into(),
+                            unsent_draft: None,
                         },
                     })
                     .unwrap_or_else(|_| "{}".to_string());
@@ -2726,6 +2727,7 @@ impl HeadlessServer {
                 "cannot read {requested} lines while {} is {status}: its alternate-screen history can only be captured by scrolling while idle. Wait and retry, or use --source visible",
                 params.target
             ),
+            unsent_draft: None,
         })
     }
 
@@ -2897,6 +2899,7 @@ impl HeadlessServer {
             error: api::schema::ErrorBody {
                 code: "server_unavailable".into(),
                 message: "server is shutting down".into(),
+                unsent_draft: None,
             },
         })
         .unwrap_or_else(|_| {
@@ -2941,6 +2944,7 @@ impl HeadlessServer {
                     error: api::schema::ErrorBody {
                         code: "handoff_failed".into(),
                         message: err.to_string(),
+                        unsent_draft: None,
                     },
                 }),
             }
@@ -3091,6 +3095,7 @@ impl HeadlessServer {
                     error: api::schema::ErrorBody {
                         code: "serialization_error".into(),
                         message: err.to_string(),
+                        unsent_draft: None,
                     },
                 })
                 .unwrap_or_else(|_| "{}".to_string())

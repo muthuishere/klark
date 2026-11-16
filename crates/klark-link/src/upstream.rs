@@ -95,8 +95,22 @@ impl Upstream {
         )
     }
 
-    #[cfg(unix)]
     pub fn call(&self, method: &str, params: Value) -> Result<Value, String> {
+        self.call_detailed(method, params).map_err(|e| e.message)
+    }
+
+    /// Like `call`, but a server error also carries its JSON `error` object,
+    /// for fields beyond `code` and `message` (e.g. `agent.prompt`'s
+    /// `unsent_draft`).
+    pub fn call_detailed(&self, method: &str, params: Value) -> Result<Value, CallError> {
+        let line = self
+            .exchange(method, params)
+            .map_err(CallError::transport)?;
+        parse_response_detailed(method, &line)
+    }
+
+    #[cfg(unix)]
+    fn exchange(&self, method: &str, params: Value) -> Result<String, String> {
         use std::os::unix::net::UnixStream;
 
         let mut conn = UnixStream::connect(&self.socket)
@@ -116,7 +130,7 @@ impl Upstream {
         reader
             .read_line(&mut buf)
             .map_err(|e| format!("read {method}: {e}"))?;
-        parse_response(method, &buf)
+        Ok(buf)
     }
 
     /// Windows: the server listens on a named pipe whose name is the socket
@@ -125,7 +139,7 @@ impl Upstream {
     /// waiting after `timeout`; the thread ends when the server answers or
     /// closes the pipe.
     #[cfg(windows)]
-    pub fn call(&self, method: &str, params: Value) -> Result<Value, String> {
+    fn exchange(&self, method: &str, params: Value) -> Result<String, String> {
         let request = request_line(method, params)?;
         let socket = self.socket.clone();
         let m = method.to_string();
@@ -137,14 +151,14 @@ impl Upstream {
             })
             .map_err(|e| format!("{method}: {e}"))?;
         match rx.recv_timeout(self.timeout) {
-            Ok(Ok(line)) => parse_response(method, &line),
+            Ok(Ok(line)) => Ok(line),
             Ok(Err(e)) => Err(e),
             Err(_) => Err(format!("read {method}: timed out")),
         }
     }
 
     #[cfg(not(any(unix, windows)))]
-    pub fn call(&self, method: &str, _params: Value) -> Result<Value, String> {
+    fn exchange(&self, method: &str, _params: Value) -> Result<String, String> {
         Err(format!(
             "{method}: klark expose is not supported on this platform yet"
         ))
@@ -509,16 +523,48 @@ pub fn tty_of_pid(pid: u32) -> Option<PathBuf> {
     Some(PathBuf::from("/dev").join(name))
 }
 
+/// A failed `Upstream::call_detailed`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CallError {
+    /// `"{method}: {code} {message}"`, exactly what `Upstream::call` returns.
+    pub message: String,
+    /// The server's `error` object; `None` when the call never got an answer.
+    pub error: Option<Value>,
+}
+
+impl CallError {
+    fn transport(message: String) -> Self {
+        Self {
+            message,
+            error: None,
+        }
+    }
+}
+
+impl std::fmt::Display for CallError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+#[cfg(test)]
 fn parse_response(method: &str, line: &str) -> Result<Value, String> {
-    let resp: Value =
-        serde_json::from_str(line.trim()).map_err(|e| format!("decode {method}: {e}"))?;
+    parse_response_detailed(method, line).map_err(|e| e.message)
+}
+
+fn parse_response_detailed(method: &str, line: &str) -> Result<Value, CallError> {
+    let resp: Value = serde_json::from_str(line.trim())
+        .map_err(|e| CallError::transport(format!("decode {method}: {e}")))?;
     if let Some(err) = resp.get("error").filter(|e| !e.is_null()) {
         let msg = err
             .get("message")
             .and_then(Value::as_str)
             .unwrap_or("error");
         let code = err.get("code").and_then(Value::as_str).unwrap_or("");
-        return Err(format!("{method}: {code} {msg}").trim().to_string());
+        return Err(CallError {
+            message: format!("{method}: {code} {msg}").trim().to_string(),
+            error: Some(err.clone()),
+        });
     }
     Ok(resp.get("result").cloned().unwrap_or(Value::Null))
 }
@@ -574,6 +620,19 @@ mod tests {
         assert_eq!(err, "pane.read: not_found no pane");
         let ok = parse_response("ping", r#"{"id":"1","result":{"version":"0.9.5"}}"#).unwrap();
         assert_eq!(ok["version"], "0.9.5");
+    }
+
+    #[test]
+    fn detailed_response_error_keeps_extra_fields() {
+        let err = parse_response_detailed(
+            "agent.prompt",
+            r#"{"id":"1","error":{"code":"agent_blocked","message":"blocked","unsent_draft":"wip"}}"#,
+        )
+        .unwrap_err();
+        assert_eq!(err.message, "agent.prompt: agent_blocked blocked");
+        assert_eq!(err.error.unwrap()["unsent_draft"], "wip");
+        let err = parse_response_detailed("ping", "not json").unwrap_err();
+        assert!(err.error.is_none());
     }
 
     #[cfg(unix)]

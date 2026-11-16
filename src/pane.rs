@@ -1508,6 +1508,11 @@ pub struct InputDraft {
     pub unknown: bool,
     /// When the person last typed into this pane.
     pub last_input: Option<std::time::Instant>,
+    /// Characters of an agent prompt klark typed but never submitted, because
+    /// the agent became blocked before Enter. They sit in the agent's input
+    /// (ahead of anything typed since) and are erased before the next prompt.
+    /// Not part of the person's draft and never handed back as one.
+    pub unsubmitted_prompt_chars: usize,
 }
 
 impl InputDraft {
@@ -1542,6 +1547,22 @@ impl InputDraft {
             self.unknown = true;
         }
     }
+}
+
+/// A fresh screen scan for `agent`'s live dialog chrome (`visible_blocker`).
+/// Weaker text matches that can come from the transcript ("do you want to …
+/// yes") are left to the app's published state, which already weighs them
+/// against hook reports; counting them here would refuse prompts to a working
+/// agent for as long as such text stays on screen.
+fn screen_shows_agent_blocked(terminal: &PaneTerminal, agent: Agent) -> bool {
+    let (content, _) = terminal.detection_text_for_cache();
+    crate::detect::detect_agent_with_osc(
+        Some(agent),
+        &content,
+        &terminal.agent_osc_title(),
+        &terminal.agent_osc_progress(),
+    )
+    .visible_blocker
 }
 
 pub struct PaneRuntime {
@@ -1708,15 +1729,22 @@ impl PaneRuntimeIo {
         enter: Bytes,
         delay: std::time::Duration,
         deadline: Option<std::time::Instant>,
+        enter_guard: Option<crate::pty::enter_guard::EnterGuard>,
     ) -> std::io::Result<std::sync::mpsc::Receiver<std::io::Result<()>>> {
         match self {
             PaneRuntimeIo::Actor(actor) => {
                 #[cfg(windows)]
-                return actor.queue_user_input_submission(text, enter, delay, deadline);
+                return actor.queue_user_input_submission(
+                    text,
+                    enter,
+                    delay,
+                    deadline,
+                    enter_guard,
+                );
                 #[cfg(unix)]
                 {
                     let _ = deadline;
-                    actor.queue_user_input_submission(text, enter, delay)
+                    actor.queue_guarded_user_input_submission(text, enter, delay, enter_guard)
                 }
             }
             #[cfg(test)]
@@ -1725,11 +1753,23 @@ impl PaneRuntimeIo {
                 let sender = sender.clone();
                 let (reply_tx, reply_rx) = std::sync::mpsc::channel();
                 std::thread::spawn(move || {
+                    if enter_guard
+                        .as_ref()
+                        .is_some_and(|guard| guard.agent_blocked())
+                    {
+                        let _ = reply_tx.send(Err(
+                            crate::pty::enter_guard::agent_blocked_before_typing_error(),
+                        ));
+                        return;
+                    }
                     let result = sender
                         .try_send(text)
                         .map_err(std::io::Error::other)
                         .and_then(|()| {
                             std::thread::sleep(delay);
+                            if enter_guard.is_some_and(|guard| guard.agent_blocked()) {
+                                return Err(crate::pty::enter_guard::agent_became_blocked_error());
+                            }
                             sender.try_send(enter).map_err(std::io::Error::other)
                         });
                     let _ = reply_tx.send(result);
@@ -3784,15 +3824,42 @@ impl PaneRuntime {
         }
     }
 
-    pub fn queue_user_input_submission(
+    pub(crate) fn queue_user_input_submission(
         &self,
         text: Bytes,
         enter: Bytes,
         delay: std::time::Duration,
         deadline: Option<std::time::Instant>,
+        enter_guard: Option<crate::pty::enter_guard::EnterGuard>,
     ) -> std::io::Result<std::sync::mpsc::Receiver<std::io::Result<()>>> {
         self.io
-            .queue_user_input_submission(text, enter, delay, deadline)
+            .queue_user_input_submission(text, enter, delay, deadline, enter_guard)
+    }
+
+    /// The shared draft tracker, for the thread that completes an agent prompt.
+    pub(crate) fn input_draft_handle(&self) -> Arc<Mutex<InputDraft>> {
+        Arc::clone(&self.input_draft)
+    }
+
+    /// Whether the screen, as parsed right now, shows `agent` waiting on a
+    /// person (a permission or question dialog). Reads the live terminal, not
+    /// the app's last published state, which can lag it.
+    pub(crate) fn screen_shows_agent_blocked(&self, agent: Agent) -> bool {
+        screen_shows_agent_blocked(&self.terminal, agent)
+    }
+
+    /// The check `agent.prompt` runs immediately before writing Enter: the
+    /// app's effective state for this terminal (screen and hook reports,
+    /// mirrored into `app_blocked`) or a fresh scan of the current screen.
+    pub(crate) fn agent_prompt_enter_guard(
+        &self,
+        agent: Agent,
+        app_blocked: Arc<AtomicBool>,
+    ) -> crate::pty::enter_guard::EnterGuard {
+        let terminal = Arc::clone(&self.terminal);
+        crate::pty::enter_guard::EnterGuard::new(move || {
+            app_blocked.load(Ordering::Acquire) || screen_shows_agent_blocked(&terminal, agent)
+        })
     }
 
     pub fn try_send_paste(&self, text: String) -> Result<(), mpsc::error::TrySendError<Bytes>> {
