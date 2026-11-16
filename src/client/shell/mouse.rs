@@ -1573,15 +1573,9 @@ impl ClientShellState {
         }
         if matches!(self.overlay, Some(ClientShellOverlay::Feeds(_))) {
             if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
-                if let Some((_, index)) = self
-                    .hits
-                    .settings_choices
-                    .iter()
-                    .find(|(rect, _)| super::contains(*rect, point))
-                    .copied()
+                if !self.click_jobs(point, outcome)
+                    && !super::contains(self.hits.settings_popup, point)
                 {
-                    self.select_feed_row(index);
-                } else if !super::contains(self.hits.settings_popup, point) {
                     self.overlay = None;
                 }
                 outcome.repaint = true;

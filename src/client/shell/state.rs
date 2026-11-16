@@ -135,6 +135,7 @@ pub(super) struct ShellHitMap {
     pub(super) settings_popup: Rect,
     pub(super) settings_tabs: Vec<(Rect, ClientSettingsSection)>,
     pub(super) settings_choices: Vec<(Rect, usize)>,
+    pub(super) jobs_buttons: Vec<(Rect, JobsButton)>,
     pub(super) product_announcement_scrollbar: Rect,
     pub(super) product_announcement_scroll_metrics: Option<crate::pane::ScrollMetrics>,
     pub(super) product_announcement_max_scroll: usize,
@@ -437,6 +438,14 @@ pub(super) enum JobsTab {
     #[default]
     Feeds,
     Hooks,
+}
+
+/// A clickable part of the jobs panel: a tab, or a footer action standing
+/// for its key (`s`, `x`, `e`, `l`, `r`, `o`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum JobsButton {
+    Tab(JobsTab),
+    Key(char),
 }
 
 /// The global menu's jobs panel: the endpoint's feeds (ADR 0015), fetched

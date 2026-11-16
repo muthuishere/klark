@@ -689,6 +689,7 @@ impl ClientShellState {
                 self.hits.settings_popup = rendered.settings_popup;
                 self.hits.settings_tabs = rendered.settings_tabs;
                 self.hits.settings_choices = rendered.settings_choices;
+                self.hits.jobs_buttons = rendered.jobs_buttons;
                 self.hits.product_announcement_scrollbar = rendered.product_announcement_scrollbar;
                 self.hits.product_announcement_scroll_metrics =
                     rendered.product_announcement_scroll_metrics;

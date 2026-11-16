@@ -405,3 +405,129 @@ fn jobs_panel_switches_to_the_hooks_tab() {
     assert_eq!(tab(&state), Some(JobsTab::Feeds));
     state.handle_input_bytes(b"\x1b");
 }
+
+fn click_at(state: &mut ClientShellState, rect: Rect) -> ClientShellInput {
+    use crossterm::event::{MouseButton, MouseEventKind};
+    state.handle_raw_events(vec![crate::raw_input::RawInputEvent::Mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: rect.x,
+        row: rect.y,
+        modifiers: KeyModifiers::empty(),
+    })])
+}
+
+fn jobs_button(state: &ClientShellState, button: JobsButton) -> Rect {
+    state
+        .hits
+        .jobs_buttons
+        .iter()
+        .find(|(_, b)| *b == button)
+        .map(|(rect, _)| *rect)
+        .unwrap_or_else(|| panic!("no {button:?} button: {:?}", state.hits.jobs_buttons))
+}
+
+fn log_tab_request(outcome: &ClientShellInput) -> crate::api::schema::LayoutApplyParams {
+    endpoint_requests(&outcome.actions)
+        .into_iter()
+        .find_map(|r| match r.method {
+            Method::LayoutApply(params) => Some(params),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("no layout.apply: {:?}", outcome.actions))
+}
+
+fn layout_command(params: &crate::api::schema::LayoutApplyParams) -> Vec<String> {
+    match &params.root {
+        crate::api::schema::LayoutNode::Pane { pane } => pane.command.clone().unwrap(),
+        other => panic!("not one pane: {other:?}"),
+    }
+}
+
+/// Every part of the jobs panel answers the mouse: a row click selects it,
+/// a click on the highlighted row opens a tab that follows its log, the
+/// tabs switch, and the footer hints are buttons.
+#[test]
+fn jobs_panel_answers_the_mouse_and_opens_a_log_tab() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(snapshot()));
+    state.set_pane_surface(surface());
+    open_feeds_with(&mut state, &["first", "second"]);
+    state.compose(120, 30).unwrap();
+
+    let second = state.hits.settings_choices[1].0;
+    let outcome = click_at(&mut state, second);
+    assert!(endpoint_requests(&outcome.actions).is_empty());
+    assert!(matches!(
+        state.overlay,
+        Some(ClientShellOverlay::Feeds(ClientFeedsOverlay {
+            selected: 1,
+            ..
+        }))
+    ));
+
+    // The footer's stop button asks for confirmation, like the x key.
+    state.compose(120, 30).unwrap();
+    let stop = jobs_button(&state, JobsButton::Key('x'));
+    click_at(&mut state, stop);
+    assert!(matches!(
+        &state.overlay,
+        Some(ClientShellOverlay::Feeds(ClientFeedsOverlay { confirm_stop: Some(id), .. })) if id == "second"
+    ));
+
+    // A second click on the highlighted row opens its log in a new tab.
+    state.compose(120, 30).unwrap();
+    let second = state.hits.settings_choices[1].0;
+    let outcome = click_at(&mut state, second);
+    let params = log_tab_request(&outcome);
+    assert_eq!(params.tab_label.as_deref(), Some("log: second"));
+    assert!(params.focus && params.tab_id.is_none());
+    let command = layout_command(&params);
+    assert_eq!(&command[1..], ["feed", "logs", "second", "-f"]);
+    assert!(state.overlay.is_none(), "the panel closes on the new tab");
+
+    // The hooks tab is a button too.
+    open_feeds_with(&mut state, &["first"]);
+    state.compose(120, 30).unwrap();
+    let hooks = jobs_button(&state, JobsButton::Tab(JobsTab::Hooks));
+    click_at(&mut state, hooks);
+    assert!(matches!(
+        state.overlay,
+        Some(ClientShellOverlay::Feeds(ClientFeedsOverlay {
+            tab: JobsTab::Hooks,
+            ..
+        }))
+    ));
+}
+
+/// l (or Enter) opens the highlighted feed's log; a hook's log tab follows
+/// `klark hooks logs <name> -f`.
+#[test]
+fn jobs_logs_key_opens_feed_and_hook_logs() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(snapshot()));
+    state.set_pane_surface(surface());
+    open_feeds_with(&mut state, &["first"]);
+    let outcome = state.handle_input_bytes(b"l");
+    assert_eq!(
+        &layout_command(&log_tab_request(&outcome))[1..],
+        ["feed", "logs", "first", "-f"]
+    );
+
+    open_feeds_with(&mut state, &["first"]);
+    if let Some(ClientShellOverlay::Feeds(jobs)) = state.overlay.as_mut() {
+        jobs.tab = JobsTab::Hooks;
+        jobs.hooks = vec![crate::hooks::HookStatus {
+            name: "dmcp".into(),
+            kind: "start".into(),
+            state: "running".into(),
+            ..Default::default()
+        }];
+    }
+    let outcome = state.handle_input_bytes(b"\r");
+    let params = log_tab_request(&outcome);
+    assert_eq!(params.tab_label.as_deref(), Some("log: dmcp"));
+    assert_eq!(
+        &layout_command(&params)[1..],
+        ["hooks", "logs", "dmcp", "-n", "200", "-f"]
+    );
+}
