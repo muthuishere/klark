@@ -63,11 +63,14 @@ the hook's `notify` list:
 ```
 klark hook dmcp: exited (code 0) at 2026-11-17 08:12:40 UTC; restart policy on-failure; not restarting (klark hooks start dmcp runs it again). Logs: klark hooks logs dmcp
 klark hook os-proxy: exited (code 1) at 2026-11-17 08:12:40 UTC; restart policy always; restarting in 1s (further quick exits are not reported until it stays up 10s). Logs: klark hooks logs os-proxy
+klark hook os-proxy: still failing after 7 restarts; retrying every 60s. Logs: klark hooks logs os-proxy
 klark hook os-proxy: running again at 2026-11-17 08:13:02 UTC (pid 4812, 3 restarts). Logs: klark hooks logs os-proxy
 ```
 
 - **One notice per state change.** In a restart loop only the first exit is
-  reported. Once the hook has stayed up 10 s, one "running again" notice goes
+  reported, plus one "still failing" notice when the wait between restarts
+  first reaches its 60 s cap, so a hook that never recovers is not left at
+  "restarting in 1s". Once the hook has stayed up 10 s, one "running again" notice goes
   out and its next exit is reported again. A loop that ends without a restart
   (`on-failure` after an exit 0, `never`) is reported too. `klark hooks list`
   counts every restart.
@@ -77,9 +80,14 @@ klark hook os-proxy: running again at 2026-11-17 08:13:02 UTC (pid 4812, 3 resta
 - **`notify`** takes `klark msg send` addresses: `agent`, `session/agent`, or
   `machine/session/agent` (through the hub). A bare `agent` must name exactly
   one agent across the running sessions on this machine; `session/agent` is
-  unambiguous. The agent sees
-  `[klark msg from <machine>/hooks/<name>] klark hook …`, and the send is in
-  `klark msg log`. Failed sends are written to `<config>/hooks/supervisor.log`.
+  unambiguous. The agent sees `[klark hook <name>] klark hook <name>: …`,
+  with no reply hint: a hook is not an agent, so nothing is recorded for
+  `klark msg reply`. `klark msg log` lists the send from `klark-hook:<name>`,
+  which is not an address (`:` is not allowed in session or machine names) and
+  cannot be mistaken for a session called `hooks`. Delivery to another
+  machine through the hub (`machine/session/agent`) is untested so far; the
+  remote klark frames it as a `klark msg` with the `[klark hook <name>]` text
+  inside. Failed sends are written to `<config>/hooks/supervisor.log`.
   `klark config check` reports a malformed address, and `notify` on a stop hook.
 - **When a `notify` change takes effect.** The supervisor reads `config.toml`
   only when it handles a request (`klark hooks start|stop|restart`). A hook

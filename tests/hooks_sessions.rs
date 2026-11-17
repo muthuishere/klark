@@ -437,7 +437,12 @@ notify = ["work/rev"]
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         let text = read();
-        if text.contains("[klark msg from testbox/hooks/gate] klark hook gate: exited (code 0)") {
+        if text.contains("[klark hook gate] klark hook gate: exited (code 0)") {
+            assert!(!text.contains("klark msg reply"), "no reply hint:\n{text}");
+            assert!(
+                !text.contains("[klark msg from"),
+                "not a msg frame:\n{text}"
+            );
             break;
         }
         assert!(
@@ -454,6 +459,32 @@ notify = ["work/rev"]
         thread::sleep(Duration::from_millis(200));
     }
     assert_eq!(env.hook_state("gate"), "exited");
+
+    // A hook is not an agent: the notice records no sender to reply to, so a
+    // reply from that pane cannot go anywhere (not to a session named `hooks`).
+    let reply = env
+        .cmd()
+        .env("KLARK_SESSION", "work")
+        .env("KLARK_PANE_ID", &pane)
+        .args(["msg", "reply", "thanks"])
+        .output()
+        .unwrap();
+    assert!(!reply.status.success(), "{reply:?}");
+    assert!(
+        String::from_utf8_lossy(&reply.stderr).contains("nobody has messaged this pane yet"),
+        "{reply:?}"
+    );
+    // Logged once delivery is confirmed, a few seconds after the text shows.
+    wait_for(
+        "the notice in klark msg log",
+        Duration::from_secs(20),
+        || {
+            let log = env.cmd().args(["msg", "log", "--json"]).output().unwrap();
+            String::from_utf8_lossy(&log.stdout).lines().any(|l| {
+                l.contains("\"from\":\"klark-hook:gate\"") && l.contains("\"dir\":\"received\"")
+            })
+        },
+    );
 }
 
 fn call(socket: &Path, method: &str, params: Value) -> Value {

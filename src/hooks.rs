@@ -315,6 +315,10 @@ struct Running {
     /// Inside an automatic restart loop that was already reported: further
     /// quick exits are not reported again.
     quiet: bool,
+    /// The wait before the restart scheduled last.
+    wait: Duration,
+    /// The loop reached the backoff cap and that was reported.
+    cap_noticed: bool,
 }
 
 /// How a run ended, for the notice.
@@ -343,7 +347,15 @@ impl Running {
             detail: None,
             down_noticed: false,
             quiet: false,
+            wait: Duration::ZERO,
+            cap_noticed: false,
         }
+    }
+
+    /// The next exit is reported again (a new loop starts from scratch).
+    fn rearm(&mut self) {
+        self.quiet = false;
+        self.cap_noticed = false;
     }
 
     fn state(&self) -> &'static str {
@@ -383,7 +395,7 @@ impl Running {
 
     /// Started by hand: the next exit is reported again.
     fn by_hand(&mut self) {
-        self.quiet = false;
+        self.rearm();
     }
 
     /// Stops the run by hand; sends nothing (whoever stopped it asked for it).
@@ -395,7 +407,7 @@ impl Running {
         }
         self.started = None;
         self.next_start = None;
-        self.quiet = false;
+        self.rearm();
     }
 
     /// `klark hooks stop <name>`: stays stopped, and a pending "running
@@ -417,6 +429,7 @@ impl Running {
             return;
         }
         self.restarts += 1;
+        self.wait = self.backoff;
         self.next_start = Some(Instant::now() + self.backoff);
         self.backoff = (self.backoff * 2).min(BACKOFF_MAX);
     }
@@ -443,7 +456,7 @@ impl Running {
             self.backoff = BACKOFF_FIRST;
         }
         if ran.is_some_and(|d| d >= STABLE_AFTER) {
-            self.quiet = false;
+            self.rearm();
         }
         self.schedule_restart(matches!(how, Ended::Code(0)));
         self.exit_notice(how, now)
@@ -452,10 +465,15 @@ impl Running {
     /// The notice for a run that just ended, or `None` when it is a repeat
     /// inside an automatic restart loop already reported. Every other end is
     /// reported, a clean exit 0 included: restarted or not, someone may be
-    /// relying on the hook.
+    /// relying on the hook. A loop that reaches the backoff cap is reported
+    /// once more, so a hook that never recovers is not left at "restarting in 1s".
     fn exit_notice(&mut self, how: Ended, at: u64) -> Option<String> {
         let restarting = self.next_start.is_some();
         if self.quiet && restarting {
+            if self.wait >= BACKOFF_MAX && !self.cap_noticed {
+                self.cap_noticed = true;
+                return Some(still_failing_text(&self.def.name, self.restarts));
+            }
             return None;
         }
         self.down_noticed = true;
@@ -478,7 +496,7 @@ impl Running {
             return None;
         }
         self.down_noticed = false;
-        self.quiet = false;
+        self.rearm();
         Some(up_text(
             &self.def.name,
             unix_secs(),
@@ -562,6 +580,13 @@ fn exit_text(
     )
 }
 
+fn still_failing_text(name: &str, restarts: u32) -> String {
+    format!(
+        "klark hook {name}: still failing after {restarts} restarts; retrying every {}s. Logs: klark hooks logs {name}",
+        BACKOFF_MAX.as_secs()
+    )
+}
+
 fn up_text(name: &str, at: u64, pid: Option<u32>, restarts: u32) -> String {
     let pid = pid.map(|p| format!("pid {p}, ")).unwrap_or_default();
     format!(
@@ -577,6 +602,10 @@ fn up_text(name: &str, at: u64, pid: Option<u32>, restarts: u32) -> String {
 /// other line) and sent the way `klark msg send` sends to every `notify`
 /// address. Delivery may wait on an agent someone is typing into, or on the
 /// hub, and the supervisor must keep answering requests meanwhile.
+///
+/// Notices still queued here when the supervisor exits are lost (the log line
+/// is already written). That only happens at shutdown, when klark stops the
+/// hooks itself and sends no notice for that.
 struct Notifier {
     tx: std::sync::mpsc::Sender<(String, Vec<String>, String)>,
 }
@@ -588,9 +617,8 @@ impl Notifier {
             .name("klark-hooks-notify".into())
             .spawn(move || {
                 for (name, to, text) in rx {
-                    let from = format!("{}/hooks/{name}", crate::msg_cmd::my_machine());
                     for addr in to {
-                        match crate::msg_cmd::send_notice(&addr, &from, &text) {
+                        match crate::msg_cmd::send_notice(&addr, &name, &text) {
                             Ok(shown) => eprintln!("klark hooks: {name}: told {shown}"),
                             Err(e) => {
                                 eprintln!("klark hooks: {name}: could not tell {addr}: {e}")
@@ -1370,6 +1398,45 @@ mod tests {
         r.next_start = None;
         r.by_hand();
         assert!(r.ended(Ended::Code(1), quick, 2).is_some());
+    }
+
+    /// A loop that never recovers: one notice at the start, one when the
+    /// backoff reaches its 60 s cap, then nothing more.
+    #[test]
+    fn a_loop_at_the_backoff_cap_is_reported_once_more() {
+        let quick = Some(Duration::from_millis(100));
+        for policy in [RestartPolicy::Always, RestartPolicy::OnFailure] {
+            let mut r = Running::new(def(policy));
+            r.next_start = None;
+            let mut sent = Vec::new();
+            for i in 0..12 {
+                r.next_start = None;
+                if let Some(n) = r.ended(Ended::Code(1), quick, i) {
+                    sent.push((r.wait, n));
+                }
+            }
+            assert_eq!(sent.len(), 2, "{sent:#?}");
+            assert!(sent[0].1.contains("restarting in 1s"), "{sent:#?}");
+            assert_eq!(sent[1].0, BACKOFF_MAX);
+            // Waits 1, 2, 4, 8, 16, 32, then 60: the 7th restart is the first at the cap.
+            assert_eq!(
+                sent[1].1,
+                "klark hook x: still failing after 7 restarts; retrying every 60s. \
+                 Logs: klark hooks logs x"
+            );
+
+            // Started by hand, it can reach the cap and be reported again.
+            r.by_hand();
+            r.backoff = BACKOFF_FIRST;
+            let mut again = 0;
+            for i in 0..12 {
+                r.next_start = None;
+                if r.ended(Ended::Code(1), quick, 100 + i).is_some() {
+                    again += 1;
+                }
+            }
+            assert_eq!(again, 2);
+        }
     }
 
     #[test]
