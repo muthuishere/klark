@@ -475,3 +475,34 @@ fn fake_command(fake: &Path) -> String {
         format!("{} -pe ''", fake.display())
     }
 }
+
+/// `klark hooks restart <name>` runs a running hook as config.toml says now,
+/// so a changed definition (a new `notify` list among others) takes effect.
+#[test]
+fn restart_applies_the_current_definition() {
+    let hooks = |word: &str| {
+        format!(
+            "[[hooks.start]]\nname = \"v\"\nrun = \"echo {word} >> $BASE/ver; exec sleep 600\"\n"
+        )
+    };
+    let env = Env::new(&hooks("one"));
+    let out = env.cmd().args(["hooks", "start"]).output().unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let ver = || fs::read_to_string(env.base.join("ver")).unwrap_or_default();
+    wait_for("the first run", Duration::from_secs(10), || {
+        ver().contains("one") && env.hook_state("v") == "running"
+    });
+    let changed = hooks("two").replace("$BASE", &env.base.display().to_string());
+    for app in ["klark", "klark-dev"] {
+        fs::write(
+            env.config.join(app).join("config.toml"),
+            format!("onboarding = false\n{changed}"),
+        )
+        .unwrap();
+    }
+    let out = env.cmd().args(["hooks", "restart", "v"]).output().unwrap();
+    assert!(out.status.success(), "{out:?}");
+    wait_for("the run after restart", Duration::from_secs(10), || {
+        ver().contains("two")
+    });
+}

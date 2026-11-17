@@ -75,9 +75,9 @@ klark hook os-proxy: running again at 2026-11-17 08:13:02 UTC (pid 4812, 3 resta
   shutdown after the last klark server stops send no notice. A hook you start or
   restart by hand reports its next exit again.
 - **`notify`** takes `klark msg send` addresses: `agent`, `session/agent`, or
-  `machine/session/agent` (through the hub). The supervisor belongs to no
-  session, so a bare `agent` is looked up in the default session first; use
-  `session/agent` for an agent elsewhere. The agent sees
+  `machine/session/agent` (through the hub). A bare `agent` must name exactly
+  one agent across the running sessions on this machine; `session/agent` is
+  unambiguous. The agent sees
   `[klark msg from <machine>/hooks/<name>] klark hook …`, and the send is in
   `klark msg log`. Failed sends are written to `<config>/hooks/supervisor.log`.
   `klark config check` reports a malformed address, and `notify` on a stop hook.

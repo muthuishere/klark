@@ -321,6 +321,8 @@ struct Running {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Ended {
     Code(i32),
+    // Only built from a Unix exit status; Windows has no signals.
+    #[cfg_attr(not(unix), allow(dead_code))]
     Signal(i32),
     Unknown,
     CouldNotStart(String),
@@ -393,8 +395,15 @@ impl Running {
         }
         self.started = None;
         self.next_start = None;
-        self.down_noticed = false;
         self.quiet = false;
+    }
+
+    /// `klark hooks stop <name>`: stays stopped, and a pending "running
+    /// again" notice is dropped (whoever stopped it knows).
+    fn hold(&mut self) {
+        self.held = true;
+        self.stop();
+        self.down_noticed = false;
     }
 
     /// The run ended: restart by policy, after the backoff.
@@ -864,10 +873,7 @@ fn supervise(mut pinned: bool) -> i32 {
                                 r.next_start = Some(Instant::now());
                             }
                         }
-                        Action::Stop => {
-                            r.held = true;
-                            r.stop();
-                        }
+                        Action::Stop => r.hold(),
                         Action::Restart => {
                             r.stop();
                             refresh_def(r, &config);
@@ -1385,9 +1391,15 @@ mod tests {
         assert!(up.ends_with("Logs: klark hooks logs x"), "{up}");
         assert_eq!(r.up_notice(), None, "once");
 
-        // A stop by hand clears it: nothing to announce.
+        // Brought back by `hooks restart` (stop, then start): announced.
         assert!(r.ended(Ended::Code(1), None, 2).is_some());
         r.stop();
+        r.started = Some((long_ago, 0));
+        assert!(r.up_notice().is_some(), "running again after a restart");
+
+        // Stopped by hand (`hooks stop`): nothing to announce.
+        assert!(r.ended(Ended::Code(1), None, 3).is_some());
+        r.hold();
         r.started = Some((long_ago, 0));
         assert_eq!(r.up_notice(), None);
     }
