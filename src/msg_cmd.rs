@@ -963,6 +963,13 @@ fn send(to: &str, from: &str, text: &str) -> (String, Result<(), String>) {
     (to_addr, result)
 }
 
+/// `klark msg send` from inside klark (hook notices): the same resolution,
+/// delivery and logging. Returns the resolved address.
+pub(crate) fn send_notice(to: &str, from: &str, text: &str) -> Result<String, String> {
+    let (addr, result) = send(to, from, text);
+    result.map(|()| addr)
+}
+
 fn send_via_hub(to: &str, from: &str, text: &str) -> Result<(), String> {
     let (base, token) = hub_target()?;
     let body = json!({"to": to, "text": text, "from": from});

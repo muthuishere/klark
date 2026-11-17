@@ -36,6 +36,11 @@ pub struct HookDef {
     /// Extra environment. Values are never logged or shown.
     #[serde(default)]
     pub env: BTreeMap<String, String>,
+    /// Start hooks only: agents told when the hook stops running or comes
+    /// back (`klark msg send` addresses: `agent`, `session/agent`,
+    /// `machine/session/agent`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notify: Vec<String>,
 }
 
 /// `[hooks]`: the start and stop lists.
@@ -82,6 +87,17 @@ impl HooksConfig {
                     "hooks.stop: hook {:?}: restart applies to start hooks only",
                     hook.name
                 ));
+            }
+            if !start && !hook.notify.is_empty() {
+                out.push(format!(
+                    "hooks.stop: hook {:?}: notify applies to start hooks only",
+                    hook.name
+                ));
+            }
+            for to in &hook.notify {
+                if let Err(e) = crate::agent_index::parse_address(to) {
+                    out.push(format!("{kind}: hook {:?}: notify {to:?}: {e}", hook.name));
+                }
             }
             for key in hook.env.keys() {
                 if key.is_empty() || key.contains('=') || key.contains('\0') {
@@ -150,6 +166,7 @@ run = "bun run serve"
 cwd = "~/work/company-os"
 restart = "always"
 env = { PORT = "8788" }
+notify = ["ops", "work/rev"]
 
 [[stop]]
 name = "flush"
@@ -159,6 +176,8 @@ run = "./scripts/flush.sh"
         .unwrap();
         assert_eq!(c.start[0].restart, RestartPolicy::Always);
         assert_eq!(c.start[0].env["PORT"], "8788");
+        assert_eq!(c.start[0].notify, ["ops", "work/rev"]);
+        assert!(c.stop[0].notify.is_empty());
         assert_eq!(c.stop[0].restart, RestartPolicy::Always);
         assert!(c.diagnostics().is_empty());
     }
@@ -173,10 +192,12 @@ run = "x"
 [[start]]
 name = "a"
 run = "y"
+notify = ["a/b/c/d"]
 [[stop]]
 name = "bad name"
 run = " "
 restart = "never"
+notify = ["ops"]
 "#,
         )
         .unwrap();
@@ -185,6 +206,8 @@ restart = "never"
         assert!(d.contains("letters, digits"), "{d}");
         assert!(d.contains("empty run"), "{d}");
         assert!(d.contains("start hooks only"), "{d}");
+        assert!(d.contains("notify applies to start hooks only"), "{d}");
+        assert!(d.contains("notify \"a/b/c/d\""), "{d}");
         let v = c.valid();
         assert_eq!(v.start.len(), 1);
         assert!(v.stop.is_empty());

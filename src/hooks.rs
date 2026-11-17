@@ -33,6 +33,10 @@ const STOP_HOOK_TIMEOUT: Duration = Duration::from_secs(120);
 const BACKOFF_FIRST: Duration = Duration::from_secs(1);
 const BACKOFF_MAX: Duration = Duration::from_secs(60);
 const BACKOFF_RESET: Duration = Duration::from_secs(60);
+/// A hook back up this long after a notice that it stopped counts as running
+/// again: one "running again" notice goes out, and its next exit is reported.
+/// Until then, exits inside an automatic restart loop are not reported again.
+const STABLE_AFTER: Duration = Duration::from_secs(10);
 
 pub fn dir() -> PathBuf {
     crate::config::config_dir().join("hooks")
@@ -85,6 +89,9 @@ pub struct HookStatus {
     /// Unix seconds the current run started.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub started_at: Option<u64>,
+    /// Unix seconds the last run ended.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exited_at: Option<u64>,
     #[serde(default)]
     pub restart: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -295,12 +302,28 @@ struct Running {
     child: Option<Child>,
     restarts: u32,
     last_exit: Option<i32>,
+    /// Unix seconds the last run ended.
+    exited_at: Option<u64>,
     started: Option<(Instant, u64)>,
     /// Stopped by hand: not restarted until started by hand.
     held: bool,
     next_start: Option<Instant>,
     backoff: Duration,
     detail: Option<String>,
+    /// A "stopped running" notice went out and no "running again" since.
+    down_noticed: bool,
+    /// Inside an automatic restart loop that was already reported: further
+    /// quick exits are not reported again.
+    quiet: bool,
+}
+
+/// How a run ended, for the notice.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Ended {
+    Code(i32),
+    Signal(i32),
+    Unknown,
+    CouldNotStart(String),
 }
 
 impl Running {
@@ -310,11 +333,14 @@ impl Running {
             child: None,
             restarts: 0,
             last_exit: None,
+            exited_at: None,
             started: None,
             held: false,
             next_start: Some(Instant::now()),
             backoff: BACKOFF_FIRST,
             detail: None,
+            down_noticed: false,
+            quiet: false,
         }
     }
 
@@ -334,29 +360,41 @@ impl Running {
         }
     }
 
-    fn start(&mut self) {
+    /// Starts the run; returns a notice when it could not start.
+    fn start(&mut self) -> Option<String> {
         self.next_start = None;
         match spawn_hook(&self.def) {
             Ok(child) => {
                 self.detail = None;
                 self.started = Some((Instant::now(), unix_secs()));
                 self.child = Some(child);
+                None
             }
             Err(e) => {
                 self.detail = Some(format!("could not start: {e}"));
                 self.last_exit = None;
                 self.schedule_restart(false);
+                self.exit_notice(Ended::CouldNotStart(e.to_string()), unix_secs())
             }
         }
     }
 
+    /// Started by hand: the next exit is reported again.
+    fn by_hand(&mut self) {
+        self.quiet = false;
+    }
+
+    /// Stops the run by hand; sends nothing (whoever stopped it asked for it).
     fn stop(&mut self) {
         if let Some(mut child) = self.child.take() {
             crate::feed_worker::kill_tree(&mut child);
             self.last_exit = child.try_wait().ok().flatten().and_then(|s| s.code());
+            self.exited_at = Some(unix_secs());
         }
         self.started = None;
         self.next_start = None;
+        self.down_noticed = false;
+        self.quiet = false;
     }
 
     /// The run ended: restart by policy, after the backoff.
@@ -374,24 +412,70 @@ impl Running {
         self.backoff = (self.backoff * 2).min(BACKOFF_MAX);
     }
 
-    fn poll(&mut self) -> bool {
+    /// Whether the run ended, and the notice to send for it, if any.
+    fn poll(&mut self) -> (bool, Option<String>) {
         let Some(child) = self.child.as_mut() else {
-            return false;
+            return (false, None);
         };
         let Ok(Some(status)) = child.try_wait() else {
-            return false;
+            return (false, None);
         };
         self.child = None;
         self.last_exit = status.code();
-        if self
-            .started
-            .take()
-            .is_some_and(|(at, _)| at.elapsed() >= BACKOFF_RESET)
-        {
+        let ran = self.started.take().map(|(at, _)| at.elapsed());
+        (true, self.ended(ended(&status), ran, unix_secs()))
+    }
+
+    /// Bookkeeping for a run that ended after running `ran`: the restart by
+    /// policy and the notice.
+    fn ended(&mut self, how: Ended, ran: Option<Duration>, now: u64) -> Option<String> {
+        self.exited_at = Some(now);
+        if ran.is_some_and(|d| d >= BACKOFF_RESET) {
             self.backoff = BACKOFF_FIRST;
         }
-        self.schedule_restart(status.success());
-        true
+        if ran.is_some_and(|d| d >= STABLE_AFTER) {
+            self.quiet = false;
+        }
+        self.schedule_restart(matches!(how, Ended::Code(0)));
+        self.exit_notice(how, now)
+    }
+
+    /// The notice for a run that just ended, or `None` when it is a repeat
+    /// inside an automatic restart loop already reported. Every other end is
+    /// reported, a clean exit 0 included: restarted or not, someone may be
+    /// relying on the hook.
+    fn exit_notice(&mut self, how: Ended, at: u64) -> Option<String> {
+        let restarting = self.next_start.is_some();
+        if self.quiet && restarting {
+            return None;
+        }
+        self.down_noticed = true;
+        self.quiet = restarting;
+        Some(exit_text(
+            &self.def.name,
+            &how,
+            at,
+            self.def.restart,
+            self.next_start
+                .map(|t| t.saturating_duration_since(Instant::now())),
+        ))
+    }
+
+    /// The "running again" notice, once a run reported down has stayed up
+    /// [`STABLE_AFTER`].
+    fn up_notice(&mut self) -> Option<String> {
+        let (at, _) = self.started?;
+        if !self.down_noticed || at.elapsed() < STABLE_AFTER {
+            return None;
+        }
+        self.down_noticed = false;
+        self.quiet = false;
+        Some(up_text(
+            &self.def.name,
+            unix_secs(),
+            self.child.as_ref().map(Child::id),
+            self.restarts,
+        ))
     }
 
     fn status(&self) -> HookStatus {
@@ -403,8 +487,123 @@ impl Running {
             restarts: self.restarts,
             last_exit: self.last_exit,
             started_at: self.started.map(|(_, s)| s),
+            exited_at: self.exited_at,
             restart: policy_name(self.def.restart).into(),
             detail: self.detail.clone(),
+        }
+    }
+}
+
+fn ended(status: &std::process::ExitStatus) -> Ended {
+    if let Some(code) = status.code() {
+        return Ended::Code(code);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if let Some(sig) = status.signal() {
+            return Ended::Signal(sig);
+        }
+    }
+    Ended::Unknown
+}
+
+/// `2026-11-17 10:04:05 UTC`.
+fn clock(secs: u64) -> String {
+    time::OffsetDateTime::from_unix_timestamp(secs as i64)
+        .map(|t| {
+            format!(
+                "{:04}-{:02}-{:02} {:02}:{:02}:{:02} UTC",
+                t.year(),
+                u8::from(t.month()),
+                t.day(),
+                t.hour(),
+                t.minute(),
+                t.second()
+            )
+        })
+        .unwrap_or_else(|_| secs.to_string())
+}
+
+fn exit_text(
+    name: &str,
+    how: &Ended,
+    at: u64,
+    policy: RestartPolicy,
+    restart_in: Option<Duration>,
+) -> String {
+    let what = match how {
+        Ended::Code(c) => format!("exited (code {c})"),
+        Ended::Signal(s) => format!("exited (killed by signal {s})"),
+        Ended::Unknown => "exited".to_string(),
+        Ended::CouldNotStart(e) => format!("could not start ({e})"),
+    };
+    let next = match restart_in {
+        Some(d) => format!(
+            "restarting in {}s (further quick exits are not reported until it stays up {}s)",
+            d.as_secs_f64().ceil() as u64,
+            STABLE_AFTER.as_secs()
+        ),
+        None => format!("not restarting (klark hooks start {name} runs it again)"),
+    };
+    format!(
+        "klark hook {name}: {what} at {}; restart policy {}; {next}. Logs: klark hooks logs {name}",
+        clock(at),
+        policy_name(policy)
+    )
+}
+
+fn up_text(name: &str, at: u64, pid: Option<u32>, restarts: u32) -> String {
+    let pid = pid.map(|p| format!("pid {p}, ")).unwrap_or_default();
+    format!(
+        "klark hook {name}: running again at {} ({pid}{restarts} restarts). Logs: klark hooks logs {name}",
+        clock(at)
+    )
+}
+
+// ---------------------------------------------------------------- notices
+
+/// Sends hook notices off the supervisor loop, in order: each is written to
+/// the hook's log (so `klark feed add ... --hook <name>` delivers it like any
+/// other line) and sent the way `klark msg send` sends to every `notify`
+/// address. Delivery may wait on an agent someone is typing into, or on the
+/// hub, and the supervisor must keep answering requests meanwhile.
+struct Notifier {
+    tx: std::sync::mpsc::Sender<(String, Vec<String>, String)>,
+}
+
+impl Notifier {
+    fn spawn() -> Self {
+        let (tx, rx) = std::sync::mpsc::channel::<(String, Vec<String>, String)>();
+        let _ = std::thread::Builder::new()
+            .name("klark-hooks-notify".into())
+            .spawn(move || {
+                for (name, to, text) in rx {
+                    let from = format!("{}/hooks/{name}", crate::msg_cmd::my_machine());
+                    for addr in to {
+                        match crate::msg_cmd::send_notice(&addr, &from, &text) {
+                            Ok(shown) => eprintln!("klark hooks: {name}: told {shown}"),
+                            Err(e) => {
+                                eprintln!("klark hooks: {name}: could not tell {addr}: {e}")
+                            }
+                        }
+                    }
+                }
+            });
+        Notifier { tx }
+    }
+
+    fn send(&self, def: &HookDef, text: String) {
+        eprintln!("{text}");
+        if let Ok(mut log) = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(log_path(&def.name))
+        {
+            let _ = writeln!(log, "{text}");
+        }
+        if !def.notify.is_empty() {
+            let _ = self.tx.send((def.name.clone(), def.notify.clone(), text));
         }
     }
 }
@@ -528,6 +727,14 @@ fn any_server_running() -> bool {
         .unwrap_or(true)
 }
 
+/// A restart runs the hook as config.toml says now (a running hook keeps the
+/// definition it was started with until then).
+fn refresh_def(r: &mut Running, config: &HooksConfig) {
+    if let Some(d) = config.start.iter().find(|d| d.name == r.def.name) {
+        r.def = d.clone();
+    }
+}
+
 fn load_hooks() -> HooksConfig {
     crate::config::Config::load().config.hooks.valid()
 }
@@ -559,6 +766,7 @@ fn supervise(mut pinned: bool) -> i32 {
         std::process::id()
     );
 
+    let notifier = Notifier::spawn();
     let mut config = load_hooks();
     let mut hooks: BTreeMap<String, Running> = config
         .start
@@ -628,6 +836,7 @@ fn supervise(mut pinned: bool) -> i32 {
                     for r in hooks.values_mut() {
                         if r.child.is_none() {
                             r.held = false;
+                            r.by_hand();
                             r.next_start = Some(Instant::now());
                         }
                     }
@@ -636,6 +845,7 @@ fn supervise(mut pinned: bool) -> i32 {
                 (Action::Restart, None) => {
                     for r in hooks.values_mut() {
                         r.stop();
+                        refresh_def(r, &config);
                         r.held = false;
                         r.backoff = BACKOFF_FIRST;
                         r.next_start = Some(Instant::now());
@@ -648,6 +858,7 @@ fn supervise(mut pinned: bool) -> i32 {
                     match action {
                         Action::Start => {
                             r.held = false;
+                            r.by_hand();
                             r.backoff = BACKOFF_FIRST;
                             if r.child.is_none() {
                                 r.next_start = Some(Instant::now());
@@ -659,6 +870,7 @@ fn supervise(mut pinned: bool) -> i32 {
                         }
                         Action::Restart => {
                             r.stop();
+                            refresh_def(r, &config);
                             r.held = false;
                             r.backoff = BACKOFF_FIRST;
                             r.next_start = Some(Instant::now());
@@ -670,12 +882,21 @@ fn supervise(mut pinned: bool) -> i32 {
         }
 
         for r in hooks.values_mut() {
-            if r.poll() {
+            let (ended, notice) = r.poll();
+            if ended {
                 changed = true;
             }
+            if let Some(text) = notice {
+                notifier.send(&r.def, text);
+            }
             if r.child.is_none() && !r.held && r.next_start.is_some_and(|at| Instant::now() >= at) {
-                r.start();
+                if let Some(text) = r.start() {
+                    notifier.send(&r.def, text);
+                }
                 changed = true;
+            }
+            if let Some(text) = r.up_notice() {
+                notifier.send(&r.def, text);
             }
         }
 
@@ -720,7 +941,7 @@ fn supervise(mut pinned: bool) -> i32 {
 const USAGE: &str = "\
 klark hooks: machine services klark runs across every session ([[hooks.start]] / [[hooks.stop]] in config.toml)
 
-  klark hooks list [--json]         every hook: state, pid, restarts, last exit
+  klark hooks list [--json]         every hook: state, pid, restarts, last exit and when, restart policy
   klark hooks start [<name>]        start one hook; with no name, start them all and keep them
                                     running even with no klark server (until `klark hooks stop`)
   klark hooks stop [<name>]         stop one hook (it stays stopped); with no name, stop them all
@@ -729,7 +950,8 @@ klark hooks: machine services klark runs across every session ([[hooks.start]] /
   klark hooks logs <name> [-n N] [-f]   a hook's output (last N lines, default 50; -f follows)
 
 Start hooks run once per machine when the first klark server starts; stop hooks run once
-after the last one stops. Logs: <config>/hooks/<name>.log.";
+after the last one stops. Logs: <config>/hooks/<name>.log. When a start hook stops running
+(or runs again), a notice goes to its log and to the agents in its `notify` list.";
 
 pub fn run(args: &[String]) -> ! {
     let code = match args.first().map(String::as_str) {
@@ -821,8 +1043,8 @@ fn cmd_list(args: &[String]) -> i32 {
         ),
     }
     println!(
-        "{:<20} {:<6} {:<10} {:>7} {:>8} {:>5}  UP",
-        "NAME", "KIND", "STATE", "PID", "RESTARTS", "EXIT"
+        "{:<20} {:<6} {:<10} {:>7} {:>8} {:>5}  {:<10} {:<10} UP",
+        "NAME", "KIND", "STATE", "PID", "RESTARTS", "EXIT", "RESTART", "EXITED"
     );
     for (d, start) in hooks.all() {
         let s = status.hooks.iter().find(|s| s.name == d.name);
@@ -838,14 +1060,20 @@ fn cmd_list(args: &[String]) -> i32 {
             .map_or("-".into(), |t| {
                 short_duration(unix_secs().saturating_sub(t))
             });
+        let policy = if start { policy_name(d.restart) } else { "-" };
+        let exited = s.and_then(|s| s.exited_at).map_or("-".into(), |t| {
+            format!("{} ago", short_duration(unix_secs().saturating_sub(t)))
+        });
         println!(
-            "{:<20} {:<6} {:<10} {:>7} {:>8} {:>5}  {}",
+            "{:<20} {:<6} {:<10} {:>7} {:>8} {:>5}  {:<10} {:<10} {}",
             d.name,
             if start { "start" } else { "stop" },
             state,
             pid,
             restarts,
             exit,
+            policy,
+            exited,
             up
         );
         if let Some(detail) = s.and_then(|s| s.detail.as_deref()) {
@@ -1038,6 +1266,7 @@ mod tests {
             cwd: None,
             restart,
             env: Default::default(),
+            notify: Vec::new(),
         }
     }
 
@@ -1075,6 +1304,118 @@ mod tests {
             r.next_start.is_none(),
             "a hook stopped by hand stays stopped"
         );
+    }
+
+    /// The 2026-11-17 incident: dmcp under on-failure exited 0, was not
+    /// restarted, and nobody was told.
+    #[test]
+    fn on_failure_clean_exit_still_sends_a_notice() {
+        let mut r = Running::new(def(RestartPolicy::OnFailure));
+        r.next_start = None;
+        let at = 1_763_373_845; // 2025-11-17 10:04:05 UTC
+        let n = r
+            .ended(Ended::Code(0), Some(Duration::from_secs(3600)), at)
+            .expect("a clean exit is reported");
+        assert!(
+            r.next_start.is_none(),
+            "on-failure still does not restart it"
+        );
+        assert_eq!(r.exited_at, Some(at));
+        assert_eq!(r.status().exited_at, Some(at));
+        assert_eq!(
+            n,
+            "klark hook x: exited (code 0) at 2025-11-17 10:04:05 UTC; restart policy on-failure; \
+             not restarting (klark hooks start x runs it again). Logs: klark hooks logs x"
+        );
+    }
+
+    #[test]
+    fn restart_loops_are_reported_once() {
+        let quick = Some(Duration::from_millis(100));
+        let mut r = Running::new(def(RestartPolicy::Always));
+        r.next_start = None;
+        let first = r.ended(Ended::Code(1), quick, 1).expect("first exit");
+        assert!(first.contains("exited (code 1)"), "{first}");
+        assert!(
+            first.contains("restart policy always; restarting in 1s"),
+            "{first}"
+        );
+        for _ in 0..5 {
+            r.next_start = None;
+            assert_eq!(r.ended(Ended::Signal(9), quick, 2), None, "collapsed");
+        }
+        assert_eq!(r.exited_at, Some(2), "exited_at still moves");
+        // A run that stayed up is a new event.
+        r.next_start = None;
+        assert!(r.ended(Ended::Code(1), Some(STABLE_AFTER), 3).is_some());
+
+        // The loop ending (on-failure, then exit 0) is a state change too.
+        let mut r = Running::new(def(RestartPolicy::OnFailure));
+        r.next_start = None;
+        assert!(r.ended(Ended::Code(2), quick, 1).is_some());
+        r.next_start = None;
+        let last = r.ended(Ended::Code(0), quick, 2).expect("loop ended");
+        assert!(last.contains("not restarting"), "{last}");
+
+        // Started by hand: its next exit is reported again.
+        let mut r = Running::new(def(RestartPolicy::Always));
+        r.next_start = None;
+        assert!(r.ended(Ended::Code(1), quick, 1).is_some());
+        r.next_start = None;
+        r.by_hand();
+        assert!(r.ended(Ended::Code(1), quick, 2).is_some());
+    }
+
+    #[test]
+    fn running_again_is_reported_once_it_stays_up() {
+        let mut r = Running::new(def(RestartPolicy::Always));
+        r.next_start = None;
+        assert_eq!(r.up_notice(), None, "not running");
+        r.started = Some((Instant::now(), 0));
+        assert_eq!(r.up_notice(), None, "never reported down");
+        assert!(r.ended(Ended::Code(1), None, 1).is_some());
+        r.started = Some((Instant::now(), 0));
+        assert_eq!(r.up_notice(), None, "not up long enough");
+        let long_ago = Instant::now()
+            .checked_sub(STABLE_AFTER)
+            .expect("an instant 10 s ago");
+        r.started = Some((long_ago, 0));
+        let up = r.up_notice().expect("running again");
+        assert!(up.starts_with("klark hook x: running again at "), "{up}");
+        assert!(up.ends_with("Logs: klark hooks logs x"), "{up}");
+        assert_eq!(r.up_notice(), None, "once");
+
+        // A stop by hand clears it: nothing to announce.
+        assert!(r.ended(Ended::Code(1), None, 2).is_some());
+        r.stop();
+        r.started = Some((long_ago, 0));
+        assert_eq!(r.up_notice(), None);
+    }
+
+    #[test]
+    fn notice_texts() {
+        assert_eq!(clock(0), "1970-01-01 00:00:00 UTC");
+        let t = exit_text(
+            "svc",
+            &Ended::CouldNotStart("no such dir".into()),
+            0,
+            RestartPolicy::Never,
+            None,
+        );
+        assert!(
+            t.starts_with("klark hook svc: could not start (no such dir) at 1970-01-01"),
+            "{t}"
+        );
+        assert!(t.contains("restart policy never; not restarting"), "{t}");
+        let t = exit_text(
+            "svc",
+            &Ended::Signal(15),
+            0,
+            RestartPolicy::Always,
+            Some(Duration::from_millis(1500)),
+        );
+        assert!(t.contains("killed by signal 15"), "{t}");
+        assert!(t.contains("restarting in 2s"), "{t}");
     }
 
     #[test]

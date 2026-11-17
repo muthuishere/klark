@@ -29,7 +29,8 @@ Docs: **https://muthuishere.github.io/klark/**
   with the first klark server, restart them by policy (default `always`), and stop
   them after the last server stops. `klark hooks list|start|stop|restart|logs`, the
   menu's **jobs** panel, and `klark feed add … --hook <name>` to tell an agent what a
-  service prints ([docs/hooks.md](docs/hooks.md)).
+  service prints. `notify = ["<agent>"]` on a hook tells agents when it stops running,
+  a clean exit included ([docs/hooks.md](docs/hooks.md)).
 - **klarkhub, the web hub (default port 7470).** One self-hosted server (Docker or Kubernetes, plain
   HTTP, SQLite) for many machines and people:
   - a chat for every agent (Claude, Devin, generic agents, plain shells as
