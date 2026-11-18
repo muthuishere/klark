@@ -12,6 +12,13 @@
             },
             "message": {
               "type": "string"
+            },
+            "unsent_draft": {
+              "description": "`agent.prompt` only: the person's unsent draft that klark lifted out of\nthe agent's input before the request failed. It is no longer in the\ninput; the caller should put it back once that is safe (never while the\nagent is blocked: typed text would answer its dialog).",
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           "required": [

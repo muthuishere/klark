@@ -175,6 +175,7 @@ impl ActiveSubscription {
                                 error: ErrorBody {
                                     code: "invalid_regex".into(),
                                     message: err.to_string(),
+                                    unsent_draft: None,
                                 },
                             });
                         }
@@ -331,10 +332,12 @@ fn subscription_events_after(
         EventHistoryError::Lost => ErrorBody {
             code: "events_lost".into(),
             message: "event subscription fell behind retained history; resubscribe and resync with session.snapshot".into(),
+            unsent_draft: None,
         },
         EventHistoryError::Unavailable => ErrorBody {
             code: "server_unavailable".into(),
             message: "event history is unavailable".into(),
+            unsent_draft: None,
         },
     })
 }
@@ -343,6 +346,7 @@ fn event_encoding_error(error: serde_json::Error) -> ErrorBody {
     ErrorBody {
         code: "internal_error".into(),
         message: format!("failed to encode subscription event: {error}"),
+        unsent_draft: None,
     }
 }
 
@@ -599,6 +603,7 @@ fn pane_read(
         error: ErrorBody {
             code: "internal_error".into(),
             message: "failed to decode pane read response".into(),
+            unsent_draft: None,
         },
     })?;
     if value.get("error").is_some() {
@@ -607,6 +612,7 @@ fn pane_read(
             error: ErrorBody {
                 code: "internal_error".into(),
                 message: "failed to decode pane read error".into(),
+                unsent_draft: None,
             },
         });
     }
@@ -615,6 +621,7 @@ fn pane_read(
         error: ErrorBody {
             code: "internal_error".into(),
             message: "failed to decode pane read result".into(),
+            unsent_draft: None,
         },
     })
 }
@@ -639,6 +646,7 @@ fn pane_get(
         error: ErrorBody {
             code: "internal_error".into(),
             message: "failed to decode pane get response".into(),
+            unsent_draft: None,
         },
     })?;
     if value.get("error").is_some() {
@@ -648,6 +656,7 @@ fn pane_get(
                 error: ErrorBody {
                     code: "internal_error".into(),
                     message: "failed to decode pane get error".into(),
+                    unsent_draft: None,
                 },
             })?;
         return Err(response);
@@ -657,6 +666,7 @@ fn pane_get(
         error: ErrorBody {
             code: "internal_error".into(),
             message: "failed to decode pane get result".into(),
+            unsent_draft: None,
         },
     })
 }

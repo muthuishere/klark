@@ -39,6 +39,12 @@ pub struct ErrorResponse {
 pub struct ErrorBody {
     pub code: String,
     pub message: String,
+    /// `agent.prompt` only: the person's unsent draft that klark lifted out of
+    /// the agent's input before the request failed. It is no longer in the
+    /// input; the caller should put it back once that is safe (never while the
+    /// agent is blocked: typed text would answer its dialog).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unsent_draft: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]

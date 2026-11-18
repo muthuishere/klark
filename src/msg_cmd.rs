@@ -180,7 +180,9 @@ impl Args {
 
 // Addresses, resolution and the per-session agent index live in
 // `crate::agent_index`, shared with `klark agent` (cross-session targets).
-use crate::agent_index::{agents_from_list, call, local_agents, running_sessions, session_socket};
+use crate::agent_index::{
+    agents_from_list, call, call_detailed, local_agents, running_sessions, session_socket,
+};
 pub use crate::agent_index::{parse_address, resolve, Address, LocalAgent, Route};
 
 /// The prompt the receiving agent sees (ADR 0009, Delivery).
@@ -1058,11 +1060,12 @@ pub(crate) fn prompt_agent(
     let socket = session_socket(session);
     let typing_deadline = std::time::Instant::now() + typing_wait;
     let result = loop {
-        let r = call(
+        let r = call_detailed(
             &socket,
             "agent.prompt",
             json!({"target": agent, "text": prompt}),
-        );
+        )
+        .map_err(prompt_error_text);
         match &r {
             Err(e)
                 if e.contains("agent_user_typing")
@@ -1103,6 +1106,26 @@ pub(crate) fn prompt_agent(
         }
     }
     result.map(|r| (r, pane))
+}
+
+/// The `agent.prompt` error as text. When the agent became blocked after
+/// klark had lifted the person's draft out of its input, the draft cannot be
+/// typed back (it would answer the agent's dialog), so it is returned in the
+/// error instead of being dropped.
+fn prompt_error_text(err: klark_link::upstream::CallError) -> String {
+    let draft = err
+        .error
+        .as_ref()
+        .and_then(|e| e.get("unsent_draft"))
+        .and_then(Value::as_str)
+        .filter(|d| !d.is_empty());
+    match draft {
+        Some(draft) => format!(
+            "{}; the person's unsent draft was lifted out of the input and not retyped: {draft:?}",
+            err.message
+        ),
+        None => err.message,
+    }
 }
 
 /// A prompt counts as sent once the agent starts working. Some agents swallow
@@ -1798,6 +1821,29 @@ mod tests {
             assert_eq!(mode, 0o600);
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_draft_lifted_before_the_agent_blocked_is_returned_not_dropped() {
+        let err = klark_link::upstream::CallError {
+            message: "agent.prompt: agent_blocked became blocked".into(),
+            error: Some(json!({
+                "code": "agent_blocked",
+                "message": "became blocked",
+                "unsent_draft": "half a thought"
+            })),
+        };
+        let text = prompt_error_text(err);
+        assert!(text.starts_with("agent.prompt: agent_blocked "), "{text}");
+        assert!(text.ends_with("\"half a thought\""), "{text}");
+        let plain = klark_link::upstream::CallError {
+            message: "agent.prompt: agent_blocked blocked".into(),
+            error: Some(json!({"code": "agent_blocked", "message": "blocked"})),
+        };
+        assert_eq!(
+            prompt_error_text(plain),
+            "agent.prompt: agent_blocked blocked"
+        );
     }
 
     #[test]

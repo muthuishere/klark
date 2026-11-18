@@ -486,15 +486,37 @@ impl TerminalRuntime {
         self.0.validate_input_submission(bytes)
     }
 
-    pub fn queue_user_input_submission(
+    /// Writes `text`, waits `delay`, then writes `enter`, unless `enter_guard`
+    /// reports the agent blocked immediately before Enter: then Enter is
+    /// dropped and the receiver yields an `agent_became_blocked` error.
+    pub(crate) fn queue_user_input_submission(
         &self,
         text: Bytes,
         enter: Bytes,
         delay: std::time::Duration,
         deadline: Option<std::time::Instant>,
+        enter_guard: Option<crate::pty::enter_guard::EnterGuard>,
     ) -> std::io::Result<std::sync::mpsc::Receiver<std::io::Result<()>>> {
         self.0
-            .queue_user_input_submission(text, enter, delay, deadline)
+            .queue_user_input_submission(text, enter, delay, deadline, enter_guard)
+    }
+
+    pub(crate) fn input_draft_handle(
+        &self,
+    ) -> std::sync::Arc<std::sync::Mutex<crate::pane::InputDraft>> {
+        self.0.input_draft_handle()
+    }
+
+    pub(crate) fn screen_shows_agent_blocked(&self, agent: crate::detect::Agent) -> bool {
+        self.0.screen_shows_agent_blocked(agent)
+    }
+
+    pub(crate) fn agent_prompt_enter_guard(
+        &self,
+        agent: crate::detect::Agent,
+        app_blocked: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> crate::pty::enter_guard::EnterGuard {
+        self.0.agent_prompt_enter_guard(agent, app_blocked)
     }
 
     pub fn try_send_paste(&self, text: String) -> Result<(), mpsc::error::TrySendError<Bytes>> {

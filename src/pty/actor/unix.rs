@@ -10,6 +10,9 @@ use bytes::Bytes;
 use tokio::sync::mpsc::{self, error::TryRecvError as DataTryRecvError};
 use tracing::{debug, warn};
 
+use crate::pty::enter_guard::{
+    agent_became_blocked_error, agent_blocked_before_typing_error, EnterGuard,
+};
 use crate::pty::fd;
 
 // Actor handle methods must call wake_actor() after queuing work. The idle
@@ -18,6 +21,10 @@ use crate::pty::fd;
 const ACTOR_IDLE_POLL_MS: i32 = 1000;
 const ACTOR_COMMAND_BUFFER: usize = 1024;
 const HANDOFF_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
+/// Reads drained (8 KiB each) before the Enter guard looks at the screen. An
+/// agent streaming faster than this is still read by the guard's screen scan
+/// as of the last read; it only bounds how long the check can take.
+const ENTER_GUARD_MAX_DRAIN_READS: usize = 64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ActorState {
@@ -77,6 +84,7 @@ enum PtyIoDataCommand {
         text: Bytes,
         enter: Bytes,
         delay: Duration,
+        enter_guard: Option<EnterGuard>,
         reply: std_mpsc::Sender<std::io::Result<()>>,
     },
 }
@@ -145,11 +153,24 @@ impl PtyIoActorHandle {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn queue_user_input_submission(
         &self,
         text: Bytes,
         enter: Bytes,
         delay: Duration,
+    ) -> std::io::Result<std_mpsc::Receiver<std::io::Result<()>>> {
+        self.queue_guarded_user_input_submission(text, enter, delay, None)
+    }
+
+    /// Writes `text`, waits `delay`, then writes `enter` unless `enter_guard`
+    /// reports the agent blocked at that moment (see `EnterGuard`).
+    pub(crate) fn queue_guarded_user_input_submission(
+        &self,
+        text: Bytes,
+        enter: Bytes,
+        delay: Duration,
+        enter_guard: Option<EnterGuard>,
     ) -> std::io::Result<std_mpsc::Receiver<std::io::Result<()>>> {
         let user_writes = self
             .user_writes
@@ -167,6 +188,7 @@ impl PtyIoActorHandle {
                 text,
                 enter,
                 delay,
+                enter_guard,
                 reply: reply_tx,
             })
             .map_err(|err| match err {
@@ -468,6 +490,7 @@ struct PtyIoActorRunner {
 struct ActiveSubmission {
     enter: Bytes,
     delay: Duration,
+    enter_guard: Option<EnterGuard>,
     phase: SubmissionPhase,
     reply: std_mpsc::Sender<std::io::Result<()>>,
 }
@@ -482,6 +505,14 @@ struct PendingWrite {
 enum SubmissionBoundary {
     Text,
     Enter,
+    /// The Enter was dropped unwritten: the agent became blocked.
+    EnterSuppressed,
+}
+
+enum ReadOutcome {
+    Data,
+    Empty,
+    Closed,
 }
 
 enum SubmissionPhase {
@@ -652,9 +683,19 @@ impl PtyIoActorRunner {
                 text,
                 enter,
                 delay,
+                enter_guard,
                 reply,
             } => {
                 if self.state == ActorState::Running {
+                    // A prompt queued behind another may find the agent blocked
+                    // by now: its text would be keystrokes into the dialog.
+                    if enter_guard
+                        .as_ref()
+                        .is_some_and(|guard| self.agent_blocked_now(guard))
+                    {
+                        let _ = reply.send(Err(agent_blocked_before_typing_error()));
+                        return false;
+                    }
                     let phase = if text.is_empty() {
                         SubmissionPhase::WaitingUntil(Instant::now() + delay)
                     } else {
@@ -664,6 +705,7 @@ impl PtyIoActorRunner {
                     self.active_submission = Some(ActiveSubmission {
                         enter,
                         delay,
+                        enter_guard,
                         phase,
                         reply,
                     });
@@ -821,14 +863,18 @@ impl PtyIoActorRunner {
     }
 
     fn read_once(&mut self) -> bool {
+        !matches!(self.read_once_outcome(), ReadOutcome::Closed)
+    }
+
+    fn read_once_outcome(&mut self) -> ReadOutcome {
         let mut buf = [0u8; 8192];
         match self.file.as_ref().read(&mut buf) {
-            Ok(0) => false,
-            Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => true,
-            Err(err) if err.kind() == std::io::ErrorKind::Interrupted => true,
+            Ok(0) => ReadOutcome::Closed,
+            Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => ReadOutcome::Empty,
+            Err(err) if err.kind() == std::io::ErrorKind::Interrupted => ReadOutcome::Empty,
             Err(err) => {
                 debug!(pane = self.pane_id, err = %err, "PTY actor read failed");
-                false
+                ReadOutcome::Closed
             }
             Ok(n) => {
                 let response_order = Arc::clone(&self.response_order);
@@ -850,9 +896,36 @@ impl PtyIoActorRunner {
                         .terminal_responses,
                 );
                 self.enqueue_terminal_responses(terminal_responses);
-                true
+                ReadOutcome::Data
             }
         }
+    }
+
+    /// The last check before a submission's Enter: feed every byte the agent
+    /// has already written through `on_read` (this thread is the pane's only
+    /// reader, so the screen is then current up to this instant), then ask the
+    /// submission's guard whether the agent is blocked. No poll runs between
+    /// this check and the Enter write.
+    fn submission_enter_blocked(&mut self) -> bool {
+        let Some(guard) = self
+            .active_submission
+            .as_ref()
+            .and_then(|submission| submission.enter_guard.clone())
+        else {
+            return false;
+        };
+        self.agent_blocked_now(&guard)
+    }
+
+    fn agent_blocked_now(&mut self, guard: &EnterGuard) -> bool {
+        if self.state == ActorState::Running {
+            for _ in 0..ENTER_GUARD_MAX_DRAIN_READS {
+                if !matches!(self.read_once_outcome(), ReadOutcome::Data) {
+                    break;
+                }
+            }
+        }
+        guard.agent_blocked()
     }
 
     fn enqueue_terminal_responses(&mut self, terminal_responses: Vec<Bytes>) {
@@ -879,6 +952,17 @@ impl PtyIoActorRunner {
                 };
                 debug_assert!(matches!(submission.phase, SubmissionPhase::WritingEnter));
                 let _ = submission.reply.send(Ok(()));
+            }
+            SubmissionBoundary::EnterSuppressed => {
+                let Some(submission) = self.active_submission.take() else {
+                    return;
+                };
+                debug_assert!(matches!(submission.phase, SubmissionPhase::WritingEnter));
+                debug!(
+                    pane = self.pane_id,
+                    "agent became blocked before prompt Enter; Enter not written"
+                );
+                let _ = submission.reply.send(Err(agent_became_blocked_error()));
             }
         }
     }
@@ -936,7 +1020,23 @@ impl PtyIoActorRunner {
     }
 
     fn flush_pending_writes_once(&mut self) -> std::io::Result<Option<SubmissionBoundary>> {
-        while let Some(write) = self.pending_writes.front() {
+        loop {
+            let enter_starts = matches!(
+                self.pending_writes.front(),
+                Some(PendingWrite {
+                    boundary: Some(SubmissionBoundary::Enter),
+                    ..
+                })
+            ) && self.current_write_offset == 0;
+            if enter_starts && self.submission_enter_blocked() {
+                // Draining output may have queued terminal responses behind the
+                // Enter; the Enter itself is still at the front.
+                self.pending_writes.pop_front();
+                return Ok(Some(SubmissionBoundary::EnterSuppressed));
+            }
+            let Some(write) = self.pending_writes.front() else {
+                break;
+            };
             let chunk = &write.bytes[self.current_write_offset..];
             match self.file.as_ref().write(chunk) {
                 Ok(0) => {
@@ -1095,6 +1195,12 @@ mod tests {
     }
 
     fn actor_runner_for_unit_test() -> (PtyIoActorRunner, UnixStream) {
+        actor_runner_for_unit_test_with_on_read(Box::new(|_| PtyReadResult::empty()))
+    }
+
+    fn actor_runner_for_unit_test_with_on_read(
+        on_read: ReadCallback,
+    ) -> (PtyIoActorRunner, UnixStream) {
         let (actor_socket, peer) = UnixStream::pair().expect("socket pair");
         actor_socket
             .set_nonblocking(true)
@@ -1116,11 +1222,178 @@ mod tests {
             wake_read_fd: wake_pipe.read_fd,
             controls: Arc::new(Mutex::new(SharedPtyControls::default())),
             response_order: Arc::new(Mutex::new(())),
-            on_read: Box::new(|_| PtyReadResult::empty()),
+            on_read,
             on_reader_exit: None,
             poll_observer: None,
         };
         (runner, peer)
+    }
+
+    /// A runner whose submission text is written and whose Enter is next in
+    /// line, guarded by "has the agent printed DIALOG yet", as seen through
+    /// `on_read` (the screen, in production).
+    fn runner_at_enter_with_screen_guard() -> (
+        PtyIoActorRunner,
+        UnixStream,
+        std_mpsc::Receiver<std::io::Result<()>>,
+    ) {
+        let screen = Arc::new(Mutex::new(Vec::<u8>::new()));
+        let parsed = Arc::clone(&screen);
+        let (mut runner, peer) = actor_runner_for_unit_test_with_on_read(Box::new(move |bytes| {
+            parsed.lock().unwrap().extend_from_slice(bytes);
+            PtyReadResult::empty()
+        }));
+        let guard = EnterGuard::new(move || {
+            screen
+                .lock()
+                .unwrap()
+                .windows(b"DIALOG".len())
+                .any(|w| w == b"DIALOG")
+        });
+        let (reply, completion) = std_mpsc::channel();
+        runner.active_submission = Some(ActiveSubmission {
+            enter: Bytes::from_static(b"\r"),
+            delay: Duration::ZERO,
+            enter_guard: Some(guard),
+            phase: SubmissionPhase::WritingEnter,
+            reply,
+        });
+        runner.enqueue_submission_write(Bytes::from_static(b"\r"), SubmissionBoundary::Enter);
+        (runner, peer, completion)
+    }
+
+    #[test]
+    fn enter_guard_reads_pending_agent_output_before_deciding() {
+        let (mut runner, mut peer, completion) = runner_at_enter_with_screen_guard();
+        // The dialog is already in the PTY but not yet read by the actor.
+        peer.write_all(b"DIALOG").unwrap();
+
+        let boundary = runner.flush_pending_writes_once().unwrap();
+        assert_eq!(boundary, Some(SubmissionBoundary::EnterSuppressed));
+        runner.complete_submission_boundary(boundary.unwrap());
+
+        let err = completion
+            .recv()
+            .unwrap()
+            .expect_err("Enter must be refused");
+        assert!(crate::pty::enter_guard::is_agent_became_blocked(&err));
+        assert!(runner.active_submission.is_none());
+        assert!(runner.pending_writes.is_empty());
+        peer.set_nonblocking(true).unwrap();
+        let mut buf = [0u8; 8];
+        assert_eq!(
+            peer.read(&mut buf).map_err(|e| e.kind()),
+            Err(std::io::ErrorKind::WouldBlock),
+            "no Enter reached the agent"
+        );
+    }
+
+    #[test]
+    fn enter_guard_lets_enter_through_when_agent_is_not_blocked() {
+        let (mut runner, mut peer, completion) = runner_at_enter_with_screen_guard();
+        peer.write_all(b"working...").unwrap();
+
+        let boundary = runner.flush_pending_writes_once().unwrap();
+        assert_eq!(boundary, Some(SubmissionBoundary::Enter));
+        runner.complete_submission_boundary(boundary.unwrap());
+
+        completion.recv().unwrap().expect("submission completes");
+        let mut enter = [0u8; 1];
+        peer.read_exact(&mut enter).unwrap();
+        assert_eq!(&enter, b"\r");
+    }
+
+    #[test]
+    fn agent_blocked_during_submit_delay_drops_enter_and_actor_keeps_serving_input() {
+        let (handle, mut peer, _read_rx) = actor_with_socket_pair(false);
+        let blocked = Arc::new(AtomicBool::new(false));
+        let guard_blocked = Arc::clone(&blocked);
+        let guard = EnterGuard::new(move || guard_blocked.load(Ordering::SeqCst));
+
+        let completion = handle
+            .queue_guarded_user_input_submission(
+                Bytes::from_static(b"prompt"),
+                Bytes::from_static(b"\r"),
+                // Long enough that flipping the flag below lands inside it on a loaded machine.
+                Duration::from_secs(1),
+                Some(guard),
+            )
+            .expect("submission queues");
+        let mut text = [0u8; 6];
+        peer.read_exact(&mut text).expect("prompt text is written");
+        assert_eq!(&text, b"prompt");
+        // A permission dialog appears inside the submit delay.
+        blocked.store(true, Ordering::SeqCst);
+
+        let err = completion
+            .recv()
+            .expect("actor reports submission")
+            .expect_err("a blocked agent must not get Enter");
+        assert!(
+            crate::pty::enter_guard::is_agent_became_blocked(&err),
+            "{err}"
+        );
+
+        handle
+            .try_write_user_input(Bytes::from_static(b"user"))
+            .expect("actor still accepts input");
+        let mut next = [0u8; 4];
+        peer.read_exact(&mut next).expect("later input still flows");
+        assert_eq!(&next, b"user", "no Enter was written before it");
+        handle.shutdown();
+    }
+
+    #[test]
+    fn prompt_queued_behind_one_that_hit_a_dialog_is_not_typed() {
+        let (handle, mut peer, _read_rx) = actor_with_socket_pair(false);
+        let blocked = Arc::new(AtomicBool::new(false));
+        let guard = {
+            let blocked = Arc::clone(&blocked);
+            EnterGuard::new(move || blocked.load(Ordering::SeqCst))
+        };
+
+        let first = handle
+            .queue_guarded_user_input_submission(
+                Bytes::from_static(b"first"),
+                Bytes::from_static(b"\r"),
+                Duration::from_secs(1),
+                Some(guard.clone()),
+            )
+            .expect("first queues");
+        let second = handle
+            .queue_guarded_user_input_submission(
+                Bytes::from_static(b"second"),
+                Bytes::from_static(b"\r"),
+                Duration::ZERO,
+                Some(guard),
+            )
+            .expect("second queues behind the first");
+        let mut text = [0u8; 5];
+        peer.read_exact(&mut text).expect("first text is written");
+        assert_eq!(&text, b"first");
+        blocked.store(true, Ordering::SeqCst);
+
+        let err = first.recv().unwrap().expect_err("first loses its Enter");
+        assert!(
+            crate::pty::enter_guard::is_agent_became_blocked(&err),
+            "{err}"
+        );
+        let err = second.recv().unwrap().expect_err("second is not typed");
+        assert!(
+            crate::pty::enter_guard::is_agent_blocked_before_typing(&err),
+            "{err}"
+        );
+
+        handle
+            .try_write_user_input(Bytes::from_static(b"user"))
+            .expect("actor still accepts input");
+        let mut next = [0u8; 4];
+        peer.read_exact(&mut next).expect("later input still flows");
+        assert_eq!(
+            &next, b"user",
+            "nothing of the second prompt reached the dialog"
+        );
+        handle.shutdown();
     }
 
     #[test]

@@ -108,19 +108,61 @@ impl App {
         };
         // Start the completion waiter before submitting, so a refused thread
         // fails the request while nothing has been sent yet.
-        let (handoff_tx, handoff_rx) = std::sync::mpsc::channel::<(
-            String,
-            crate::api::schema::AgentInfo,
-            std::sync::mpsc::Receiver<std::io::Result<()>>,
-            Option<String>,
-        )>();
+        let (handoff_tx, handoff_rx) = std::sync::mpsc::channel::<SubmittedAgentPrompt>();
         let waiter_respond_to = respond_to.clone();
+        let target = params.target.clone();
         let spawned = crate::thread_spawn::spawn_named("klark-agent-prompt", move || {
-            let Ok((id, agent, completion, draft)) = handoff_rx.recv() else {
+            let Ok(SubmittedAgentPrompt {
+                id,
+                agent,
+                completion,
+                draft,
+                input_draft,
+                prompt_chars,
+                leftover_prompt_chars,
+            }) = handoff_rx.recv()
+            else {
                 return;
             };
             let response = match completion.recv() {
                 Ok(Ok(())) => encode_success(id, ResponseResult::AgentPrompted { agent, draft }),
+                Ok(Err(err)) if crate::pty::enter_guard::is_agent_became_blocked(&err) => {
+                    // The text went in, Enter did not. Nothing more is typed:
+                    // with a dialog focused, any key (even Backspace) goes to
+                    // the dialog. The prompt stays unsent in the input; the
+                    // next prompt erases it first.
+                    input_draft
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .unsubmitted_prompt_chars += prompt_chars;
+                    agent_blocked_error(
+                        id,
+                        format!(
+                            "agent {target} became blocked before the prompt was submitted; \
+                             Enter was not sent and nothing was submitted (the prompt text \
+                             remains unsent in the agent's input)"
+                        ),
+                        draft,
+                    )
+                }
+                Ok(Err(err)) if crate::pty::enter_guard::is_agent_blocked_before_typing(&err) => {
+                    // Nothing was written, not even the erase: the person's
+                    // draft and any leftover prompt are still in the input.
+                    let mut d = input_draft.lock().unwrap_or_else(|p| p.into_inner());
+                    d.unsubmitted_prompt_chars += leftover_prompt_chars;
+                    if let Some(draft) = draft {
+                        d.text.insert_str(0, &draft);
+                    }
+                    drop(d);
+                    agent_blocked_error(
+                        id,
+                        format!(
+                            "agent {target} became blocked before the prompt was typed; \
+                             nothing was typed or submitted"
+                        ),
+                        None,
+                    )
+                }
                 Ok(Err(err)) if err.kind() == std::io::ErrorKind::TimedOut => {
                     encode_error(id, "timeout", err.to_string())
                 }
@@ -179,14 +221,7 @@ impl App {
             return Err(agent_not_found(id, &params.target));
         };
         if terminal.state == crate::detect::AgentState::Blocked {
-            return Err(encode_error(
-                id,
-                "agent_blocked",
-                format!(
-                    "agent {} is blocked and requires interactive input",
-                    params.target
-                ),
-            ));
+            return Err(agent_blocked_up_front(id, &params.target));
         }
         let Some(expected_agent) = terminal.effective_known_agent() else {
             return Err(agent_not_ready(id, &params.target));
@@ -207,6 +242,12 @@ impl App {
                 ),
             ));
         }
+        // `terminal.state` is published from the detector's last pass and can
+        // lag the screen; scan the screen as it is now as well.
+        if runtime.screen_shows_agent_blocked(expected_agent) {
+            return Err(agent_blocked_up_front(id, &params.target));
+        }
+        let app_blocked = terminal.blocked_signal();
         let Some(agent) = self.agent_info(resolved.ws_idx, resolved.pane_id) else {
             return Err(agent_not_found(id, &params.target));
         };
@@ -216,6 +257,7 @@ impl App {
             pane_id: resolved.pane_id,
             expected_agent,
             agent,
+            app_blocked,
         })
     }
 
@@ -223,21 +265,14 @@ impl App {
         &mut self,
         validated: ValidatedAgentPrompt,
         params: &AgentPromptParams,
-    ) -> Result<
-        (
-            String,
-            crate::api::schema::AgentInfo,
-            std::sync::mpsc::Receiver<std::io::Result<()>>,
-            Option<String>,
-        ),
-        String,
-    > {
+    ) -> Result<SubmittedAgentPrompt, String> {
         let ValidatedAgentPrompt {
             id,
             ws_idx,
             pane_id,
             expected_agent,
             agent,
+            app_blocked,
         } = validated;
         let Some(runtime) = self.lookup_runtime_sender(ws_idx, pane_id) else {
             return Err(agent_not_found(id, &params.target));
@@ -265,7 +300,9 @@ impl App {
         // way with Backspaces, so Enter submits only this prompt; the caller gets
         // the draft back to retype. Mid-edit (arrows, history) within the last
         // few seconds, the draft can't be known: refuse instead of mixing texts.
-        let draft = {
+        // An earlier prompt left unsubmitted (agent became blocked before its
+        // Enter) is erased too, but is not the person's and is not returned.
+        let (draft, leftover_prompt_chars) = {
             let mut d = runtime.input_draft();
             let recent = d
                 .last_input
@@ -283,17 +320,17 @@ impl App {
                 d.unknown = false;
                 d.text.clear();
             }
-            taken
+            (taken, std::mem::take(&mut d.unsubmitted_prompt_chars))
         };
         let (text, enter) =
             crate::app::api_helpers::encode_api_submission_parts(runtime, &params.text);
-        let text = match &draft {
-            Some(d) => {
-                let mut erase = vec![0x7f_u8; d.chars().count()];
-                erase.extend_from_slice(&text);
-                erase
-            }
-            None => text,
+        let erase_chars = leftover_prompt_chars + draft.as_ref().map_or(0, |d| d.chars().count());
+        let text = if erase_chars > 0 {
+            let mut erase = vec![0x7f_u8; erase_chars];
+            erase.extend_from_slice(&text);
+            erase
+        } else {
+            text
         };
         #[cfg(windows)]
         let text = if expected_agent == crate::detect::Agent::Codex {
@@ -303,15 +340,34 @@ impl App {
         } else {
             text
         };
-        let completion = runtime
-            .queue_user_input_submission(
-                Bytes::from(text),
-                Bytes::from(enter),
-                submit_delay(params.text.len()),
-                submit_deadline,
-            )
-            .map_err(|err| encode_error(id.clone(), "agent_prompt_failed", err.to_string()))?;
-        Ok((id, agent, completion, draft))
+        let enter_guard = runtime.agent_prompt_enter_guard(expected_agent, app_blocked);
+        let input_draft = runtime.input_draft_handle();
+        let completion = match runtime.queue_user_input_submission(
+            Bytes::from(text),
+            Bytes::from(enter),
+            submit_delay(params.text.len()),
+            submit_deadline,
+            Some(enter_guard),
+        ) {
+            Ok(completion) => completion,
+            Err(err) => {
+                // Nothing was written: the leftover prompt is still in the input.
+                input_draft
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .unsubmitted_prompt_chars += leftover_prompt_chars;
+                return Err(encode_error(id, "agent_prompt_failed", err.to_string()));
+            }
+        };
+        Ok(SubmittedAgentPrompt {
+            id,
+            agent,
+            completion,
+            draft,
+            input_draft,
+            prompt_chars: params.text.chars().count(),
+            leftover_prompt_chars,
+        })
     }
 
     pub(super) fn handle_agent_read(
@@ -478,6 +534,41 @@ struct ValidatedAgentPrompt {
     pane_id: crate::layout::PaneId,
     expected_agent: crate::detect::Agent,
     agent: crate::api::schema::AgentInfo,
+    /// The app's "blocked" state for this terminal, read again at Enter time.
+    app_blocked: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+/// A prompt handed to the PTY writer, waiting for its Enter to be written or dropped.
+struct SubmittedAgentPrompt {
+    id: String,
+    agent: crate::api::schema::AgentInfo,
+    completion: std::sync::mpsc::Receiver<std::io::Result<()>>,
+    /// The person's draft lifted out of the input before the prompt was typed.
+    draft: Option<String>,
+    input_draft: std::sync::Arc<std::sync::Mutex<crate::pane::InputDraft>>,
+    prompt_chars: usize,
+    /// Characters of an earlier unsubmitted prompt this one erases first.
+    leftover_prompt_chars: usize,
+}
+
+fn agent_blocked_up_front(id: String, target: &str) -> String {
+    // Checked before the person's draft is touched: nothing to hand back.
+    agent_blocked_error(
+        id,
+        format!("agent {target} is blocked and requires interactive input"),
+        None,
+    )
+}
+
+fn agent_blocked_error(id: String, message: String, unsent_draft: Option<String>) -> String {
+    encode_error_body(
+        id,
+        crate::api::schema::ErrorBody {
+            code: "agent_blocked".into(),
+            message,
+            unsent_draft,
+        },
+    )
 }
 
 fn agent_not_ready(id: String, target: &str) -> String {
@@ -833,6 +924,169 @@ mod tests {
             .is_err(),
             "blocked prompt wrote or scheduled terminal input"
         );
+    }
+
+    /// A Claude Code permission dialog, as the screen shows it.
+    const CLAUDE_PERMISSION_DIALOG: &[u8] = b"\x1b[2J\x1b[H\
+        Bash command\r\n  rm -rf build\r\n\
+        \xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\r\n\
+        Do you want to proceed?\r\n\
+        \xe2\x9d\xaf 1. Yes\r\n  2. No\r\n\r\n\
+        Esc to cancel \xc2\xb7 Enter to confirm\r\n";
+
+    fn app_with_named_agent(
+        agent: Agent,
+        state: AgentState,
+    ) -> (
+        App,
+        crate::layout::PaneId,
+        crate::terminal::TerminalId,
+        tokio::sync::mpsc::Receiver<Bytes>,
+    ) {
+        let mut app = app_with_agent();
+        let pane_id = app.state.workspaces[0].tabs[0].root_pane;
+        let terminal_id = app.state.workspaces[0].tabs[0].panes[&pane_id]
+            .attached_terminal_id
+            .clone();
+        let terminal = app.state.terminals.get_mut(&terminal_id).unwrap();
+        terminal.set_agent_name("reviewer".into());
+        terminal.set_detected_state(Some(agent), state);
+        let (runtime, rx) = crate::terminal::TerminalRuntime::test_with_channel(80, 24);
+        app.state.insert_test_runtime(pane_id, runtime);
+        (app, pane_id, terminal_id, rx)
+    }
+
+    fn prompt(text: &str) -> AgentPromptParams {
+        AgentPromptParams {
+            target: "reviewer".into(),
+            text: text.into(),
+            wait: None,
+        }
+    }
+
+    async fn next_write(rx: &mut tokio::sync::mpsc::Receiver<Bytes>) -> Bytes {
+        tokio::time::timeout(Duration::from_secs(1), rx.recv())
+            .await
+            .expect("pane write")
+            .expect("pane open")
+    }
+
+    async fn assert_no_write(rx: &mut tokio::sync::mpsc::Receiver<Bytes>, why: &str) {
+        let late = tokio::time::timeout(Duration::from_millis(150), rx.recv()).await;
+        assert!(late.is_err(), "{why}: {late:?}");
+    }
+
+    #[tokio::test]
+    async fn agent_prompt_withholds_enter_when_agent_becomes_blocked_during_submit_delay() {
+        let (mut app, pane_id, terminal_id, mut rx) =
+            app_with_named_agent(Agent::OpenCode, AgentState::Working);
+        // The person has typed an unsent draft into the agent's input.
+        app.lookup_runtime_sender(0, pane_id)
+            .unwrap()
+            .input_draft()
+            .note_text("wip");
+
+        // Long enough (submit delay ~0.85 s) that the state flip below lands
+        // inside the delay even on a loaded machine.
+        let text = "do it ".repeat(1500);
+        let response_rx = start_deferred_agent_prompt(&mut app, "req", prompt(&text));
+        // The draft is lifted out and the prompt typed: accepted while not blocked.
+        assert_eq!(
+            next_write(&mut rx).await,
+            Bytes::from([b"\x7f\x7f\x7f".as_slice(), text.as_bytes()].concat())
+        );
+        // Inside the submit delay the agent raises a dialog (hook or detector report).
+        app.state
+            .terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .set_detected_state(Some(Agent::OpenCode), AgentState::Blocked);
+
+        let response = response_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("agent prompt responds");
+        let error: crate::api::schema::ErrorResponse = serde_json::from_str(&response).unwrap();
+        assert_eq!(error.error.code, "agent_blocked");
+        assert!(
+            error.error.message.contains("nothing was submitted"),
+            "{}",
+            error.error.message
+        );
+        assert_eq!(error.error.unsent_draft.as_deref(), Some("wip"));
+        assert_no_write(&mut rx, "Enter must not reach a blocked agent").await;
+        let runtime = app.lookup_runtime_sender(0, pane_id).unwrap();
+        assert_eq!(runtime.input_draft().unsubmitted_prompt_chars, text.len());
+        assert!(runtime.input_draft().text.is_empty());
+
+        // Up-front refusal while still blocked: nothing typed, no draft to return.
+        let refused = run_deferred_agent_prompt(&mut app, "req-blocked", prompt("do it"));
+        let refused: crate::api::schema::ErrorResponse = serde_json::from_str(&refused).unwrap();
+        assert_eq!(refused.error.code, "agent_blocked");
+        assert_eq!(refused.error.unsent_draft, None);
+        assert_no_write(&mut rx, "a blocked agent gets no input").await;
+
+        // Once unblocked, the retried prompt first erases the one left behind,
+        // which is not reported as the person's draft.
+        app.state
+            .terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .set_detected_state(Some(Agent::OpenCode), AgentState::Working);
+        let retried = start_deferred_agent_prompt(&mut app, "req-retry", prompt("do it"))
+            .recv_timeout(Duration::from_secs(2))
+            .expect("retry responds");
+        let retried: SuccessResponse = serde_json::from_str(&retried).unwrap();
+        let ResponseResult::AgentPrompted { draft, .. } = retried.result else {
+            panic!("expected prompted response");
+        };
+        assert_eq!(draft, None);
+        let mut erase_then_prompt = vec![0x7f_u8; text.len()];
+        erase_then_prompt.extend_from_slice(b"do it");
+        assert_eq!(next_write(&mut rx).await, Bytes::from(erase_then_prompt));
+        assert_eq!(next_write(&mut rx).await, Bytes::from_static(b"\r"));
+        assert_eq!(
+            app.lookup_runtime_sender(0, pane_id)
+                .unwrap()
+                .input_draft()
+                .unsubmitted_prompt_chars,
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn agent_prompt_enter_check_reads_the_screen_ahead_of_published_state() {
+        let (mut app, pane_id, _terminal_id, mut rx) =
+            app_with_named_agent(Agent::Claude, AgentState::Working);
+
+        let text = "go ".repeat(3000);
+        let response_rx = start_deferred_agent_prompt(&mut app, "req", prompt(&text));
+        assert_eq!(next_write(&mut rx).await, Bytes::from(text.clone()));
+        // The dialog is on screen, but no detector pass has published it yet.
+        let runtime = app.lookup_runtime_sender(0, pane_id).unwrap();
+        runtime.test_process_pty_bytes(CLAUDE_PERMISSION_DIALOG);
+        assert!(runtime.screen_shows_agent_blocked(Agent::Claude));
+
+        let response = response_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("agent prompt responds");
+        let error: crate::api::schema::ErrorResponse = serde_json::from_str(&response).unwrap();
+        assert_eq!(error.error.code, "agent_blocked");
+        assert_eq!(error.error.unsent_draft, None);
+        assert_no_write(&mut rx, "Enter must not answer the dialog").await;
+    }
+
+    #[tokio::test]
+    async fn agent_prompt_up_front_check_reads_the_screen_too() {
+        let (mut app, pane_id, _terminal_id, mut rx) =
+            app_with_named_agent(Agent::Claude, AgentState::Working);
+        app.lookup_runtime_sender(0, pane_id)
+            .unwrap()
+            .test_process_pty_bytes(CLAUDE_PERMISSION_DIALOG);
+
+        let response = run_deferred_agent_prompt(&mut app, "req", prompt("go"));
+        let error: crate::api::schema::ErrorResponse = serde_json::from_str(&response).unwrap();
+        assert_eq!(error.error.code, "agent_blocked");
+        assert_no_write(&mut rx, "a visibly blocked agent gets no input").await;
     }
 
     #[tokio::test]

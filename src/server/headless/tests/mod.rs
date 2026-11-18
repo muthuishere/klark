@@ -4333,6 +4333,7 @@ fn explicit_agent_history_read_requires_idle_on_alternate_screen() {
                         message: format!(
                             "cannot read 200 lines while {public_pane_id} is working: its alternate-screen history can only be captured by scrolling while idle. Wait and retry, or use --source visible"
                         ),
+                        unsent_draft: None,
                     })
                 );
 

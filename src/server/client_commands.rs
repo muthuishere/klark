@@ -30,6 +30,7 @@ pub(crate) fn error_response(id: String, code: &str, message: impl Into<String>)
         error: ErrorBody {
             code: code.into(),
             message: message.into(),
+            unsent_draft: None,
         },
     })
     .unwrap_or_else(|_| {

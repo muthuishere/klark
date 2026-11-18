@@ -41,6 +41,7 @@ pub(super) fn wait_for_output(
                         error: ErrorBody {
                             code: "invalid_regex".into(),
                             message: err.to_string(),
+                            unsent_draft: None,
                         },
                     })
                     .unwrap(),
@@ -87,6 +88,7 @@ pub(super) fn wait_for_output(
                     error: ErrorBody {
                         code: "internal_error".into(),
                         message: "failed to decode pane read result".into(),
+                        unsent_draft: None,
                     },
                 })
                 .unwrap(),
@@ -119,6 +121,7 @@ pub(super) fn wait_for_output(
                     error: ErrorBody {
                         code: "timeout".into(),
                         message: "timed out waiting for output match".into(),
+                        unsent_draft: None,
                     },
                 })
                 .unwrap(),
@@ -612,6 +615,7 @@ fn agent_from_response(
         error: ErrorBody {
             code: "internal_error".into(),
             message: "failed to decode agent response".into(),
+            unsent_draft: None,
         },
     })?;
     if value.get("error").is_some() {
@@ -620,6 +624,7 @@ fn agent_from_response(
             error: ErrorBody {
                 code: "internal_error".into(),
                 message: "failed to decode agent error".into(),
+                unsent_draft: None,
             },
         })?;
         return Err(ErrorResponse {
@@ -632,6 +637,7 @@ fn agent_from_response(
         error: ErrorBody {
             code: "internal_error".into(),
             message: "failed to decode agent result".into(),
+            unsent_draft: None,
         },
     })
 }
@@ -671,6 +677,7 @@ fn agent_wait_timeout(
         error: ErrorBody {
             code: code.into(),
             message,
+            unsent_draft: None,
         },
     })
     .map_err(std::io::Error::other)
@@ -682,6 +689,7 @@ fn agent_wait_not_running(request_id: String) -> std::io::Result<String> {
         error: ErrorBody {
             code: "agent_not_running".into(),
             message: "agent is no longer running in the target pane".into(),
+            unsent_draft: None,
         },
     })
     .map_err(std::io::Error::other)
@@ -746,6 +754,7 @@ pub(super) fn wait_for_event(
                     error: ErrorBody {
                         code: "timeout".into(),
                         message: "timed out waiting for event match".into(),
+                        unsent_draft: None,
                     },
                 })
                 .unwrap(),
@@ -773,6 +782,7 @@ fn event_match_subscription(
             error: ErrorBody {
                 code: "unsupported_event_wait_match".into(),
                 message: "events.wait currently supports pane agent status matches".into(),
+                unsent_draft: None,
             },
         }),
     }
@@ -785,6 +795,7 @@ fn wait_matched_response(request_id: &str, event: serde_json::Value) -> String {
             error: ErrorBody {
                 code: "internal_error".into(),
                 message: "failed to decode matched event".into(),
+                unsent_draft: None,
             },
         })
         .unwrap();
@@ -796,6 +807,7 @@ fn wait_matched_response(request_id: &str, event: serde_json::Value) -> String {
             error: ErrorBody {
                 code: "unsupported_event_wait_match".into(),
                 message: "events.wait currently supports pane agent status matches".into(),
+                unsent_draft: None,
             },
         })
         .unwrap();
@@ -832,6 +844,7 @@ mod tests {
             error: ErrorBody {
                 code: "agent_not_found".into(),
                 message: "missing".into(),
+                unsent_draft: None,
             },
         })
         .unwrap();
@@ -844,6 +857,7 @@ mod tests {
             error: ErrorBody {
                 code: "server_unavailable".into(),
                 message: "timed out waiting for app response".into(),
+                unsent_draft: None,
             },
         })
         .unwrap();

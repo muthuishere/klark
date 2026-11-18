@@ -90,6 +90,7 @@ fn agent_explain(params: bindings::Explain) -> std::io::Result<i32> {
                     error: ErrorBody {
                         code: "agent_explain_file_read_failed".into(),
                         message: format!("failed to read agent explain file {path}: {err}"),
+                        unsent_draft: None,
                     },
                 };
                 let response = serde_json::to_string(&response).map_err(std::io::Error::other)?;

@@ -1325,6 +1325,7 @@ fn error_response_round_trips() {
         error: ErrorBody {
             code: "pane_not_found".into(),
             message: "pane p_1 not found".into(),
+            unsent_draft: None,
         },
     };
 

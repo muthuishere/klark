@@ -213,6 +213,16 @@ pub(crate) fn call(socket: &Path, method: &str, params: Value) -> Result<Value, 
     klark_link::upstream::Upstream::new(socket.to_path_buf(), bin).call(method, params)
 }
 
+/// `call`, keeping the server's error object for fields beyond code and message.
+pub(crate) fn call_detailed(
+    socket: &Path,
+    method: &str,
+    params: Value,
+) -> Result<Value, klark_link::upstream::CallError> {
+    let bin = std::env::current_exe().unwrap_or_else(|_| "klark".into());
+    klark_link::upstream::Upstream::new(socket.to_path_buf(), bin).call_detailed(method, params)
+}
+
 pub(crate) fn agents_from_list(session: &str, machine: &str, result: &Value) -> Vec<LocalAgent> {
     result
         .get("agents")
