@@ -35,8 +35,12 @@ commands:
   send --wait <secs> <to> <text...>      wait until the agent is idle (not working, not on a dialog), then send
   send --all [--json] <text...>          every other agent in this session (worktrees included)
   send --all-sessions [--json] <text...> every other agent in every running session on this machine
+  send --task <id|new> [--wait-reply <secs>] <to> <text...>
+                                         a durable task: recorded in SQLite, answered with
+                                         reply --task, read with klark task get/wait (prints the id)
   reply [--to <addr>] <text...>          answer the agent that messaged this pane (--to: that
                                          sender, as the message's hint gives it; else the last one)
+  reply --task <id> <result...>          answer a task sent to this pane (stores the result)
   log [-n N] [--json]                    recent sent/received messages
   name <new-name>                        rename this pane's agent (its address)
   login --hub <url> --user <name> [--name <machine>] [--password-stdin]
@@ -193,6 +197,9 @@ pub(crate) enum Frame<'a> {
     /// A hook notice: `[klark hook <name>] <text>`. No reply hint, and the
     /// sender is not recorded for `klark msg reply`: a hook is not an agent.
     Hook(&'a str),
+    /// A durable task (klark#25): `[klark msg from <from>] [task <id>] <text>`
+    /// plus the hint to answer it with `klark msg reply --task <id>`.
+    Task(&'a str),
 }
 
 impl Frame<'_> {
@@ -200,8 +207,16 @@ impl Frame<'_> {
         match self {
             Frame::Msg => format_prompt(from, text),
             Frame::Hook(name) => format_hook_notice(name, text),
+            Frame::Task(id) => format_task_prompt(from, id, text),
         }
     }
+}
+
+/// The prompt an agent sees for a task.
+pub fn format_task_prompt(from: &str, id: &str, text: &str) -> String {
+    format!(
+        "[klark msg from {from}] [task {id}] {text}\n(when done, answer it with: klark msg reply --task {id} \"<result>\")"
+    )
 }
 
 /// The prompt an agent sees for a hook notice.
@@ -851,10 +866,13 @@ fn parent_address() -> R<String> {
 fn cmd_send(args: &[String]) -> R<()> {
     let a = Args::parse(
         args,
-        &["--from", "--wait", "--wait-reply"],
+        &["--from", "--wait", "--wait-reply", "--task"],
         &["--json", "--all", "--all-sessions"],
     )?;
     let wait = wait_secs(&a)?;
+    if a.has("--task") && (a.has("--all") || a.has("--all-sessions")) {
+        return Err(Fail::Usage("--task goes to one agent, not --all".into()));
+    }
     let wait_reply = a
         .value("--wait-reply")
         .map(|v| {
@@ -889,6 +907,9 @@ fn cmd_send(args: &[String]) -> R<()> {
     });
     if let Some(secs) = wait {
         wait_until_idle(to, secs)?;
+    }
+    if let Some(id) = a.value("--task") {
+        return send_task(&a, to, &from, &text, &id, wait_reply);
     }
     let seen = tail_log(&data_dir(), usize::MAX).len();
     let (to_addr, outcome) = send(to, &from, &text);
@@ -927,6 +948,68 @@ fn cmd_send(args: &[String]) -> R<()> {
             Err(Fail::Error(e))
         }
     }
+}
+
+fn task_store() -> Result<crate::task_store::Store, String> {
+    crate::task_store::Store::open(&data_dir())
+}
+
+/// `send --task <id|new>`: record the task, deliver it framed with its id,
+/// mark it delivered or failed; with `--wait-reply`, wait for its answer.
+fn send_task(
+    a: &Args,
+    to: &str,
+    from: &str,
+    text: &str,
+    id: &str,
+    wait_reply: Option<u64>,
+) -> R<()> {
+    let id = if id == "new" {
+        crate::task_store::new_id()
+    } else {
+        id.to_string()
+    };
+    let json = a.has("--json");
+    let store = task_store()?;
+    let (shown, session, pane) = resolve_local(to)?;
+    store.create(&id, from, &shown, &session, &pane, text)?;
+    let (to_addr, _, outcome) = send_routed(to, from, text, Frame::Task(&id));
+    match &outcome {
+        Ok(()) => store.delivered(&id)?,
+        Err(e) => store.failed(&id, e)?,
+    }
+    if let Err(e) = outcome {
+        if json {
+            println!(
+                "{}",
+                json!({"delivered": false, "task": id, "to": to_addr, "from": from, "error": e})
+            );
+        }
+        return Err(Fail::Error(e));
+    }
+    if let Some(secs) = wait_reply {
+        let task = store.wait(&id, Duration::from_secs(secs))?;
+        if json {
+            println!("{}", serde_json::to_string(&task).unwrap_or_default());
+        } else if task.status == "answered" {
+            println!("{}", task.result.unwrap_or_default());
+        }
+        if task.status != "answered" {
+            return Err(Fail::Error(format!(
+                "task {id} delivered, but not answered within {secs}s; it may still come: klark task wait {id}"
+            )));
+        }
+        return Ok(());
+    }
+    if json {
+        println!(
+            "{}",
+            json!({"delivered": true, "task": id, "to": to_addr, "from": from})
+        );
+    } else {
+        println!("task {id} delivered to {to_addr}");
+    }
+    Ok(())
 }
 
 /// `send --wait-reply`: the first message addressed to `me` written to the
@@ -1057,10 +1140,46 @@ fn send(to: &str, from: &str, text: &str) -> (String, Result<(), String>) {
 }
 
 fn send_framed(to: &str, from: &str, text: &str, frame: Frame) -> (String, Result<(), String>) {
+    let (shown, _, result) = send_routed(to, from, text, frame);
+    (shown, result)
+}
+
+/// The local destination of an address: (shown address, session, pane id).
+fn resolve_local(to: &str) -> Result<(String, String, String), String> {
+    let machine = my_machine();
+    let addr = parse_address(to)?;
+    if addr.machine.as_deref().is_some_and(|m| m != machine) {
+        return Err(format!(
+            "{to}: tasks go to agents on this machine only (for now)"
+        ));
+    }
+    let local = local_agents(&machine);
+    match resolve(&addr, &local, &machine)? {
+        Route::Local { session, agent } => {
+            let shown = local
+                .iter()
+                .find(|l| l.session == session && l.pane_id == agent)
+                .map(|l| l.address.clone())
+                .unwrap_or_else(|| format!("{machine}/{session}/{agent}"));
+            Ok((shown, session, agent))
+        }
+        Route::Remote { to } => Err(format!(
+            "{to}: tasks go to agents on this machine only (for now)"
+        )),
+    }
+}
+
+fn send_routed(
+    to: &str,
+    from: &str,
+    text: &str,
+    frame: Frame,
+) -> (String, Option<(String, String)>, Result<(), String>) {
+    let mut route = None;
     let machine = my_machine();
     let addr = match parse_address(to) {
         Ok(a) => a,
-        Err(e) => return (to.to_string(), Err(e)),
+        Err(e) => return (to.to_string(), None, Err(e)),
     };
     let local = if addr.machine.as_deref().is_some_and(|m| m != machine) {
         Vec::new()
@@ -1075,19 +1194,20 @@ fn send_framed(to: &str, from: &str, text: &str, frame: Frame) -> (String, Resul
                 .find(|l| l.session == session && l.pane_id == agent)
                 .map(|l| l.address.clone())
                 .unwrap_or_else(|| format!("{machine}/{session}/{agent}"));
-            (
-                shown,
-                deliver_framed(&session, &agent, from, text, frame).map(|_| ()),
-            )
+            let r = deliver_framed(&session, &agent, from, text, frame).map(|_| ());
+            route = Some((session, agent));
+            (shown, r)
         }
         Ok(Route::Remote { to }) => {
             // The remote machine frames what the hub hands it as a `klark
             // msg`; a hook notice keeps its own prefix inside that text.
-            let body = match frame {
-                Frame::Msg => text.to_string(),
-                Frame::Hook(name) => format_hook_notice(name, text),
+            let r = match frame {
+                Frame::Msg => send_via_hub(&to, from, text),
+                Frame::Hook(name) => send_via_hub(&to, from, &format_hook_notice(name, text)),
+                Frame::Task(_) => Err(format!(
+                    "{to}: tasks go to agents on this machine only (for now)"
+                )),
             };
-            let r = send_via_hub(&to, from, &body);
             (to, r)
         }
     };
@@ -1098,7 +1218,7 @@ fn send_framed(to: &str, from: &str, text: &str, frame: Frame) -> (String, Resul
         text,
         result.as_ref().err().map(String::as_str),
     );
-    (to_addr, result)
+    (to_addr, route, result)
 }
 
 /// A hook notice to a `notify` address: resolved, delivered and logged like
@@ -1189,7 +1309,7 @@ fn deliver_framed(
         .unwrap_or_else(|_| agent.to_string());
     let result = result.map(|(r, _)| r);
     let to = received_address(&my_machine(), session, agent, result.as_ref().ok());
-    if result.is_ok() && frame == Frame::Msg {
+    if result.is_ok() && matches!(frame, Frame::Msg | Frame::Task(_)) {
         if let Err(e) = record_sender(&data_dir(), session, &pane, from) {
             eprintln!("klark msg: could not record sender: {e}");
         }
@@ -1359,8 +1479,11 @@ fn cmd_deliver(args: &[String]) -> R<()> {
 }
 
 fn cmd_reply(args: &[String]) -> R<()> {
-    let a = Args::parse(args, &["--to"], &["--json"])?;
+    let a = Args::parse(args, &["--to", "--task"], &["--json"])?;
     let text = text_of(&a.positional)?;
+    if let Some(id) = a.value("--task") {
+        return reply_task(&id, &text);
+    }
     let to = match a.value("--to") {
         Some(to) => to,
         None => {
@@ -1383,6 +1506,155 @@ fn cmd_reply(args: &[String]) -> R<()> {
         Err(e) => return Err(e.into()),
     }
     Ok(())
+}
+
+/// `reply --task <id>`: store the result (only the task's addressee may), then
+/// tell the sender as an ordinary reply.
+fn reply_task(id: &str, text: &str) -> R<()> {
+    let pane =
+        my_pane().ok_or("reply --task works inside a klark pane (KLARK_PANE_ID is not set)")?;
+    let me = whoami();
+    let store = task_store()?;
+    let truncated = store.answer(id, &me.session, &pane, &me.address, text)?;
+    let task = store.get(id)?.ok_or_else(|| format!("no task {id}"))?;
+    println!("task {id} answered");
+    if truncated {
+        println!(
+            "note: the result was cut to {} KB; put the rest in a file and give its path",
+            crate::task_store::RESULT_CAP / 1024
+        );
+    }
+    let note = format!("[task {id} answered] {text}");
+    let (to_addr, outcome) = send(&task.from, &me.address, &note);
+    match outcome {
+        Ok(()) => println!("told {to_addr}"),
+        // A sender outside klark (a script, dmcp) reads the task instead.
+        Err(e) if e.starts_with("no agent ") || e.starts_with("bad address") => {}
+        Err(e) => eprintln!(
+            "klark msg: the task is answered, but telling {}: {e}",
+            task.from
+        ),
+    }
+    Ok(())
+}
+
+const TASK_USAGE: &str = "usage: klark task <command> ...
+
+Durable tasks (klark#25): sent with `klark msg send --task <id|new> <to> <text>`,
+answered by that agent with `klark msg reply --task <id> \"<result>\"`.
+State and results live in SQLite (tasks.db next to messages.jsonl); every change
+is also a line in tasks.jsonl (watch it with klark feed --follow).
+
+commands:
+  get <id> [--json]                      one task: status, result, who answered, times
+  list [-n N] [--json]                   the newest tasks (default 20)
+  wait <id> [--timeout <secs>] [--json]  until answered or failed (default 300 s)
+
+exit codes: 0 found / answered; 1 unknown id, failed task, or error; 124 wait timed out.
+--json errors print {\"error\": \"...\", \"code\": \"...\"}.";
+
+/// `klark task ...`.
+pub fn task_run(args: &[String]) -> ! {
+    let (cmd, rest) = match args.split_first() {
+        Some((c, r)) => (c.as_str(), r),
+        None => {
+            println!("{TASK_USAGE}");
+            std::process::exit(0)
+        }
+    };
+    let json = rest.iter().any(|a| a == "--json");
+    let fail = |code: &str, msg: String, exit: i32| -> ! {
+        if json {
+            println!("{}", json!({"error": msg, "code": code}));
+        } else {
+            eprintln!("klark task: {msg}");
+        }
+        std::process::exit(exit)
+    };
+    let store = match task_store() {
+        Ok(s) => s,
+        Err(e) => fail("store_error", e, 1),
+    };
+    let print = |task: &crate::task_store::Task| {
+        if json {
+            println!("{}", serde_json::to_string(task).unwrap_or_default());
+        } else {
+            println!("task      {}", task.id);
+            println!("status    {}", task.status);
+            println!("from      {}", task.from);
+            println!("to        {}", task.to);
+            if let Some(by) = &task.answered_by {
+                println!("answered  by {by}");
+            }
+            if let Some(e) = &task.error {
+                println!("error     {e}");
+            }
+            println!("prompt    {}", task.prompt);
+            if let Some(r) = &task.result {
+                println!(
+                    "result{}\n{r}",
+                    if task.truncated { " (truncated)" } else { "" }
+                );
+            }
+        }
+    };
+    match cmd {
+        "get" | "show" => {
+            let Some(id) = rest.iter().find(|a| !a.starts_with("--")) else {
+                fail("usage", "get needs <id>".into(), 2)
+            };
+            match store.get(id) {
+                Ok(Some(t)) => print(&t),
+                Ok(None) => fail("task_not_found", format!("no task {id}"), 1),
+                Err(e) => fail("store_error", e, 1),
+            }
+        }
+        "list" | "ls" => {
+            let a = match Args::parse(rest, &["-n"], &["--json"]) {
+                Ok(a) => a,
+                Err(_) => fail("usage", "list [-n N] [--json]".into(), 2),
+            };
+            let n = a.value("-n").and_then(|v| v.parse().ok()).unwrap_or(20);
+            let list = store.list(n).unwrap_or_else(|e| fail("store_error", e, 1));
+            if json {
+                println!("{}", serde_json::to_string(&list).unwrap_or_default());
+            } else if list.is_empty() {
+                println!("no tasks (klark msg send --task new <to> <text>)");
+            } else {
+                for t in list {
+                    let first: String = t.prompt.chars().take(50).collect();
+                    println!("{:<16} {:<10} {:<40} {first}", t.id, t.status, t.to);
+                }
+            }
+        }
+        "wait" => {
+            let a = match Args::parse(rest, &["--timeout"], &["--json"]) {
+                Ok(a) => a,
+                Err(_) => fail("usage", "wait <id> [--timeout secs] [--json]".into(), 2),
+            };
+            let Some(id) = a.positional.first() else {
+                fail("usage", "wait needs <id>".into(), 2)
+            };
+            let secs = a
+                .value("--timeout")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(300);
+            let task = match store.wait(id, Duration::from_secs(secs)) {
+                Ok(t) => t,
+                Err(e) if e.starts_with("no task") => fail("task_not_found", e, 1),
+                Err(e) => fail("store_error", e, 1),
+            };
+            print(&task);
+            match task.status.as_str() {
+                "answered" => {}
+                "failed" => std::process::exit(1),
+                _ => std::process::exit(124),
+            }
+        }
+        "-h" | "--help" | "help" => println!("{TASK_USAGE}"),
+        other => fail("usage", format!("unknown command {other}\n{TASK_USAGE}"), 2),
+    }
+    std::process::exit(0)
 }
 
 fn cmd_log(args: &[String]) -> R<()> {

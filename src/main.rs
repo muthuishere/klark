@@ -67,6 +67,7 @@ mod selection;
 mod server;
 mod session;
 mod sound;
+mod task_store;
 mod terminal;
 mod terminal_effects;
 mod terminal_modes;
@@ -783,6 +784,10 @@ fn main() -> io::Result<()> {
 
     if args.get(1).map(|s| s.as_str()) == Some("msg") {
         msg_cmd::run(&args[2..]);
+    }
+
+    if args.get(1).map(|s| s.as_str()) == Some("task") {
+        msg_cmd::task_run(&args[2..]);
     }
 
     if args.get(1).map(|s| s.as_str()) == Some("feed") {

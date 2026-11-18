@@ -43,6 +43,8 @@ Etiquette: one ask per message, say what you need back and in what form, include
 | message my parent agent (the one in the main checkout of my worktree) | `klark msg send parent "<text>"` |
 | list every agent: name, folder, main/worktree, parent, branch, title | `klark msg ls --local` (`--json`; without `--local` also the hub's machines) |
 | recent messages | `klark msg log` (`-n 50`, `--json`) |
+| give work a durable id and get its result back (not from the terminal) | `klark msg send --task new <to> "<text>"` prints the id; `klark task wait <id> --json` / `klark task get <id> --json` |
+| answer a message that starts with `[task <id>]` | `klark msg reply --task <id> "<result>"`: the result is stored (up to 64 KB; put more in a file and give its path) |
 | agents on other machines | `klark msg login --hub <url> --user <name>` (a person types the password); `klark msg status` |
 
 ## How a message is delivered
