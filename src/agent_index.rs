@@ -76,6 +76,21 @@ pub struct LocalAgent {
     /// The terminal title the agent sets: usually what it is working on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// For an agent in a linked worktree: the address of the one live agent
+    /// in that repository's main checkout (its parent). `klark msg send
+    /// parent` sends there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
+    /// More than one live agent works in the main checkout: their addresses,
+    /// and `parent` stays empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parents: Vec<String>,
+    /// The checkout's top folder (canonical), for matching parents.
+    #[serde(skip)]
+    pub(crate) root: Option<PathBuf>,
+    /// A linked worktree's main checkout folder (canonical).
+    #[serde(skip)]
+    pub(crate) main_root: Option<PathBuf>,
 }
 
 /// Where a folder sits in git: its checkout kind, linked worktree name and
@@ -87,6 +102,10 @@ pub struct Checkout {
     /// The linked worktree's folder name.
     pub worktree: Option<String>,
     pub branch: Option<String>,
+    /// The checkout's top folder (the one holding `.git`).
+    pub root: PathBuf,
+    /// A linked worktree's main checkout folder.
+    pub main_root: Option<PathBuf>,
 }
 
 /// The checkout containing `dir`: the nearest folder with a `.git`. A `.git`
@@ -102,6 +121,8 @@ pub fn checkout(dir: &Path) -> Option<Checkout> {
                 kind: "main",
                 worktree: None,
                 branch: head_branch(&git),
+                root: d.to_path_buf(),
+                main_root: None,
             });
         }
         if git.is_file() {
@@ -126,11 +147,62 @@ pub fn checkout(dir: &Path) -> Option<Checkout> {
                     .then(|| d.file_name().map(|n| n.to_string_lossy().into_owned()))
                     .flatten(),
                 branch: gitdir.as_deref().and_then(head_branch),
+                root: d.to_path_buf(),
+                main_root: gitdir.as_deref().filter(|_| linked).and_then(main_checkout),
             });
         }
         cur = d.parent();
     }
     None
+}
+
+/// A linked worktree's main checkout, from its git dir
+/// (`<main>/.git/worktrees/<name>`): the folder holding the common `.git`
+/// (`commondir` names it; `../..` when it is missing). `None` for a bare
+/// repository, which has no checkout.
+fn main_checkout(gitdir: &Path) -> Option<PathBuf> {
+    let common = std::fs::read_to_string(gitdir.join("commondir"))
+        .ok()
+        .map(|c| gitdir.join(c.trim()))
+        .unwrap_or_else(|| gitdir.join("../.."));
+    let common = std::fs::canonicalize(&common).unwrap_or(common);
+    if common.file_name()? != ".git" {
+        return None;
+    }
+    common.parent().map(Path::to_path_buf)
+}
+
+fn canonical(p: &Path) -> PathBuf {
+    std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf())
+}
+
+/// Fill in each worktree agent's `parent`: the live agent in its repository's
+/// main checkout. One in the same session wins over others; when several
+/// still fit, `parents` lists them and `parent` stays empty.
+pub(crate) fn link_parents(agents: &mut [LocalAgent]) {
+    let mains: Vec<(PathBuf, String, String)> = agents
+        .iter()
+        .filter(|a| a.checkout.as_deref() == Some("main"))
+        .filter_map(|a| Some((a.root.clone()?, a.session.clone(), a.address.clone())))
+        .collect();
+    for a in agents.iter_mut() {
+        let Some(main) = &a.main_root else {
+            continue;
+        };
+        let all: Vec<&(PathBuf, String, String)> =
+            mains.iter().filter(|(root, _, _)| root == main).collect();
+        let same: Vec<_> = all.iter().filter(|(_, s, _)| *s == a.session).collect();
+        let pick: Vec<String> = if same.is_empty() {
+            all.iter().map(|(_, _, addr)| addr.clone()).collect()
+        } else {
+            same.iter().map(|(_, _, addr)| addr.clone()).collect()
+        };
+        match pick.as_slice() {
+            [one] => a.parent = Some(one.clone()),
+            [] => {}
+            many => a.parents = many.to_vec(),
+        }
+    }
 }
 
 fn head_branch(gitdir: &Path) -> Option<String> {
@@ -249,8 +321,12 @@ pub(crate) fn agents_from_list(session: &str, machine: &str, result: &Value) -> 
                 worktree: checkout.as_ref().and_then(|c| c.worktree.clone()),
                 cwd,
                 checkout: checkout.as_ref().map(|c| c.kind.to_string()),
-                branch: checkout.and_then(|c| c.branch),
+                branch: checkout.as_ref().and_then(|c| c.branch.clone()),
                 title: s("terminal_title_stripped"),
+                parent: None,
+                parents: Vec::new(),
+                root: checkout.as_ref().map(|c| canonical(&c.root)),
+                main_root: checkout.and_then(|c| c.main_root),
             };
             agent.address = format!("{machine}/{session}/{}", agent.handle());
             Some(agent)
@@ -287,6 +363,7 @@ pub(crate) fn local_agents(machine: &str) -> Vec<LocalAgent> {
             Err(e) => eprintln!("klark msg: session {session}: {e}"),
         }
     }
+    link_parents(&mut out);
     out
 }
 
@@ -361,9 +438,51 @@ mod tests {
             checkout: None,
             branch: None,
             title: None,
+            parent: None,
+            parents: Vec::new(),
+            root: None,
+            main_root: None,
         };
         a.address = format!("m1/{session}/{}", a.handle());
         a
+    }
+
+    fn in_main(mut a: LocalAgent, root: &str) -> LocalAgent {
+        a.checkout = Some("main".into());
+        a.root = Some(root.into());
+        a
+    }
+
+    fn in_worktree(mut a: LocalAgent, root: &str, main: &str) -> LocalAgent {
+        a.checkout = Some("worktree".into());
+        a.root = Some(root.into());
+        a.main_root = Some(main.into());
+        a
+    }
+
+    #[test]
+    fn a_worktree_agent_gets_the_main_checkout_agent_as_parent() {
+        let mut agents = vec![
+            in_main(agent("work", Some("klark"), "p1"), "/r/klark"),
+            in_worktree(agent("work", Some("feat"), "p2"), "/w/feat", "/r/klark"),
+            // The same repository's main checkout, in another session too:
+            // the one in the worktree agent's own session wins.
+            in_main(agent("other", Some("klark"), "p3"), "/r/klark"),
+            // Another session's worktree: two main agents fit, none in its session.
+            in_worktree(agent("third", Some("fix"), "p4"), "/w/fix", "/r/klark"),
+            // No agent in its main checkout.
+            in_worktree(agent("work", Some("lone"), "p5"), "/w/lone", "/r/nobody"),
+            // Outside a worktree.
+            agent("work", Some("shell"), "p6"),
+        ];
+        link_parents(&mut agents);
+        assert_eq!(agents[0].parent, None);
+        assert_eq!(agents[1].parent.as_deref(), Some("m1/work/klark"));
+        assert_eq!(agents[3].parent, None);
+        assert_eq!(agents[3].parents, ["m1/work/klark", "m1/other/klark"]);
+        assert_eq!(agents[4].parent, None);
+        assert!(agents[4].parents.is_empty());
+        assert_eq!(agents[5].parent, None);
     }
 
     #[test]

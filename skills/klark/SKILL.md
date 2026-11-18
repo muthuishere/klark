@@ -17,7 +17,7 @@ test "${KLARK_ENV:-}" = 1
 
 `klark feed` is used only when the user asks for it (by name, or "in klark" / "via klark"); never start a feed on your own initiative. If another skill or tool also fits (a message, mail, WhatsApp or an alert to a person; watching or polling something; scheduling), that one wins.
 
-`klark msg` reaches other coding agents. Use it when the user asks, and on your own when your work needs another agent (ask for a review, hand off, report back). Only message a pane that `klark msg ls` lists, i.e. one running a coding agent; never type or send into a plain shell, server or editor. Pick the target by its name, folder, `main` or `worktree <name>` and title in `klark msg ls`; if two still match, ask the person instead of guessing.
+`klark msg` reaches other coding agents. Use it when the user asks, and on your own when your work needs another agent (ask for a review, hand off, report back). Only message a pane that `klark msg ls` lists, i.e. one running a coding agent; never type or send into a plain shell, server or editor. Pick the target by its name, folder, `main` or `worktree <name>` and title in `klark msg ls`; if two still match, ask the person instead of guessing. "Speak to / message the parent (klark) agent" from a worktree: `klark msg send parent "<text>"`.
 
 ## Where the input came from
 
