@@ -185,6 +185,37 @@ use crate::agent_index::{
 };
 pub use crate::agent_index::{parse_address, resolve, Address, LocalAgent, Route};
 
+/// How a delivered message is framed for the receiving agent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Frame<'a> {
+    /// `[klark msg from <from>] <text>` plus the reply hint (ADR 0009).
+    Msg,
+    /// A hook notice: `[klark hook <name>] <text>`. No reply hint, and the
+    /// sender is not recorded for `klark msg reply`: a hook is not an agent.
+    Hook(&'a str),
+}
+
+impl Frame<'_> {
+    fn prompt(&self, from: &str, text: &str) -> String {
+        match self {
+            Frame::Msg => format_prompt(from, text),
+            Frame::Hook(name) => format_hook_notice(name, text),
+        }
+    }
+}
+
+/// The prompt an agent sees for a hook notice.
+pub fn format_hook_notice(hook: &str, text: &str) -> String {
+    format!("[klark hook {hook}] {text}")
+}
+
+/// The sender recorded in `klark msg log` for a hook notice. It is not an
+/// address: `:` is not allowed in a session or machine name and there is no
+/// `/`, so it can never name or route to a session (one called `hooks`, say).
+pub fn hook_sender(hook: &str) -> String {
+    format!("klark-hook:{hook}")
+}
+
 /// The prompt the receiving agent sees (ADR 0009, Delivery).
 pub fn format_prompt(from: &str, text: &str) -> String {
     // The hint names the sender: a pane can be messaged by several agents
@@ -930,6 +961,10 @@ fn broadcast(a: &Args, every_session: bool) -> R<()> {
 
 /// Send and log; returns the resolved destination address and the outcome.
 fn send(to: &str, from: &str, text: &str) -> (String, Result<(), String>) {
+    send_framed(to, from, text, Frame::Msg)
+}
+
+fn send_framed(to: &str, from: &str, text: &str, frame: Frame) -> (String, Result<(), String>) {
     let machine = my_machine();
     let addr = match parse_address(to) {
         Ok(a) => a,
@@ -948,10 +983,19 @@ fn send(to: &str, from: &str, text: &str) -> (String, Result<(), String>) {
                 .find(|l| l.session == session && l.pane_id == agent)
                 .map(|l| l.address.clone())
                 .unwrap_or_else(|| format!("{machine}/{session}/{agent}"));
-            (shown, deliver(&session, &agent, from, text).map(|_| ()))
+            (
+                shown,
+                deliver_framed(&session, &agent, from, text, frame).map(|_| ()),
+            )
         }
         Ok(Route::Remote { to }) => {
-            let r = send_via_hub(&to, from, text);
+            // The remote machine frames what the hub hands it as a `klark
+            // msg`; a hook notice keeps its own prefix inside that text.
+            let body = match frame {
+                Frame::Msg => text.to_string(),
+                Frame::Hook(name) => format_hook_notice(name, text),
+            };
+            let r = send_via_hub(&to, from, &body);
             (to, r)
         }
     };
@@ -963,6 +1007,14 @@ fn send(to: &str, from: &str, text: &str) -> (String, Result<(), String>) {
         result.as_ref().err().map(String::as_str),
     );
     (to_addr, result)
+}
+
+/// A hook notice to a `notify` address: resolved, delivered and logged like
+/// `klark msg send`, but framed `[klark hook <hook>]` with no reply hint, from
+/// [`hook_sender`]. Returns the resolved address.
+pub(crate) fn send_notice(to: &str, hook: &str, text: &str) -> Result<String, String> {
+    let (addr, result) = send_framed(to, &hook_sender(hook), text, Frame::Hook(hook));
+    result.map(|()| addr)
 }
 
 fn send_via_hub(to: &str, from: &str, text: &str) -> Result<(), String> {
@@ -1021,12 +1073,22 @@ pub fn hub_error(to: &str, raw: &str) -> String {
 /// Prompt a local agent; returns its pane id. Records the sender for reply and
 /// logs the receipt.
 fn deliver(session: &str, agent: &str, from: &str, text: &str) -> Result<String, String> {
+    deliver_framed(session, agent, from, text, Frame::Msg)
+}
+
+fn deliver_framed(
+    session: &str,
+    agent: &str,
+    from: &str,
+    text: &str,
+    frame: Frame,
+) -> Result<String, String> {
     // Someone mid-edit in that agent's input: wait (up to a minute) rather
     // than mix this message into their half-written text.
     let result = prompt_agent(
         session,
         agent,
-        &format_prompt(from, text),
+        &frame.prompt(from, text),
         Duration::from_secs(60),
     );
     let pane = result
@@ -1035,7 +1097,7 @@ fn deliver(session: &str, agent: &str, from: &str, text: &str) -> Result<String,
         .unwrap_or_else(|_| agent.to_string());
     let result = result.map(|(r, _)| r);
     let to = received_address(&my_machine(), session, agent, result.as_ref().ok());
-    if result.is_ok() {
+    if result.is_ok() && frame == Frame::Msg {
         if let Err(e) = record_sender(&data_dir(), session, &pane, from) {
             eprintln!("klark msg: could not record sender: {e}");
         }
@@ -1470,6 +1532,32 @@ fn cmd_status() -> R<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A hook notice has its own prefix, no reply hint, and a sender that is
+    /// not an address: it can never be routed to a session called `hooks`.
+    #[test]
+    fn hook_notices_are_not_messages_from_an_address() {
+        let p = Frame::Hook("dmcp").prompt(&hook_sender("dmcp"), "klark hook dmcp: exited");
+        assert_eq!(p, "[klark hook dmcp] klark hook dmcp: exited");
+        assert!(!p.contains("reply"), "{p}");
+        assert!(Frame::Msg.prompt("m/s/a", "hi").contains("klark msg reply"));
+
+        let from = hook_sender("dmcp");
+        assert!(!from.contains('/'), "{from}");
+        assert!(crate::session::validate_name(&from).is_err());
+        assert!(crate::session::validate_name("hooks").is_ok());
+        // Even a reply typed by hand cannot reach a session or agent through it.
+        let addr = parse_address(&from).unwrap();
+        assert!(addr.machine.is_none() && addr.session.is_none());
+        let hooks_session = [agent("hooks", Some("dmcp"), "p1")];
+        assert!(resolve(&addr, &hooks_session, "m").is_err());
+        // The old sender would have been routed there.
+        let old = parse_address("m/hooks/dmcp").unwrap();
+        assert!(matches!(
+            resolve(&old, &hooks_session, "m"),
+            Ok(Route::Local { .. })
+        ));
+    }
 
     fn agent(session: &str, name: Option<&str>, pane: &str) -> LocalAgent {
         let mut a = LocalAgent {

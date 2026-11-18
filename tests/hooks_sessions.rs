@@ -7,13 +7,14 @@
 pub mod support;
 
 use std::fs;
+use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use serde_json::Value;
+use serde_json::{json, Value};
 
 const BIN: &str = env!("CARGO_BIN_EXE_klark");
 
@@ -77,6 +78,10 @@ impl Env {
             .env("HOME", &self.base)
             .env("SHELL", "/bin/sh")
             .env("KLARK_HOOKS_GRACE_MS", "1500")
+            .env("KLARK_MACHINE_NAME", "testbox")
+            .env_remove("KLARK_HUB_URL")
+            .env_remove("KLARK_HUB_JWT")
+            .env_remove("KLARK_HUB_TOKEN")
             .env_remove("KLARK_SOCKET_PATH")
             .env_remove("KLARK_PANE_ID")
             .env_remove("KLARK_SESSION");
@@ -102,19 +107,21 @@ impl Env {
         wait_for(
             &format!("server {session}"),
             Duration::from_secs(10),
-            || {
-                ["klark", "klark-dev"].iter().any(|app| {
-                    UnixStream::connect(
-                        self.config
-                            .join(app)
-                            .join("sessions")
-                            .join(session)
-                            .join("klark.sock"),
-                    )
-                    .is_ok()
-                })
-            },
+            || self.socket(session).is_some(),
         );
+    }
+
+    fn socket(&self, session: &str) -> Option<PathBuf> {
+        ["klark", "klark-dev"]
+            .iter()
+            .map(|app| {
+                self.config
+                    .join(app)
+                    .join("sessions")
+                    .join(session)
+                    .join("klark.sock")
+            })
+            .find(|s| UnixStream::connect(s).is_ok())
     }
 
     fn stop_server(&self, session: &str) {
@@ -305,6 +312,33 @@ restart = "on-failure"
     let h = hook(&env);
     assert_eq!(h["last_exit"], 0, "{h}");
     assert_eq!(h["restart"], "on-failure", "{h}");
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let exited_at = h["exited_at"].as_u64().unwrap_or_else(|| panic!("{h}"));
+    assert!(
+        now.abs_diff(exited_at) < 60,
+        "exited_at {exited_at}, now {now}"
+    );
+    let table = env.cmd().args(["hooks", "list"]).output().unwrap();
+    let table = String::from_utf8_lossy(&table.stdout);
+    assert!(
+        table.contains("RESTART") && table.contains("EXITED"),
+        "{table}"
+    );
+    assert!(table.contains("on-failure"), "{table}");
+    assert!(table.contains(" ago"), "{table}");
+    // A clean exit under on-failure is still announced, in the log a
+    // `klark feed add <agent> ... --hook dmcp` follows.
+    let logs = env.cmd().args(["hooks", "logs", "dmcp"]).output().unwrap();
+    let logs = String::from_utf8_lossy(&logs.stdout);
+    assert!(
+        logs.contains("klark hook dmcp: exited (code 0) at ")
+            && logs.contains("restart policy on-failure; not restarting")
+            && logs.contains("Logs: klark hooks logs dmcp"),
+        "{logs}"
+    );
     assert_eq!(
         fs::read_to_string(env.base.join("env")).unwrap().trim(),
         "1",
@@ -325,4 +359,181 @@ restart = "on-failure"
     }
     thread::sleep(Duration::from_secs(2));
     assert_eq!(env.lines("runs"), 3);
+}
+
+/// `notify = [...]` reaches an agent the way `klark msg send` does: a hook
+/// under on-failure that exits 0 (the 2026-11-17 dmcp incident) is reported
+/// to the agent in another session.
+#[test]
+fn notify_tells_an_agent_when_a_hook_exits_cleanly() {
+    let mut env = Env::new(
+        r#"
+[[hooks.start]]
+name = "gate"
+run = "while [ ! -f $BASE/go ]; do sleep 0.2; done; exit 0"
+restart = "on-failure"
+notify = ["work/rev"]
+"#,
+    );
+    env.start_server("work");
+    let work = env.socket("work").expect("work socket");
+
+    // A stand-in agent (see tests/msg_sessions.rs): a process named `claude`.
+    let bin_dir = env.base.join("bin");
+    fs::create_dir_all(&bin_dir).unwrap();
+    let fake = bin_dir.join("claude");
+    if cfg!(target_os = "macos") {
+        std::os::unix::fs::symlink("/bin/cat", &fake).unwrap();
+    } else {
+        fs::copy("/usr/bin/perl", &fake).unwrap();
+    }
+    let created = call(
+        &work,
+        "workspace.create",
+        json!({"cwd": env.base, "focus": true}),
+    );
+    let pane = created["result"]["root_pane"]["pane_id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("workspace.create: {created}"))
+        .to_string();
+    call(
+        &work,
+        "pane.send_text",
+        json!({"pane_id": pane, "text": fake_command(&fake)}),
+    );
+    call(
+        &work,
+        "pane.send_keys",
+        json!({"pane_id": pane, "keys": ["Enter"]}),
+    );
+    wait_for("the fake agent", Duration::from_secs(45), || {
+        call(&work, "agent.list", json!({}))["result"]["agents"]
+            .as_array()
+            .is_some_and(|a| a.iter().any(|a| a["pane_id"] == json!(pane)))
+    });
+    let named = env
+        .cmd()
+        .env("KLARK_SESSION", "work")
+        .env("KLARK_PANE_ID", &pane)
+        .args(["msg", "name", "rev"])
+        .output()
+        .unwrap();
+    assert!(named.status.success(), "{named:?}");
+    wait_for("gate running", Duration::from_secs(10), || {
+        env.hook_state("gate") == "running"
+    });
+
+    fs::write(env.base.join("go"), "").unwrap();
+    let read = || {
+        call(
+            &work,
+            "pane.read",
+            json!({"pane_id": pane, "source": "recent", "lines": 50}),
+        )["result"]["read"]["text"]
+            .as_str()
+            .unwrap_or("")
+            .to_string()
+    };
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let text = read();
+        if text.contains("[klark hook gate] klark hook gate: exited (code 0)") {
+            assert!(!text.contains("klark msg reply"), "no reply hint:\n{text}");
+            assert!(
+                !text.contains("[klark msg from"),
+                "not a msg frame:\n{text}"
+            );
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the notice never reached the agent\npane:\n{text}\nsupervisor.log:\n{}",
+            ["klark", "klark-dev"]
+                .iter()
+                .filter_map(|app| fs::read_to_string(
+                    env.config.join(app).join("hooks").join("supervisor.log")
+                )
+                .ok())
+                .collect::<String>()
+        );
+        thread::sleep(Duration::from_millis(200));
+    }
+    assert_eq!(env.hook_state("gate"), "exited");
+
+    // A hook is not an agent: the notice records no sender to reply to, so a
+    // reply from that pane cannot go anywhere (not to a session named `hooks`).
+    let reply = env
+        .cmd()
+        .env("KLARK_SESSION", "work")
+        .env("KLARK_PANE_ID", &pane)
+        .args(["msg", "reply", "thanks"])
+        .output()
+        .unwrap();
+    assert!(!reply.status.success(), "{reply:?}");
+    assert!(
+        String::from_utf8_lossy(&reply.stderr).contains("nobody has messaged this pane yet"),
+        "{reply:?}"
+    );
+    // Logged once delivery is confirmed, a few seconds after the text shows.
+    wait_for(
+        "the notice in klark msg log",
+        Duration::from_secs(20),
+        || {
+            let log = env.cmd().args(["msg", "log", "--json"]).output().unwrap();
+            String::from_utf8_lossy(&log.stdout).lines().any(|l| {
+                l.contains("\"from\":\"klark-hook:gate\"") && l.contains("\"dir\":\"received\"")
+            })
+        },
+    );
+}
+
+fn call(socket: &Path, method: &str, params: Value) -> Value {
+    let mut s = UnixStream::connect(socket).unwrap();
+    s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+    let mut line = json!({"id": "t", "method": method, "params": params}).to_string();
+    line.push('\n');
+    s.write_all(line.as_bytes()).unwrap();
+    let mut out = String::new();
+    BufReader::new(s).read_line(&mut out).unwrap();
+    serde_json::from_str(&out).unwrap()
+}
+
+/// The shell line that starts the stand-in agent: `cat` on macOS, `perl -pe ''` on Linux.
+fn fake_command(fake: &Path) -> String {
+    if cfg!(target_os = "macos") {
+        fake.display().to_string()
+    } else {
+        format!("{} -pe ''", fake.display())
+    }
+}
+
+/// `klark hooks restart <name>` runs a running hook as config.toml says now,
+/// so a changed definition (a new `notify` list among others) takes effect.
+#[test]
+fn restart_applies_the_current_definition() {
+    let hooks = |word: &str| {
+        format!(
+            "[[hooks.start]]\nname = \"v\"\nrun = \"echo {word} >> $BASE/ver; exec sleep 600\"\n"
+        )
+    };
+    let env = Env::new(&hooks("one"));
+    let out = env.cmd().args(["hooks", "start"]).output().unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let ver = || fs::read_to_string(env.base.join("ver")).unwrap_or_default();
+    wait_for("the first run", Duration::from_secs(10), || {
+        ver().contains("one") && env.hook_state("v") == "running"
+    });
+    let changed = hooks("two").replace("$BASE", &env.base.display().to_string());
+    for app in ["klark", "klark-dev"] {
+        fs::write(
+            env.config.join(app).join("config.toml"),
+            format!("onboarding = false\n{changed}"),
+        )
+        .unwrap();
+    }
+    let out = env.cmd().args(["hooks", "restart", "v"]).output().unwrap();
+    assert!(out.status.success(), "{out:?}");
+    wait_for("the run after restart", Duration::from_secs(10), || {
+        ver().contains("two")
+    });
 }
