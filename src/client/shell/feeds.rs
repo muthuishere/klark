@@ -186,16 +186,27 @@ impl ClientShellState {
         {
             return true;
         }
+        self.jobs_key(code, outcome);
+        true
+    }
+
+    /// One key of the jobs panel; footer buttons press the same keys.
+    pub(super) fn jobs_key(&mut self, code: KeyCode, outcome: &mut ClientShellInput) {
         match code {
+            KeyCode::Char('l') | KeyCode::Enter => {
+                self.open_job_logs(outcome);
+                outcome.repaint = true;
+                return;
+            }
             KeyCode::Esc | KeyCode::Char('q') => {
                 self.overlay = None;
                 outcome.repaint = true;
-                return true;
+                return;
             }
             KeyCode::Tab | KeyCode::BackTab | KeyCode::Left | KeyCode::Right => {
                 self.switch_jobs_tab();
                 outcome.repaint = true;
-                return true;
+                return;
             }
             _ => {}
         }
@@ -208,7 +219,7 @@ impl ClientShellState {
         ) {
             self.route_hooks_key(code);
             outcome.repaint = true;
-            return true;
+            return;
         }
         match code {
             KeyCode::Up | KeyCode::Char('k') => {
@@ -228,6 +239,128 @@ impl ClientShellState {
             KeyCode::Char('o') => self.open_feed_settings(outcome),
             _ => {}
         }
+    }
+
+    /// Opens a tab that follows the highlighted feed's or hook's output, so
+    /// a job running in the background can be watched. Closing the tab stops
+    /// only the watching.
+    pub(super) fn open_job_logs(&mut self, outcome: &mut ClientShellInput) {
+        let Some(ClientShellOverlay::Feeds(jobs)) = self.overlay.as_ref() else {
+            return;
+        };
+        let local = self.active_endpoint_id.is_local();
+        let (name, args) = match jobs.tab {
+            JobsTab::Feeds => {
+                let Some(feed) = jobs.feeds.get(jobs.selected) else {
+                    return;
+                };
+                let id = feed.id.clone();
+                (
+                    id.clone(),
+                    vec!["feed".into(), "logs".into(), id, "-f".into()],
+                )
+            }
+            JobsTab::Hooks => {
+                let Some(hook) = jobs.hooks.get(jobs.hook_selected) else {
+                    return;
+                };
+                if !local {
+                    // The hooks listed are this machine's; a tab would open on
+                    // the other one.
+                    let name = hook.name.clone();
+                    if let Some(ClientShellOverlay::Feeds(jobs)) = self.overlay.as_mut() {
+                        jobs.message = Some(format!(
+                            "{name} runs on this machine: klark hooks logs {name} -f"
+                        ));
+                    }
+                    return;
+                }
+                let name = hook.name.clone();
+                (
+                    name.clone(),
+                    vec![
+                        "hooks".into(),
+                        "logs".into(),
+                        name,
+                        "-n".into(),
+                        "200".into(),
+                        "-f".into(),
+                    ],
+                )
+            }
+        };
+        // The klark on the machine that runs the tab: this binary when that is
+        // this machine, else the other machine's `klark` on its PATH.
+        let program = local
+            .then(|| crate::platform::launch_executable().ok())
+            .flatten()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "klark".into());
+        let mut command = vec![program];
+        command.extend(args);
+        let method =
+            crate::api::schema::Method::LayoutApply(crate::api::schema::LayoutApplyParams {
+                workspace_id: None,
+                tab_id: None,
+                tab_label: Some(format!("log: {name}")),
+                focus: true,
+                root: crate::api::schema::LayoutNode::Pane {
+                    pane: crate::api::schema::LayoutPane {
+                        label: Some(format!("log: {name}")),
+                        command: Some(command),
+                        ..Default::default()
+                    },
+                },
+            });
+        self.push_endpoint_method(method, outcome);
+        self.overlay = None;
+        outcome.repaint = true;
+    }
+
+    /// A click on the jobs panel: a tab, a footer button, or a row. A click
+    /// on the row already highlighted opens its log.
+    pub(super) fn click_jobs(&mut self, point: (u16, u16), outcome: &mut ClientShellInput) -> bool {
+        if let Some((_, button)) = self
+            .hits
+            .jobs_buttons
+            .iter()
+            .find(|(rect, _)| super::contains(*rect, point))
+            .copied()
+        {
+            match button {
+                JobsButton::Tab(tab) => {
+                    if matches!(self.overlay.as_ref(), Some(ClientShellOverlay::Feeds(j)) if j.tab != tab)
+                    {
+                        self.switch_jobs_tab();
+                    }
+                }
+                JobsButton::Key(c) => self.jobs_key(KeyCode::Char(c), outcome),
+            }
+            outcome.repaint = true;
+            return true;
+        }
+        let Some((_, index)) = self
+            .hits
+            .settings_choices
+            .iter()
+            .find(|(rect, _)| super::contains(*rect, point))
+            .copied()
+        else {
+            return false;
+        };
+        let already = match self.overlay.as_ref() {
+            Some(ClientShellOverlay::Feeds(jobs)) => match jobs.tab {
+                JobsTab::Feeds => jobs.selected == index,
+                JobsTab::Hooks => jobs.hook_selected == index,
+            },
+            _ => false,
+        };
+        if already {
+            self.open_job_logs(outcome);
+        } else {
+            self.select_feed_row(index);
+        }
+        outcome.repaint = true;
         true
     }
 

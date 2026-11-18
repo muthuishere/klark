@@ -38,7 +38,7 @@ usage:
   klark feed stop <id|--all>                  end a feed for everyone, for good
   klark feed start <id>                       run a feed again after it stopped itself
   klark feed batch <id> <n>                   print a batch that was cut in a message
-  klark feed logs <id>                        the worker's own log
+  klark feed logs <id> [-f]                   the worker's own log (-f follows it)
   klark feed resume [--session <name>]        run the session's feeds again (the server does this at start)
 
 sources (exactly one):
@@ -1802,20 +1802,53 @@ fn cmd_batch(args: &[String]) -> R<()> {
 }
 
 fn cmd_logs(args: &[String]) -> R<()> {
-    let id = one_id(args, "logs")?;
+    let follow = args.iter().any(|a| a == "-f" || a == "--follow");
+    let rest: Vec<String> = args
+        .iter()
+        .filter(|a| *a != "-f" && *a != "--follow")
+        .cloned()
+        .collect();
+    let id = one_id(&rest, "logs")?;
     let store = open_store()?;
+    use std::io::Write;
     let mut any = false;
     for name in [format!("{id}.log.1"), log_name(&id)] {
         if let Some(b) = store.read(&name).map_err(|e| e.to_string())? {
-            use std::io::Write;
             let _ = std::io::stdout().write_all(&b);
             any = true;
         }
     }
-    if !any {
-        return Err(Fail::Error(format!("no log for feed {id}")));
+    if !follow {
+        if !any {
+            return Err(Fail::Error(format!("no log for feed {id}")));
+        }
+        return Ok(());
     }
-    Ok(())
+    // -f: print what the worker appends until interrupted. A shorter log
+    // means it was rotated: print the new one from the start.
+    if !any {
+        println!("waiting for feed {id} to write its log…");
+    }
+    let _ = std::io::stdout().flush();
+    let mut shown = store
+        .read(&log_name(&id))
+        .ok()
+        .flatten()
+        .map_or(0, |b| b.len());
+    loop {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        let Ok(Some(b)) = store.read(&log_name(&id)) else {
+            continue;
+        };
+        if b.len() < shown {
+            shown = 0;
+        }
+        if b.len() > shown {
+            let _ = std::io::stdout().write_all(&b[shown..]);
+            let _ = std::io::stdout().flush();
+            shown = b.len();
+        }
+    }
 }
 
 #[cfg(test)]
