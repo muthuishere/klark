@@ -781,6 +781,40 @@ fn upsert_section_raw(content: &str, section: &str, key: &str, value: &str) -> S
 mod tests {
     use super::*;
 
+    /// A hook key from a newer klark (0.11.6 met `notify` this way) is
+    /// ignored with a warning; the hooks and every other setting still load.
+    #[test]
+    fn unknown_hook_keys_do_not_drop_the_config() {
+        let content = r#"
+onboarding = false
+
+[[hooks.start]]
+name = "dmcp"
+run = "dmcp terminal serve"
+some_future_key = ["x"]
+"#;
+        let (config, ignored) =
+            deserialize_with_ignored::<Config, _>(toml::Deserializer::new(content))
+                .expect("the whole config still loads");
+        assert_eq!(config.onboarding, Some(false), "other settings survive");
+        assert_eq!(config.hooks.start.len(), 1);
+        assert_eq!(config.hooks.start[0].name, "dmcp");
+        let diagnostics = unknown_config_key_diagnostics(ignored, None);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.contains("some_future_key") && d.contains("ignoring key")),
+            "{diagnostics:?}"
+        );
+        let live = load_live_config_from_str(content).expect("live reload loads");
+        assert_eq!(live.config.hooks.start.len(), 1);
+        assert!(
+            live.invalid_sections.is_empty(),
+            "{:?}",
+            live.invalid_sections
+        );
+    }
+
     #[test]
     fn upsert_top_level_bool_replaces_existing_value() {
         let content = "onboarding = true\n[keys]\nprefix = \"ctrl+b\"\n";
