@@ -421,7 +421,7 @@ fn a_task_is_answered_by_its_addressee_and_read_back() {
     assert!(sent.status.success(), "{}", text(&sent));
     let sent: Value = serde_json::from_slice(&sent.stdout).unwrap();
     let id = sent["task"].as_str().expect("task id").to_string();
-    assert!(id.starts_with("t_"), "{sent}");
+    assert_eq!(id.len(), 36, "a UUID: {sent}");
     let seen = wait_for("the task prompt", Duration::from_secs(10), || {
         let read = call(
             &work,
@@ -440,7 +440,8 @@ fn a_task_is_answered_by_its_addressee_and_read_back() {
         "{seen}"
     );
     let got: Value = serde_json::from_slice(&task(&["get", &id, "--json"]).stdout).unwrap();
-    assert_eq!(got["status"], "delivered", "{got}");
+    assert_eq!(got["status"], "running", "{got}");
+    assert!(got["started"].as_i64().is_some(), "{got}");
     assert_eq!(got["to"], "testbox/work/rev");
 
     // Only the addressee may answer.
@@ -462,7 +463,8 @@ fn a_task_is_answered_by_its_addressee_and_read_back() {
     );
     assert!(ok.status.success(), "{}", text(&ok));
     let got: Value = serde_json::from_slice(&task(&["get", &id, "--json"]).stdout).unwrap();
-    assert_eq!(got["status"], "answered", "{got}");
+    assert_eq!(got["status"], "done", "{got}");
+    assert_eq!(got["source"], "agent");
     assert_eq!(got["result"], "build is green");
     assert_eq!(got["answered_by"], "testbox/work/rev");
     assert_eq!(got["truncated"], false);
@@ -498,7 +500,7 @@ fn a_task_is_answered_by_its_addressee_and_read_back() {
         let out = task(&["get", &id2, "--json"]);
         serde_json::from_slice::<Value>(&out.stdout)
             .ok()
-            .filter(|v| v["status"] == "delivered")
+            .filter(|v| v["status"] == "running")
     });
     assert!(env
         .msg(
@@ -524,8 +526,133 @@ fn a_task_is_answered_by_its_addressee_and_read_back() {
         .find_map(|app| fs::read_to_string(env.config.join(app).join("tasks.jsonl")).ok())
         .expect("tasks.jsonl");
     assert!(
-        events.contains(&format!("\"id\":\"{id}\"")) && events.contains("\"answered\""),
+        events.contains(&format!("\"id\":\"{id}\"")) && events.contains("\"done\""),
         "{events}"
+    );
+    assert!(
+        !events.contains("build is green"),
+        "events never carry results"
+    );
+
+    // Created queued by a caller (dmcp), delivered later, finished by the
+    // creator from the screen when the agent never answered; owners isolated.
+    let made = task(&[
+        "create",
+        "--to",
+        "work/rev",
+        "--owner",
+        "u@x",
+        "--from",
+        "dmcp:demo",
+        "--correlation",
+        "c1",
+        "--json",
+        "summarise",
+        "the",
+        "logs",
+    ]);
+    assert!(made.status.success(), "{}", text(&made));
+    let made: Value = serde_json::from_slice(&made.stdout).unwrap();
+    let id3 = made["id"].as_str().unwrap().to_string();
+    assert_eq!(made["status"], "queued");
+    let again = task(&[
+        "create",
+        "--to",
+        "work/rev",
+        "--owner",
+        "u@x",
+        "--from",
+        "dmcp:demo",
+        "--id",
+        &id3,
+        "--json",
+        "summarise",
+        "the",
+        "logs",
+    ]);
+    let again: Value = serde_json::from_slice(&again.stdout).unwrap();
+    assert_eq!(again["id"], made["id"], "idempotent create");
+    let conflict = task(&[
+        "create", "--to", "work/rev", "--owner", "u@x", "--id", &id3, "--json", "other",
+    ]);
+    assert_eq!(conflict.status.code(), Some(1));
+    let conflict: Value = serde_json::from_slice(&conflict.stdout).unwrap();
+    assert_eq!(conflict["code"], "task_conflict");
+    let queued = task(&[
+        "list",
+        "--status",
+        "queued,blocked",
+        "--from",
+        "dmcp:demo",
+        "--json",
+    ]);
+    let queued: Value = serde_json::from_slice(&queued.stdout).unwrap();
+    assert_eq!(queued.as_array().unwrap().len(), 1, "{queued}");
+    let sent = env.msg(
+        None,
+        None,
+        &[
+            "send",
+            "--task",
+            &id3,
+            "--owner",
+            "u@x",
+            "--from",
+            "dmcp:demo",
+            "--json",
+            "work/rev",
+            "summarise the logs",
+        ],
+    );
+    assert!(sent.status.success(), "{}", text(&sent));
+    let resend = env.msg(
+        None,
+        None,
+        &[
+            "send",
+            "--task",
+            &id3,
+            "--owner",
+            "u@x",
+            "--from",
+            "dmcp:demo",
+            "--json",
+            "work/rev",
+            "summarise the logs",
+        ],
+    );
+    let resend: Value = serde_json::from_slice(&resend.stdout).unwrap();
+    assert_eq!(resend["already"], true, "not typed twice: {resend}");
+    let hidden = task(&["get", &id3, "--owner", "intruder", "--json"]);
+    assert_eq!(hidden.status.code(), Some(1));
+    let not_creator = task(&[
+        "update", &id3, "--status", "done", "--from", "someone", "--result", "x", "--json",
+    ]);
+    assert_eq!(not_creator.status.code(), Some(1));
+    let done = task(&[
+        "update",
+        &id3,
+        "--status",
+        "done",
+        "--from",
+        "dmcp:demo",
+        "--source",
+        "screen",
+        "--result",
+        "3 errors in the logs",
+        "--json",
+    ]);
+    assert!(done.status.success(), "{}", text(&done));
+    let got: Value =
+        serde_json::from_slice(&task(&["get", &id3, "--owner", "u@x", "--json"]).stdout).unwrap();
+    assert_eq!(got["status"], "done");
+    assert_eq!(got["source"], "screen");
+    assert!(got.get("answered_by").is_none(), "{got}");
+    let mine = task(&["events", "--owner", "u@x"]);
+    let mine = String::from_utf8_lossy(&mine.stdout).to_string();
+    assert!(
+        mine.contains(&id3) && !mine.contains(&id),
+        "owner-scoped events: {mine}"
     );
 
     // Tasks are local only for now.
