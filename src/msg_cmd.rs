@@ -252,6 +252,11 @@ struct Me {
     address: String,
 }
 
+/// This caller's machine/session/agent address (`cli` outside a pane).
+pub(crate) fn my_address() -> String {
+    whoami().address
+}
+
 fn whoami() -> Me {
     let machine = my_machine();
     let session = my_session();
