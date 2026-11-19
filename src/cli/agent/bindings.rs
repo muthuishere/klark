@@ -238,6 +238,7 @@ pub(crate) enum Operation {
     Start(AgentStartParams),
     Attach(Attach),
     Explain(Explain),
+    Restart(super::restart::Restart),
 }
 
 fn leaf(name: &'static str, arguments: Vec<clap::Arg>, about: &'static str) -> Command {
@@ -277,6 +278,11 @@ pub(crate) fn command() -> Command {
             .after_help("The pane must be at its interactive shell prompt. Success means the expected agent was detected in the same terminal and is ready for input.\n\nnext: klark agent prompt <TARGET> <TEXT> --wait"))
         .subcommand(leaf("attach", AttachProjection::arguments(), "Attach directly to an agent terminal")
             .override_usage("klark agent attach <TARGET> [OPTIONS]"))
+        .subcommand(Command::new("restart")
+            .about("Stop an agent and resume the same conversation in the same pane, clearing its queue")
+            .args(super::restart::args())
+            .override_usage("klark agent restart <TARGET> [--soft] [--force] [--kill] [--reason TEXT] [--timeout MS] [--no-notice] [--notify-senders]")
+            .after_help("Refuses, unless --force, while the agent shows a dialog or runs a git, deploy or install command. Also refuses with no conversation id to resume, with no shell under the agent, or from inside the agent itself.\n\nThe agent gets SIGTERM and is started again in its pane with its resume command; Claude Code keeps its launch flags. Its current turn, background helpers and shell commands stop; messages delivered since its last reply are listed as possibly unhandled and told to the resumed agent.\n\n--soft only presses Escape: the current turn stops and Claude Code runs its queued messages next."))
         .subcommand(leaf("explain", ExplainProjection::arguments(), "Explain agent detection state")
             .group(ArgGroup::new("explain_source").args(["target", "file"]).required(true)))
 }
@@ -309,6 +315,7 @@ pub(crate) fn from_matches(matches: &ArgMatches) -> Result<Operation, ParseError
         "start" => Operation::Start(AgentStartProjection::from_matches(matches)?),
         "attach" => Operation::Attach(AttachProjection::from_matches(matches)?),
         "explain" => Operation::Explain(ExplainProjection::from_matches(matches)?),
+        "restart" => Operation::Restart(super::restart::from_matches(matches)),
         _ => return Err(ParseError::Usage(format!("unknown agent command: {name}"))),
     })
 }

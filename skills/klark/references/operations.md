@@ -121,6 +121,17 @@ klark agent send-keys reviewer esc
 klark agent send-keys reviewer ctrl+c
 ```
 
+### Unstick a busy or hung agent
+
+A message sent to a busy agent waits in the agent CLI's own queue. Two ways out, mildest first:
+
+```bash
+klark agent restart reviewer --soft     # Escape only: the current turn stops; Claude Code then runs its queued messages
+klark agent restart reviewer --reason "hung on a tool call"
+```
+
+A full restart stops the agent (SIGTERM; `--kill` adds SIGKILL after `--timeout`) and starts it again in the same pane on the same conversation, so its queue is gone but its context, files and worktree stay. Claude Code keeps its launch flags. Its current turn, background helpers and shell commands stop. Messages delivered since its last reply are listed as `possibly_unhandled` and told to the resumed agent; `--notify-senders` also asks their senders to resend. It refuses, unless `--force`, while the agent shows a dialog or runs a git, deploy or install command, and always without a conversation id, without a shell under the agent, or from inside the agent itself. Prefer `--soft` first; restart only an agent that is really stuck, and never one you were not asked to.
+
 Klark validates all keys before writing any bytes. Read the result through the resolved agent:
 
 ```bash
