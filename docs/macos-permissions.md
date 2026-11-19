@@ -35,5 +35,19 @@ codesign -d -r- ~/.local/bin/klark   # designated requirement: identifier + team
 launchctl plist __TEXT,__info_plist ~/.local/bin/klark   # the built-in Info.plist
 ```
 
-A binary built with `cargo build` is still ad-hoc signed: fine for development, but
+A binary built on a machine without the signing identity is ad-hoc signed: fine for development, but
 macOS treats every build as new.
+
+## Local builds
+
+Every macOS build is signed at link time as `dev.klark.klark` with the Developer ID
+in the keychain (`scripts/macos_link.sh`, set as the linker in `.cargo/config.toml`).
+Debug, release and test builds therefore share the release's identity, and one Full
+Disk Access switch covers them all, with no new "klark" entry per build.
+
+Without a signing identity (CI, other machines) the build keeps the linker's ad-hoc
+signature, as before. `KLARK_DEV_SIGN=0` skips signing; `KLARK_SIGN_IDENTITY` picks
+another certificate.
+
+Old "klark" entries left over from ad-hoc builds stay in System Settings until removed
+there (select, then **–**): `tccutil` only resets app bundles, not bare binaries.

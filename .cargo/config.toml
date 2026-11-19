@@ -1,2 +1,10 @@
 [target.x86_64-pc-windows-msvc]
 rustflags = ["-C", "target-feature=+crt-static"]
+
+# Every macOS build is signed as dev.klark.klark, so macOS keeps one set of
+# permissions for all of them (scripts/macos_link.sh).
+[target.aarch64-apple-darwin]
+linker = "scripts/macos_link.sh"
+
+[target.x86_64-apple-darwin]
+linker = "scripts/macos_link.sh"
