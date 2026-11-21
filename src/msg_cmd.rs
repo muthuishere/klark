@@ -17,7 +17,7 @@ const USAGE: &str = "usage: klark msg <command> ...
 Agents message agents: in this session, in another klark session on this
 machine, or on another machine linked to the same hub (ADR 0009).
 
-Addresses: <agent> | <session>/<agent> | <machine>/<session>/<agent>
+Addresses: <agent> | <session>/<agent> | <machine>/<session>/<agent> | parent
   agent   = an agent name or a pane id; agents are named after their folder
             automatically (change it: klark msg name / klark agent rename)
   session = a klark session name; the default session is \"default\"
@@ -26,7 +26,7 @@ Addresses: <agent> | <session>/<agent> | <machine>/<session>/<agent>
 commands:
   whoami [--json]                        this agent's own address
   ls [--local] [--json]                  agents in every running session, worktrees included (+ the hub's, unless --local):
-                                         address, status, kind, main checkout or worktree, folder, title
+                                         address, status, kind, main checkout or worktree, parent, folder, title
   send [--from <addr>] [--json] <to> <text...>
                                          deliver a message as a prompt to another agent
   send --wait-reply <secs> <to> <text...>
@@ -576,6 +576,7 @@ fn cmd_ls(args: &[String]) -> R<()> {
                                 if local { "local" } else { "remote" }.to_string(),
                                 String::new(),
                                 String::new(),
+                                String::new(),
                             ]
                         }
                     }
@@ -613,7 +614,7 @@ fn home_dir() -> Option<String> {
 /// the checkout (`main` or `worktree <name>`, with the branch) for a local
 /// agent in git, `local` for one outside git, and `remote` (plus the
 /// checkout, when the other machine reports it) for an agent elsewhere.
-fn row(l: &LocalAgent, place: &str, home: Option<&str>) -> [String; 6] {
+fn row(l: &LocalAgent, place: &str, home: Option<&str>) -> [String; 7] {
     let mut checkout = match (l.checkout.as_deref(), &l.worktree) {
         (_, Some(wt)) => format!("worktree {wt}"),
         (Some(kind), None) => kind.to_string(),
@@ -632,12 +633,32 @@ fn row(l: &LocalAgent, place: &str, home: Option<&str>) -> [String; 6] {
         shown_status(&l.status),
         l.agent.clone().unwrap_or_default(),
         place,
+        parent_cell(l),
         l.cwd
             .as_deref()
             .map(|cwd| short_folder(cwd, home))
             .unwrap_or_default(),
         l.title.clone().unwrap_or_default(),
     ]
+}
+
+/// PARENT: for an agent in a worktree, the live agent in the main checkout
+/// (`session/agent`; the machine is the same), `several` when more than one
+/// fits (`--json` lists them), `none` when no agent runs there.
+fn parent_cell(l: &LocalAgent) -> String {
+    if let Some(p) = &l.parent {
+        return p
+            .split_once('/')
+            .map_or(p.as_str(), |(_, rest)| rest)
+            .to_string();
+    }
+    if !l.parents.is_empty() {
+        return format!("several ({})", l.parents.len());
+    }
+    if l.checkout.as_deref() == Some("worktree") && l.main_root.is_some() {
+        return "none".into();
+    }
+    String::new()
 }
 
 /// `cwd` with the home folder as `~`.
@@ -680,7 +701,7 @@ fn ellipsize(text: &str, width: usize) -> String {
     out
 }
 
-fn print_table(rows: Vec<[String; 6]>) {
+fn print_table(rows: Vec<[String; 7]>) {
     if rows.is_empty() {
         println!("no agents found (are any klark sessions running agents?)");
         return;
@@ -696,19 +717,36 @@ fn print_table(rows: Vec<[String; 6]>) {
 }
 
 /// The table, fitted into `width` columns; `None` keeps every cell whole.
-fn render_table(rows: &[[String; 6]], width: Option<usize>) -> String {
-    let head = ["ADDRESS", "STATUS", "AGENT", "WHERE", "FOLDER", "TITLE"].map(String::from);
-    let mut w = [0usize; 6];
+fn render_table(rows: &[[String; 7]], width: Option<usize>) -> String {
+    let head = [
+        "ADDRESS", "STATUS", "AGENT", "WHERE", "PARENT", "FOLDER", "TITLE",
+    ]
+    .map(String::from);
+    let mut w = [0usize; 7];
     for r in std::iter::once(&head).chain(rows.iter()) {
         for (i, c) in r.iter().enumerate() {
             w[i] = w[i].max(c.chars().count());
         }
     }
-    let min = [0, 0, 0, MIN_WHERE_WIDTH, MIN_FOLDER_WIDTH, MIN_TITLE_WIDTH];
+    // PARENT only when some agent works in a worktree.
+    let show_parent = rows.iter().any(|r| !r[4].is_empty());
+    let shown = |i: usize| i != 4 || show_parent;
+    let min = [
+        0,
+        0,
+        0,
+        MIN_WHERE_WIDTH,
+        0,
+        MIN_FOLDER_WIDTH,
+        MIN_TITLE_WIDTH,
+    ];
     let natural = w;
-    let total = |w: &[usize; 6]| w.iter().sum::<usize>() + 2 * (w.len() - 1);
+    let total = |w: &[usize; 7]| {
+        let cols: Vec<usize> = (0..7).filter(|&i| shown(i)).map(|i| w[i]).collect();
+        cols.iter().sum::<usize>() + 2 * (cols.len() - 1)
+    };
     let table_width = width.unwrap_or(usize::MAX);
-    for column in [5, 4, 3] {
+    for column in [6, 5, 3] {
         let excess = total(&w).saturating_sub(table_width);
         w[column] -= excess.min(w[column].saturating_sub(min[column]));
     }
@@ -718,7 +756,7 @@ fn render_table(rows: &[[String; 6]], width: Option<usize>) -> String {
         .chain(rows.iter().map(|r| fit_where(&r[3], w[3]).chars().count()))
         .max()
         .unwrap_or(w[3]);
-    for column in [4, 5] {
+    for column in [5, 6] {
         let spare = table_width.saturating_sub(total(&w));
         w[column] = natural[column].min(w[column] + spare);
     }
@@ -729,13 +767,17 @@ fn render_table(rows: &[[String; 6]], width: Option<usize>) -> String {
             r[1].clone(),
             r[2].clone(),
             fit_where(&r[3], w[3]),
-            ellipsize_start(&r[4], w[4]),
-            ellipsize(&r[5], w[5]),
+            r[4].clone(),
+            ellipsize_start(&r[5], w[5]),
+            ellipsize(&r[6], w[6]),
         ];
         let mut line = String::new();
         for (i, cell) in cells.iter().enumerate() {
+            if !shown(i) {
+                continue;
+            }
             line.push_str(cell);
-            if i < 5 {
+            if i < 6 {
                 line.push_str(&" ".repeat(w[i] - cell.chars().count() + 2));
             }
         }
@@ -768,6 +810,44 @@ fn text_of(words: &[String]) -> R<String> {
     Ok(text)
 }
 
+/// `parent`: the live agent in the main checkout of the repository this
+/// pane's worktree belongs to (`klark msg ls` PARENT). Refuses rather than
+/// guessing when there is none or several.
+fn parent_address() -> R<String> {
+    let pane = my_pane().ok_or_else(|| {
+        Fail::Error("parent works inside a klark pane (KLARK_PANE_ID is not set)".into())
+    })?;
+    let session = my_session();
+    let local = local_agents(&my_machine());
+    let me = local
+        .iter()
+        .find(|l| l.session == session && l.pane_id == pane)
+        .ok_or_else(|| {
+            Fail::Error(format!(
+                "parent: this pane ({session}/{pane}) is not an agent klark msg ls lists"
+            ))
+        })?;
+    if let Some(p) = &me.parent {
+        return Ok(p.clone());
+    }
+    let msg = if !me.parents.is_empty() {
+        format!(
+            "parent: several agents work in the main checkout; send to one of: {}",
+            me.parents.join(", ")
+        )
+    } else if me.checkout.as_deref() != Some("worktree") {
+        "parent: this agent is not in a git worktree, so it has no parent agent".into()
+    } else if let Some(main) = &me.main_root {
+        format!(
+            "parent: no klark agent runs in the main checkout {} (see: klark msg ls)",
+            main.display()
+        )
+    } else {
+        "parent: could not find this worktree's main checkout".into()
+    };
+    Err(Fail::Error(msg))
+}
+
 fn cmd_send(args: &[String]) -> R<()> {
     let a = Args::parse(
         args,
@@ -790,6 +870,13 @@ fn cmd_send(args: &[String]) -> R<()> {
         .split_first()
         .ok_or_else(|| Fail::Usage("send needs <to> <text...>".into()))?;
     let text = text_of(words)?;
+    let parent;
+    let to = if to == "parent" {
+        parent = parent_address()?;
+        &parent
+    } else {
+        to
+    };
     let from = a.value("--from").unwrap_or_else(|| {
         let me = whoami();
         // Outside a pane every caller is <machine>/<session>/cli; one that
@@ -1577,6 +1664,10 @@ mod tests {
             checkout: None,
             branch: None,
             title: None,
+            parent: None,
+            parents: Vec::new(),
+            root: None,
+            main_root: None,
         };
         a.address = format!("m1/{session}/{}", a.handle());
         a
@@ -1714,9 +1805,16 @@ mod tests {
              "cwd": "/elsewhere", "foreground_cwd": wt.display().to_string(), "terminal_title_stripped": ""},
             {"agent": "claude", "agent_status": "idle", "pane_id": "w1:p3", "cwd": "/"}
         ]});
-        let got = agents_from_list("work", "m1", &result);
+        let mut got = agents_from_list("work", "m1", &result);
+        crate::agent_index::link_parents(&mut got);
         let v = serde_json::to_value(&got).unwrap();
         assert_eq!(v[0]["address"], "m1/work/klark");
+        assert!(
+            v[0].get("parent").is_none(),
+            "the main checkout has no parent"
+        );
+        assert_eq!(v[1]["parent"], "m1/work/klark", "the worktree's parent");
+        assert!(v[2].get("parent").is_none());
         assert_eq!(v[0]["cwd"], main.display().to_string());
         assert_eq!(v[0]["checkout"], "main");
         assert_eq!(v[0]["branch"], "master");
@@ -1738,10 +1836,12 @@ mod tests {
         let home = base.display().to_string();
         let rows: Vec<_> = got.iter().map(|l| row(l, "local", Some(&home))).collect();
         assert_eq!(rows[0][3], "main (master)");
-        assert_eq!(rows[0][4], "~/klark");
+        assert_eq!(rows[0][4], "");
+        assert_eq!(rows[1][4], "work/klark");
+        assert_eq!(rows[0][5], "~/klark");
         assert_eq!(rows[1][3], "worktree klark-agent-names (agent-pane-names)");
         assert_eq!(rows[2][3], "local");
-        assert_eq!(rows[2][4], "/");
+        assert_eq!(rows[2][5], "/");
         let _ = std::fs::remove_dir_all(&base);
     }
 
@@ -1820,6 +1920,16 @@ mod tests {
             Some(TABLE_WIDTH),
         );
         assert!(short.lines().all(|l| l.chars().count() < 60), "{short}");
+        // PARENT shows once an agent works in a worktree.
+        let mut wt = agent("work", Some("feat"), "p2");
+        wt.checkout = Some("worktree".into());
+        wt.parent = Some("m1/work/klark".into());
+        let with_parent = render_table(&[row(&wt, "local", None)], Some(TABLE_WIDTH));
+        assert!(with_parent.contains("PARENT") && with_parent.contains("work/klark"));
+        assert!(
+            !table.contains("PARENT"),
+            "no worktree agent: no PARENT column"
+        );
         // Columns line up: every row's STATUS starts where the header's does.
         let status_col = lines[0].find("STATUS").unwrap();
         for line in &lines[1..] {
