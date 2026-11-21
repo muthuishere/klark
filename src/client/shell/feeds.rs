@@ -446,4 +446,24 @@ fn refresh_hooks(jobs: &mut ClientFeedsOverlay) {
     jobs.hooks_running = supervisor.is_some();
     jobs.hooks = hooks;
     jobs.hook_selected = jobs.hook_selected.min(jobs.hooks.len().saturating_sub(1));
+    if jobs.hooks.is_empty() {
+        // "no hooks" may really be a config.toml this klark cannot read:
+        // say so instead of an empty list.
+        if let Some(why) = hooks_config_problem(&crate::config::Config::load().diagnostics) {
+            jobs.message = Some(why);
+        }
+    }
+}
+
+/// The config problem that can hide hooks: a file that fell back to
+/// defaults, or a diagnostic about `[hooks]`.
+pub(super) fn hooks_config_problem(diagnostics: &[String]) -> Option<String> {
+    let hit = diagnostics
+        .iter()
+        .find(|d| d.contains("using defaults"))
+        .or_else(|| diagnostics.iter().find(|d| d.contains("hooks")))?;
+    Some(format!(
+        "config.toml: {hit} (klark {}; klark config check)",
+        env!("CARGO_PKG_VERSION")
+    ))
 }
