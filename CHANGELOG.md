@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Added
+- Parent agents: an agent in a linked git worktree now has a parent, the live agent in that repository's main checkout (one in the same session wins over others). `klark msg ls` shows it in a PARENT column (shown when some agent works in a worktree: `session/agent`, `several (N)`, or `none`), and `--json` adds `parent` (or `parents` when several fit). `klark msg send parent "<text>"` sends to it from inside a worktree pane, and refuses with the reason (not in a worktree, no agent in the main checkout, or the candidates) instead of guessing. The klark skill maps "message the parent agent" to it.
+
 ### Changed
 - Agents are named automatically. An agent pane that has no name gets one from the folder it works in (for a linked git worktree, the worktree's folder): lowercased, other characters turned into `-`, at most 32 characters, prefixed with the agent kind when it would not start with a letter, and `-2`, `-3`, … when another pane already uses it. `klark msg ls` addresses now say which agent is which (`laptop/work/klark` instead of `laptop/work/w6:p1`). A name set with `klark msg name`, `klark agent rename` or `agent start --name` is never replaced, and clearing a name (`klark agent rename <target> --clear`) keeps it cleared until that agent leaves the pane. Pane ids still work as targets everywhere.
 - `klark msg ls` shows each agent's folder (`~`-shortened), whether it is the `main` checkout or a `worktree <name>`, its branch, and its terminal title (what it is working on). `--json` adds `cwd`, `checkout`, `branch` and `title`; `klark agent list` adds `checkout`, `worktree` and `branch`. Existing fields are unchanged. Through the hub, `--local --json` is what a linked machine answers, so these fields also reach other machines' listings.

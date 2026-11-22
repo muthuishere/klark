@@ -25,7 +25,9 @@ klark agent wait work/coder --timeout 900000
 klark agent read work/coder --lines 30
 ```
 
-Who to message: only agents `klark msg ls` lists (panes running a coding agent), never a plain shell, server or editor. Pick by NAME in the address, FOLDER, WHERE (`main` checkout or `worktree <name>`, with the branch) and TITLE (what it is working on); `--json` gives the full `cwd`, `checkout`, `worktree`, `branch` and `title`. If two agents still fit, ask the person.
+Who to message: only agents `klark msg ls` lists (panes running a coding agent), never a plain shell, server or editor. Pick by NAME in the address, FOLDER, WHERE (`main` checkout or `worktree <name>`, with the branch) and TITLE (what it is working on); `--json` gives the full `cwd`, `checkout`, `worktree`, `branch`, `title` and `parent`. If two agents still fit, ask the person.
+
+Parent agent: when the person says "tell / message / report to the parent (klark) agent" and you work in a git worktree, send `klark msg send parent "<text>"`. klark finds the repository's main checkout and the live agent working there (PARENT in `klark msg ls`; `parent` in `--json`). If it reports none or several, don't guess: show the person the error (it lists the candidates) and ask which one.
 
 Etiquette: one ask per message, say what you need back and in what form, include paths/branch/PR the other agent cannot see. Check `klark msg ls` first: don't message a `blocked` agent (it waits on a person). If the target is `working` and the message can wait, use `--wait <secs>` so it lands between turns instead of mid-turn. Remote targets are not waited on. No "thanks"/"ok" messages.
 
@@ -38,7 +40,8 @@ Etiquette: one ask per message, say what you need back and in what form, include
 | ask an agent and get the answer back when you are NOT in a klark pane (`KLARK_PANE_ID` unset: a plain shell, a script, a coding agent outside klark) | `klark msg send --wait-reply 600 work/coder "<question>"`; it prints the answer. Never invent a `--from` name: nothing can be typed into it, so the answer only reaches `klark msg log`. |
 | message an agent only once it is idle | `klark msg send --wait 300 work/coder "<text>"` |
 | message every agent in this session; on this machine | `klark msg send --all "<text>"`; `klark msg send --all-sessions "<text>"` |
-| list every agent: name, folder, main/worktree, branch, title | `klark msg ls --local` (`--json`; without `--local` also the hub's machines) |
+| message my parent agent (the one in the main checkout of my worktree) | `klark msg send parent "<text>"` |
+| list every agent: name, folder, main/worktree, parent, branch, title | `klark msg ls --local` (`--json`; without `--local` also the hub's machines) |
 | recent messages | `klark msg log` (`-n 50`, `--json`) |
 | agents on other machines | `klark msg login --hub <url> --user <name>` (a person types the password); `klark msg status` |
 
