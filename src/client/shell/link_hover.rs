@@ -1,7 +1,7 @@
 use super::*;
 use crate::api::schema::{PaneLinkActivateParams, PaneLinkRegion};
 use crate::protocol::SurfaceRect;
-use crossterm::event::{KeyModifiers, MouseEvent, MouseEventKind};
+use crossterm::event::{MouseEvent, MouseEventKind};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct LinkHoverTarget {
@@ -68,6 +68,19 @@ impl ClientShellState {
                 .any(|hit| hit.pane_id == target.pane_id && hit.inner_rect == target.inner_rect)
     }
 
+    /// Whether `point` is on a link the hover already resolved. A plain click there
+    /// opens the link; clicks elsewhere go to the pane with no extra round trip.
+    pub(super) fn hovered_link_at(&self, point: (u16, u16)) -> bool {
+        self.link_hover.as_ref().is_some_and(|hover| {
+            let rect = hover.target.inner_rect;
+            contains(rect, point)
+                && self.link_hover_target_current(&hover.target)
+                && hover.regions.iter().any(|region| {
+                    region_contains(region, point.0 - rect.x, point.1 - rect.y)
+                })
+        })
+    }
+
     pub(super) fn invalidate_link_hover(&mut self) {
         if self
             .link_hover
@@ -79,9 +92,8 @@ impl ClientShellState {
     }
 
     pub(super) fn update_link_hover(&mut self, mouse: MouseEvent, outcome: &mut ClientShellInput) {
-        if mouse.kind != MouseEventKind::Moved
-            || !mouse.modifiers.contains(KeyModifiers::CONTROL)
-            || !self.link_hover_allowed()
+        // Links underline whenever the pointer is over them, with or without Ctrl.
+        if mouse.kind != MouseEventKind::Moved || !self.link_hover_allowed()
         {
             outcome.repaint |= self.clear_link_hover();
             return;

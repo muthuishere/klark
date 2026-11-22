@@ -152,18 +152,12 @@ fn ctrl_hover_coalesces_motion_and_ignores_old_replies() {
 
 #[test]
 fn ctrl_hover_clears_on_release_content_change_and_focus_loss() {
-    for clear in 0..4 {
+    for clear in 1..4 {
         let mut state = hover_state();
         let mouse = hover_mouse(&state, 1, 0);
         let id = hover_request(&state.handle_raw_events(vec![RawInputEvent::Mouse(mouse)]));
         assert!(resolve_hover(&mut state, &id));
         match clear {
-            0 => {
-                state.handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
-                    modifiers: KeyModifiers::empty(),
-                    ..mouse
-                })]);
-            }
             1 => {
                 let mut next = surface();
                 next.surface_revision += 1;
@@ -418,4 +412,84 @@ fn ctrl_hover_groups_contiguous_same_destination_cells_without_server_query() {
         (regions[0].row, regions[0].start_col, regions[0].end_col),
         (0, 1, 2)
     );
+}
+
+/// A server that resolves and activates links, so a click can reach it.
+fn click_state() -> ClientShellState {
+    let mut state = hover_state();
+    state.set_endpoint_methods(Some(vec![
+        "pane.link.resolve".into(),
+        "pane.link.activate".into(),
+    ]));
+    state
+}
+
+fn plain(mouse: MouseEvent) -> MouseEvent {
+    MouseEvent {
+        modifiers: KeyModifiers::empty(),
+        ..mouse
+    }
+}
+
+#[test]
+fn plain_hover_underlines_a_link_without_ctrl() {
+    let mut state = hover_state();
+    let mouse = plain(hover_mouse(&state, 1, 0));
+    let id = hover_request(&state.handle_raw_events(vec![RawInputEvent::Mouse(mouse)]));
+    assert!(resolve_hover(&mut state, &id));
+    assert!(state.hovered_link_at((mouse.column, mouse.row)));
+    // Moving within the link keeps it, with no new request.
+    let moved = plain(hover_mouse(&state, 3, 0));
+    let outcome = state.handle_raw_events(vec![RawInputEvent::Mouse(moved)]);
+    assert!(outcome.actions.is_empty());
+    assert!(state.link_hover.is_some());
+}
+
+fn link_activation(outcome: &ClientShellInput) -> bool {
+    outcome.actions.iter().any(|action| {
+        matches!(
+            action,
+            ClientShellAction::Endpoint { request, .. }
+                if matches!(request.method, crate::api::schema::Method::PaneLinkActivate(_))
+        )
+    })
+}
+
+#[test]
+fn plain_click_on_a_hovered_link_opens_it() {
+    let mut state = click_state();
+    let mouse = plain(hover_mouse(&state, 2, 0));
+    let id = hover_request(&state.handle_raw_events(vec![RawInputEvent::Mouse(mouse)]));
+    assert!(resolve_hover(&mut state, &id));
+    assert!(state.hovered_link_at((mouse.column, mouse.row)), "hover");
+    let down = MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        ..mouse
+    };
+    let outcome = state.handle_raw_events(vec![RawInputEvent::Mouse(down)]);
+    assert!(link_activation(&outcome), "{:?}", outcome.actions);
+}
+
+#[test]
+fn plain_click_off_a_link_is_an_ordinary_click() {
+    let mut state = click_state();
+    let mouse = plain(hover_mouse(&state, 2, 0));
+    let id = hover_request(&state.handle_raw_events(vec![RawInputEvent::Mouse(mouse)]));
+    assert!(resolve_hover(&mut state, &id));
+    // Column 8 of row 0 is outside the resolved link regions.
+    let off = plain(hover_mouse(&state, 8, 0));
+    let down = MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        ..off
+    };
+    let outcome = state.handle_raw_events(vec![RawInputEvent::Mouse(down)]);
+    assert!(!link_activation(&outcome), "{:?}", outcome.actions);
+    // Never resolved: a plain click does not ask the server either.
+    let mut fresh = click_state();
+    let down = MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        ..plain(hover_mouse(&fresh, 2, 0))
+    };
+    let outcome = fresh.handle_raw_events(vec![RawInputEvent::Mouse(down)]);
+    assert!(!link_activation(&outcome), "{:?}", outcome.actions);
 }
