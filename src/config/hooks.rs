@@ -20,8 +20,11 @@ pub enum RestartPolicy {
 }
 
 /// One hook: a shell command klark runs and, for start hooks, supervises.
+///
+/// Unknown keys are ignored with an "unknown config key" warning, never an
+/// error: a key added by a newer klark must not make an older klark drop
+/// the whole config (0.11.6 fell back to defaults on `notify`).
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 pub struct HookDef {
     /// Unique among all hooks; names the log file and the CLI target.
     pub name: String,
@@ -45,7 +48,7 @@ pub struct HookDef {
 
 /// `[hooks]`: the start and stop lists.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub struct HooksConfig {
     pub start: Vec<HookDef>,
     pub stop: Vec<HookDef>,
@@ -213,10 +216,12 @@ notify = ["ops"]
         assert!(v.stop.is_empty());
     }
 
+    /// A key from a newer klark is ignored (with a warning from the config
+    /// loader), so the hook and the rest of the config still load.
     #[test]
-    fn unknown_keys_are_refused() {
-        assert!(
-            toml::from_str::<HooksConfig>("[[start]]\nname=\"a\"\nrun=\"x\"\nport=1\n").is_err()
-        );
+    fn unknown_keys_are_ignored() {
+        let c = toml::from_str::<HooksConfig>("[[start]]\nname=\"a\"\nrun=\"x\"\nport=1\n")
+            .expect("an unknown key does not fail the hooks");
+        assert_eq!(c.start[0].name, "a");
     }
 }

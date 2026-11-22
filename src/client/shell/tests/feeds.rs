@@ -531,3 +531,23 @@ fn jobs_logs_key_opens_feed_and_hook_logs() {
         ["hooks", "logs", "dmcp", "-n", "200", "-f"]
     );
 }
+
+#[test]
+fn hooks_tab_names_the_config_problem_instead_of_no_hooks() {
+    use super::super::feeds::hooks_config_problem;
+    assert_eq!(hooks_config_problem(&[]), None);
+    assert_eq!(
+        hooks_config_problem(&["unknown config key ui.x; ignoring key".into()]),
+        None
+    );
+    let why =
+        hooks_config_problem(
+            &["config parse error: unknown field `notify`; using defaults".into()],
+        )
+        .expect("a file that fell back to defaults is named");
+    assert!(
+        why.starts_with("config.toml: config parse error: unknown field `notify`"),
+        "{why}"
+    );
+    assert!(why.contains(env!("CARGO_PKG_VERSION")), "{why}");
+}
