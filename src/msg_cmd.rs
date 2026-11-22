@@ -35,8 +35,12 @@ commands:
   send --wait <secs> <to> <text...>      wait until the agent is idle (not working, not on a dialog), then send
   send --all [--json] <text...>          every other agent in this session (worktrees included)
   send --all-sessions [--json] <text...> every other agent in every running session on this machine
+  send --task <id|new> [--owner U] [--parent P] [--correlation C] [--wait-reply <secs>] <to> <text...>
+                                         a durable task: recorded in SQLite, answered with
+                                         reply --task, read with klark task get/wait (prints the id)
   reply [--to <addr>] <text...>          answer the agent that messaged this pane (--to: that
                                          sender, as the message's hint gives it; else the last one)
+  reply --task <id> <result...>          answer a task sent to this pane (stores the result)
   log [-n N] [--json]                    recent sent/received messages
   name <new-name>                        rename this pane's agent (its address)
   login --hub <url> --user <name> [--name <machine>] [--password-stdin]
@@ -163,6 +167,35 @@ impl Args {
         Ok(out)
     }
 
+    /// Options anywhere, positionals in between (`klark task`): an option
+    /// after the id still counts, so `get <id> --owner U` is never read as
+    /// text and silently unscoped. `--` ends options.
+    fn parse_anywhere(args: &[String], with_value: &[&str], switches: &[&str]) -> R<Self> {
+        let mut out = Args::default();
+        let mut it = args.iter();
+        while let Some(a) = it.next() {
+            if a == "--" {
+                out.positional.extend(it.by_ref().cloned());
+                break;
+            }
+            if let Some((k, v)) = a.split_once('=').filter(|(k, _)| with_value.contains(k)) {
+                out.flags.push((k.to_string(), Some(v.to_string())));
+            } else if with_value.contains(&a.as_str()) {
+                let v = it
+                    .next()
+                    .ok_or_else(|| Fail::Usage(format!("{a} needs a value")))?;
+                out.flags.push((a.clone(), Some(v.clone())));
+            } else if switches.contains(&a.as_str()) {
+                out.flags.push((a.clone(), None));
+            } else if a.starts_with('-') && a.len() > 1 {
+                return Err(Fail::Usage(format!("unknown flag {a}")));
+            } else {
+                out.positional.push(a.clone());
+            }
+        }
+        Ok(out)
+    }
+
     fn has(&self, name: &str) -> bool {
         self.flags.iter().any(|(k, _)| k == name)
     }
@@ -193,6 +226,9 @@ pub(crate) enum Frame<'a> {
     /// A hook notice: `[klark hook <name>] <text>`. No reply hint, and the
     /// sender is not recorded for `klark msg reply`: a hook is not an agent.
     Hook(&'a str),
+    /// A durable task (klark#25): `[klark msg from <from>] [task <id>] <text>`
+    /// plus the hint to answer it with `klark msg reply --task <id>`.
+    Task(&'a str),
 }
 
 impl Frame<'_> {
@@ -200,8 +236,16 @@ impl Frame<'_> {
         match self {
             Frame::Msg => format_prompt(from, text),
             Frame::Hook(name) => format_hook_notice(name, text),
+            Frame::Task(id) => format_task_prompt(from, id, text),
         }
     }
+}
+
+/// The prompt an agent sees for a task.
+pub fn format_task_prompt(from: &str, id: &str, text: &str) -> String {
+    format!(
+        "[klark msg from {from}] [task {id}] {text}\n(when done, answer it with: klark msg reply --task {id} \"<result>\")"
+    )
 }
 
 /// The prompt an agent sees for a hook notice.
@@ -851,10 +895,21 @@ fn parent_address() -> R<String> {
 fn cmd_send(args: &[String]) -> R<()> {
     let a = Args::parse(
         args,
-        &["--from", "--wait", "--wait-reply"],
+        &[
+            "--from",
+            "--wait",
+            "--wait-reply",
+            "--task",
+            "--owner",
+            "--parent",
+            "--correlation",
+        ],
         &["--json", "--all", "--all-sessions"],
     )?;
     let wait = wait_secs(&a)?;
+    if a.has("--task") && (a.has("--all") || a.has("--all-sessions")) {
+        return Err(Fail::Usage("--task goes to one agent, not --all".into()));
+    }
     let wait_reply = a
         .value("--wait-reply")
         .map(|v| {
@@ -889,6 +944,9 @@ fn cmd_send(args: &[String]) -> R<()> {
     });
     if let Some(secs) = wait {
         wait_until_idle(to, secs)?;
+    }
+    if let Some(id) = a.value("--task") {
+        return send_task(&a, to, &from, &text, &id, wait_reply);
     }
     let seen = tail_log(&data_dir(), usize::MAX).len();
     let (to_addr, outcome) = send(to, &from, &text);
@@ -927,6 +985,137 @@ fn cmd_send(args: &[String]) -> R<()> {
             Err(Fail::Error(e))
         }
     }
+}
+
+fn task_store() -> Result<crate::task_store::Store, String> {
+    crate::task_store::Store::open(&data_dir()).map_err(String::from)
+}
+
+/// The agent's stable id (its CLI conversation id), when klark knows it.
+fn agent_id_of(session: &str, pane: &str) -> Option<String> {
+    let list = call(&session_socket(session), "agent.list", json!({})).ok()?;
+    list.get("agents")?
+        .as_array()?
+        .iter()
+        .find(|a| a["pane_id"] == json!(pane))?
+        .pointer("/agent_session/value")?
+        .as_str()
+        .map(str::to_string)
+}
+
+/// A queued task for `to` (resolved locally): created, or the existing one
+/// for the same id, owner, agent and prompt.
+fn create_task(
+    id: Option<String>,
+    owner: Option<String>,
+    from: &str,
+    to: &str,
+    prompt: &str,
+    parent: Option<String>,
+    correlation: Option<String>,
+) -> Result<crate::task_store::Task, crate::task_store::TaskError> {
+    use crate::task_store::TaskError;
+    let store = crate::task_store::Store::open(&data_dir())?;
+    let (shown, session, pane) = resolve_local(to).map_err(|e| TaskError {
+        code: "agent_not_found",
+        message: e,
+    })?;
+    store.create(crate::task_store::NewTask {
+        id,
+        owner,
+        from: from.to_string(),
+        to: shown,
+        agent_id: agent_id_of(&session, &pane),
+        to_session: session,
+        to_pane: pane,
+        parent_id: parent,
+        correlation_id: correlation,
+        prompt: prompt.to_string(),
+    })
+}
+
+/// `send --task <id|new>`: create (or find) the task, deliver it framed with
+/// its id unless it is already delivered, and record running / blocked /
+/// failed. With `--wait-reply`, wait for its answer.
+fn send_task(
+    a: &Args,
+    to: &str,
+    from: &str,
+    text: &str,
+    id: &str,
+    wait_reply: Option<u64>,
+) -> R<()> {
+    let json = a.has("--json");
+    let id = (id != "new").then(|| id.to_string());
+    let task = create_task(
+        id,
+        a.value("--owner"),
+        from,
+        to,
+        text,
+        a.value("--parent"),
+        a.value("--correlation"),
+    )
+    .map_err(|e| Fail::Error(e.message))?;
+    let store = task_store()?;
+    let id = task.id.clone();
+    // Idempotent: a task already delivered (or finished) is not typed again.
+    let already = !matches!(task.status.as_str(), "queued" | "blocked");
+    let (to_addr, outcome) = if already {
+        (task.to.clone(), Ok(()))
+    } else {
+        let (to_addr, _, outcome) = send_routed(to, from, text, Frame::Task(&id));
+        match &outcome {
+            Ok(()) => store.set_status(&id, "running", None),
+            Err(e) if e.contains("agent_blocked") || e.contains("blocked") => {
+                store.set_status(&id, "blocked", Some(e))
+            }
+            Err(e) => store.set_status(&id, "failed", Some(e)),
+        }
+        .map_err(|e| Fail::Error(e.message))?;
+        (to_addr, outcome)
+    };
+    if let Err(e) = outcome {
+        let task = store.get(&id).ok().flatten();
+        if json {
+            println!(
+                "{}",
+                json!({"delivered": false, "task": id, "status": task.map(|t| t.status), "to": to_addr, "from": from, "error": e})
+            );
+        }
+        return Err(Fail::Error(e));
+    }
+    if let Some(secs) = wait_reply {
+        let task = store
+            .wait(&id, None, Duration::from_secs(secs))
+            .map_err(|e| Fail::Error(e.message))?;
+        if json {
+            println!("{}", serde_json::to_string(&task).unwrap_or_default());
+        } else if task.status == "done" {
+            println!("{}", task.result.unwrap_or_default());
+        }
+        if task.status != "done" {
+            return Err(Fail::Error(format!(
+                "task {id} is {}, not answered within {secs}s; it may still come: klark task wait {id}",
+                task.status
+            )));
+        }
+        return Ok(());
+    }
+    if json {
+        println!(
+            "{}",
+            json!({"delivered": true, "already": already, "task": id, "to": to_addr, "from": from})
+        );
+    } else if already {
+        println!(
+            "task {id} was already delivered to {to_addr} ({})",
+            task.status
+        );
+    } else {
+        println!("task {id} delivered to {to_addr}");
+    }
+    Ok(())
 }
 
 /// `send --wait-reply`: the first message addressed to `me` written to the
@@ -1057,10 +1246,46 @@ fn send(to: &str, from: &str, text: &str) -> (String, Result<(), String>) {
 }
 
 fn send_framed(to: &str, from: &str, text: &str, frame: Frame) -> (String, Result<(), String>) {
+    let (shown, _, result) = send_routed(to, from, text, frame);
+    (shown, result)
+}
+
+/// The local destination of an address: (shown address, session, pane id).
+fn resolve_local(to: &str) -> Result<(String, String, String), String> {
+    let machine = my_machine();
+    let addr = parse_address(to)?;
+    if addr.machine.as_deref().is_some_and(|m| m != machine) {
+        return Err(format!(
+            "{to}: tasks go to agents on this machine only (for now)"
+        ));
+    }
+    let local = local_agents(&machine);
+    match resolve(&addr, &local, &machine)? {
+        Route::Local { session, agent } => {
+            let shown = local
+                .iter()
+                .find(|l| l.session == session && l.pane_id == agent)
+                .map(|l| l.address.clone())
+                .unwrap_or_else(|| format!("{machine}/{session}/{agent}"));
+            Ok((shown, session, agent))
+        }
+        Route::Remote { to } => Err(format!(
+            "{to}: tasks go to agents on this machine only (for now)"
+        )),
+    }
+}
+
+fn send_routed(
+    to: &str,
+    from: &str,
+    text: &str,
+    frame: Frame,
+) -> (String, Option<(String, String)>, Result<(), String>) {
+    let mut route = None;
     let machine = my_machine();
     let addr = match parse_address(to) {
         Ok(a) => a,
-        Err(e) => return (to.to_string(), Err(e)),
+        Err(e) => return (to.to_string(), None, Err(e)),
     };
     let local = if addr.machine.as_deref().is_some_and(|m| m != machine) {
         Vec::new()
@@ -1075,19 +1300,20 @@ fn send_framed(to: &str, from: &str, text: &str, frame: Frame) -> (String, Resul
                 .find(|l| l.session == session && l.pane_id == agent)
                 .map(|l| l.address.clone())
                 .unwrap_or_else(|| format!("{machine}/{session}/{agent}"));
-            (
-                shown,
-                deliver_framed(&session, &agent, from, text, frame).map(|_| ()),
-            )
+            let r = deliver_framed(&session, &agent, from, text, frame).map(|_| ());
+            route = Some((session, agent));
+            (shown, r)
         }
         Ok(Route::Remote { to }) => {
             // The remote machine frames what the hub hands it as a `klark
             // msg`; a hook notice keeps its own prefix inside that text.
-            let body = match frame {
-                Frame::Msg => text.to_string(),
-                Frame::Hook(name) => format_hook_notice(name, text),
+            let r = match frame {
+                Frame::Msg => send_via_hub(&to, from, text),
+                Frame::Hook(name) => send_via_hub(&to, from, &format_hook_notice(name, text)),
+                Frame::Task(_) => Err(format!(
+                    "{to}: tasks go to agents on this machine only (for now)"
+                )),
             };
-            let r = send_via_hub(&to, from, &body);
             (to, r)
         }
     };
@@ -1098,7 +1324,7 @@ fn send_framed(to: &str, from: &str, text: &str, frame: Frame) -> (String, Resul
         text,
         result.as_ref().err().map(String::as_str),
     );
-    (to_addr, result)
+    (to_addr, route, result)
 }
 
 /// A hook notice to a `notify` address: resolved, delivered and logged like
@@ -1189,7 +1415,7 @@ fn deliver_framed(
         .unwrap_or_else(|_| agent.to_string());
     let result = result.map(|(r, _)| r);
     let to = received_address(&my_machine(), session, agent, result.as_ref().ok());
-    if result.is_ok() && frame == Frame::Msg {
+    if result.is_ok() && matches!(frame, Frame::Msg | Frame::Task(_)) {
         if let Err(e) = record_sender(&data_dir(), session, &pane, from) {
             eprintln!("klark msg: could not record sender: {e}");
         }
@@ -1359,8 +1585,11 @@ fn cmd_deliver(args: &[String]) -> R<()> {
 }
 
 fn cmd_reply(args: &[String]) -> R<()> {
-    let a = Args::parse(args, &["--to"], &["--json"])?;
+    let a = Args::parse(args, &["--to", "--task"], &["--json"])?;
     let text = text_of(&a.positional)?;
+    if let Some(id) = a.value("--task") {
+        return reply_task(&id, &text);
+    }
     let to = match a.value("--to") {
         Some(to) => to,
         None => {
@@ -1383,6 +1612,294 @@ fn cmd_reply(args: &[String]) -> R<()> {
         Err(e) => return Err(e.into()),
     }
     Ok(())
+}
+
+/// `reply --task <id>`: store the result (only the task's addressee may), then
+/// tell the sender as an ordinary reply.
+fn reply_task(id: &str, text: &str) -> R<()> {
+    let pane =
+        my_pane().ok_or("reply --task works inside a klark pane (KLARK_PANE_ID is not set)")?;
+    let me = whoami();
+    let store = task_store()?;
+    let truncated = store
+        .answer(id, &me.session, &pane, &me.address, text)
+        .map_err(|e| Fail::Error(e.message))?;
+    let task = store
+        .get(id)
+        .ok()
+        .flatten()
+        .ok_or_else(|| format!("no task {id}"))?;
+    println!("task {id} answered");
+    if truncated {
+        println!(
+            "note: the result was cut to {} KB; put the rest in a file and give its path",
+            crate::task_store::RESULT_CAP / 1024
+        );
+    }
+    let note = format!("[task {id} answered] {text}");
+    let (to_addr, outcome) = send(&task.from, &me.address, &note);
+    // A sender outside klark (a script, dmcp) reads the task instead.
+    if outcome.is_ok() {
+        println!("told {to_addr}");
+    }
+    Ok(())
+}
+
+const TASK_USAGE: &str = "usage: klark task <command> ...
+
+Durable tasks (klark#25). klark's tasks.db (SQLite, next to messages.jsonl) is
+the only task store; callers keep no task rows. Lifecycle:
+queued -> running (delivered) | blocked (agent waits on a person; retry) | failed
+-> done (the agent's `klark msg reply --task <id> \"<result>\"`).
+
+commands:
+  create --to <agent> [--owner U] [--from A] [--id X] [--parent P] [--correlation C] <prompt...>
+                                          a queued task (nothing is sent); prints the task.
+                                          The same --id, owner, agent and prompt return the
+                                          existing task; otherwise task_conflict.
+  (deliver: klark msg send --task <id|new> [--owner U] [--parent P] [--correlation C] <to> <prompt...>)
+  update <id> --status queued|running|blocked|failed [--note <text>] [--error <text>]
+  update <id> --status done --from <creator> --source <screen|...> (--result <text> | --result-file <f>)
+                                          the creator finishes a task the agent never answered
+  progress <id> <text...>                 a progress note (only the addressee's pane)
+  get <id> [--owner U] [--json]           one task
+  list [--owner U] [--from A] [--status s1,s2] [--parent P] [--correlation C] [-n N] [--json]
+  wait <id> [--owner U] [--timeout secs] [--json]   until done or failed (default 300 s)
+  events [--since <unix secs>] [--owner U]          state changes (no prompts or results)
+  prune [--older-than <days>]             drop finished tasks (also automatic after 30 days)
+
+--owner: another owner's task reads as task_not_found.
+exit codes: 0 ok / done; 1 not found, failed, refused or error; 124 wait timed out.
+--json errors print {\"error\": \"...\", \"code\": \"task_not_found|task_conflict|not_addressee|not_creator|task_finished|bad_request|store_error\"}.";
+
+/// `klark task ...`.
+pub fn task_run(args: &[String]) -> ! {
+    let (cmd, rest) = match args.split_first() {
+        Some((c, r)) => (c.as_str(), r),
+        None => {
+            println!("{TASK_USAGE}");
+            std::process::exit(0)
+        }
+    };
+    if matches!(cmd, "-h" | "--help" | "help") {
+        println!("{TASK_USAGE}");
+        std::process::exit(0)
+    }
+    let json = rest.iter().any(|a| a == "--json");
+    let fail = |code: &str, msg: String, exit: i32| -> ! {
+        if json {
+            println!("{}", json!({"error": msg, "code": code}));
+        } else {
+            eprintln!("klark task: {msg}");
+        }
+        std::process::exit(exit)
+    };
+    let a = match Args::parse_anywhere(
+        rest,
+        &[
+            "--to",
+            "--owner",
+            "--from",
+            "--id",
+            "--parent",
+            "--correlation",
+            "--status",
+            "--note",
+            "--error",
+            "--source",
+            "--result",
+            "--result-file",
+            "-n",
+            "--timeout",
+            "--since",
+            "--older-than",
+        ],
+        &["--json"],
+    ) {
+        Ok(a) => a,
+        Err(Fail::Usage(m)) | Err(Fail::Error(m)) => fail("bad_request", m, 2),
+    };
+    let store = match crate::task_store::Store::open(&data_dir()) {
+        Ok(s) => s,
+        Err(e) => fail(e.code, e.message, 1),
+    };
+    let owner = a.value("--owner");
+    let print = |task: &crate::task_store::Task| {
+        if json {
+            println!("{}", serde_json::to_string(task).unwrap_or_default());
+        } else {
+            println!("task      {}", task.id);
+            println!("status    {}", task.status);
+            println!("owner     {}", task.owner);
+            println!("from      {}", task.from);
+            println!("to        {}", task.to);
+            if let Some(p) = &task.progress {
+                println!("progress  {p}");
+            }
+            if let Some(by) = &task.answered_by {
+                println!("answered  by {by}");
+            }
+            if let Some(src) = &task.source {
+                println!("source    {src}");
+            }
+            if let Some(e) = &task.error {
+                println!("error     {e}");
+            }
+            println!("prompt    {}", task.prompt);
+            if let Some(r) = &task.result {
+                println!(
+                    "result{}\n{r}",
+                    if task.truncated { " (truncated)" } else { "" }
+                );
+            }
+        }
+    };
+    let id_arg = || -> String {
+        a.positional
+            .first()
+            .cloned()
+            .unwrap_or_else(|| fail("bad_request", format!("{cmd} needs <id>"), 2))
+    };
+    let or_fail = |r: Result<crate::task_store::Task, crate::task_store::TaskError>| match r {
+        Ok(t) => t,
+        Err(e) => fail(e.code, e.message, 1),
+    };
+    match cmd {
+        "create" => {
+            let to = a
+                .value("--to")
+                .unwrap_or_else(|| fail("bad_request", "create needs --to <agent>".into(), 2));
+            let prompt = a.positional.join(" ");
+            if prompt.trim().is_empty() {
+                fail("bad_request", "create needs a prompt".into(), 2)
+            }
+            let from = a.value("--from").unwrap_or_else(|| whoami().address);
+            let t = or_fail(create_task(
+                a.value("--id"),
+                owner,
+                &from,
+                &to,
+                &prompt,
+                a.value("--parent"),
+                a.value("--correlation"),
+            ));
+            print(&t);
+        }
+        "update" => {
+            let id = id_arg();
+            let status = a
+                .value("--status")
+                .unwrap_or_else(|| fail("bad_request", "update needs --status".into(), 2));
+            if status == "done" {
+                let from = a.value("--from").unwrap_or_else(|| {
+                    fail(
+                        "bad_request",
+                        "--status done needs --from <creator>".into(),
+                        2,
+                    )
+                });
+                let result = match (a.value("--result"), a.value("--result-file")) {
+                    (Some(r), _) => r,
+                    (None, Some(f)) => std::fs::read_to_string(&f)
+                        .unwrap_or_else(|e| fail("bad_request", format!("{f}: {e}"), 2)),
+                    (None, None) => fail(
+                        "bad_request",
+                        "--status done needs --result or --result-file".into(),
+                        2,
+                    ),
+                };
+                let source = a.value("--source").unwrap_or_else(|| "creator".into());
+                if let Err(e) = store.complete(&id, &from, &result, &source) {
+                    fail(e.code, e.message, 1)
+                }
+                print(&or_fail(store.get_for(&id, None)));
+            } else {
+                let note = a.value("--error").or_else(|| a.value("--note"));
+                print(&or_fail(store.set_status(&id, &status, note.as_deref())));
+            }
+        }
+        "progress" => {
+            let id = id_arg();
+            let text = a.positional[1..].join(" ");
+            let pane = my_pane().unwrap_or_else(|| {
+                fail(
+                    "bad_request",
+                    "progress works inside a klark pane (KLARK_PANE_ID is not set)".into(),
+                    2,
+                )
+            });
+            print(&or_fail(store.progress(&id, &my_session(), &pane, &text)));
+        }
+        "get" | "show" => print(&or_fail(store.get_for(&id_arg(), owner.as_deref()))),
+        "list" | "ls" => {
+            let filter = crate::task_store::Filter {
+                owner,
+                from: a.value("--from"),
+                statuses: a
+                    .value("--status")
+                    .map(|s| s.split(',').map(|x| x.trim().to_string()).collect())
+                    .unwrap_or_default(),
+                parent_id: a.value("--parent"),
+                correlation_id: a.value("--correlation"),
+                limit: a.value("-n").and_then(|v| v.parse().ok()).unwrap_or(20),
+            };
+            let list = match store.list(&filter) {
+                Ok(l) => l,
+                Err(e) => fail(e.code, e.message, 1),
+            };
+            if json {
+                println!("{}", serde_json::to_string(&list).unwrap_or_default());
+            } else if list.is_empty() {
+                println!("no tasks (klark msg send --task new <to> <text>)");
+            } else {
+                for t in list {
+                    let first: String = t.prompt.chars().take(50).collect();
+                    println!("{:<38} {:<8} {:<36} {first}", t.id, t.status, t.to);
+                }
+            }
+        }
+        "wait" => {
+            let secs = a
+                .value("--timeout")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(300);
+            let task = or_fail(store.wait(&id_arg(), owner.as_deref(), Duration::from_secs(secs)));
+            print(&task);
+            match task.status.as_str() {
+                "done" => {}
+                "failed" => std::process::exit(1),
+                _ => std::process::exit(124),
+            }
+        }
+        "events" => {
+            let since = a.value("--since").and_then(|v| v.parse().ok()).unwrap_or(0);
+            for e in store.events(since, owner.as_deref()) {
+                println!("{e}");
+            }
+        }
+        "prune" => {
+            let days: u64 = a
+                .value("--older-than")
+                .and_then(|v| v.trim_end_matches('d').parse().ok())
+                .unwrap_or(30);
+            match store.prune(Duration::from_secs(days * 24 * 3600)) {
+                Ok(n) => {
+                    if json {
+                        println!("{}", json!({"pruned": n}));
+                    } else {
+                        println!("pruned {n} finished tasks older than {days} days");
+                    }
+                }
+                Err(e) => fail(e.code, e.message, 1),
+            }
+        }
+        other => fail(
+            "bad_request",
+            format!("unknown command {other}\n{TASK_USAGE}"),
+            2,
+        ),
+    }
+    std::process::exit(0)
 }
 
 fn cmd_log(args: &[String]) -> R<()> {

@@ -352,3 +352,319 @@ fn fake_command(fake: &Path) -> String {
         format!("{} -pe ''", fake.display())
     }
 }
+
+/// klark#25: a durable task. Sent with `--task`, answered only by its
+/// addressee with `reply --task`, read back from SQLite with `klark task`.
+#[test]
+fn a_task_is_answered_by_its_addressee_and_read_back() {
+    let mut env = Env::new();
+    env.start_server(Some("work"));
+    let work = env.socket("work");
+    let bin_dir = env.base.join("bin");
+    fs::create_dir_all(&bin_dir).unwrap();
+    let fake = bin_dir.join("claude");
+    if cfg!(target_os = "macos") {
+        std::os::unix::fs::symlink("/bin/cat", &fake).unwrap();
+    } else {
+        std::fs::copy("/usr/bin/perl", &fake).unwrap();
+    }
+    let created = call(
+        &work,
+        "workspace.create",
+        json!({"cwd": env.base, "focus": true}),
+    );
+    let pane = created["result"]["root_pane"]["pane_id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("workspace.create: {created}"))
+        .to_string();
+    call(
+        &work,
+        "pane.send_text",
+        json!({"pane_id": pane, "text": fake_command(&fake)}),
+    );
+    call(
+        &work,
+        "pane.send_keys",
+        json!({"pane_id": pane, "keys": ["Enter"]}),
+    );
+    wait_for("the fake agent", Duration::from_secs(45), || {
+        call(&work, "agent.list", json!({}))["result"]["agents"]
+            .as_array()
+            .is_some_and(|a| a.iter().any(|a| a["pane_id"] == json!(pane)))
+            .then_some(())
+    });
+    assert!(env
+        .msg(Some("work"), Some(&pane), &["name", "rev"])
+        .status
+        .success());
+    let task = |args: &[&str]| -> Output {
+        env.cmd(None)
+            .arg("task")
+            .args(args)
+            .output()
+            .expect("klark task")
+    };
+
+    // Sent as a task: the id comes back, and the agent sees it with the hint.
+    let sent = env.msg(
+        None,
+        None,
+        &[
+            "send",
+            "--task",
+            "new",
+            "--json",
+            "work/rev",
+            "check the build",
+        ],
+    );
+    assert!(sent.status.success(), "{}", text(&sent));
+    let sent: Value = serde_json::from_slice(&sent.stdout).unwrap();
+    let id = sent["task"].as_str().expect("task id").to_string();
+    assert_eq!(id.len(), 36, "a UUID: {sent}");
+    let seen = wait_for("the task prompt", Duration::from_secs(10), || {
+        let read = call(
+            &work,
+            "pane.read",
+            json!({"pane_id": pane, "source": "recent", "lines": 40}),
+        );
+        let t = read["result"]["read"]["text"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
+        t.contains(&format!("[task {id}] check the build"))
+            .then_some(t)
+    });
+    assert!(
+        seen.contains(&format!("klark msg reply --task {id}")),
+        "{seen}"
+    );
+    let got: Value = serde_json::from_slice(&task(&["get", &id, "--json"]).stdout).unwrap();
+    assert_eq!(got["status"], "running", "{got}");
+    assert!(got["started"].as_i64().is_some(), "{got}");
+    assert_eq!(got["to"], "testbox/work/rev");
+
+    // Only the addressee may answer.
+    let other = env.msg(
+        Some("work"),
+        Some("w99:p9"),
+        &["reply", "--task", &id, "not mine"],
+    );
+    assert!(!other.status.success(), "{}", text(&other));
+    assert!(
+        text(&other).contains("only that agent may answer"),
+        "{}",
+        text(&other)
+    );
+    let ok = env.msg(
+        Some("work"),
+        Some(&pane),
+        &["reply", "--task", &id, "build", "is", "green"],
+    );
+    assert!(ok.status.success(), "{}", text(&ok));
+    let got: Value = serde_json::from_slice(&task(&["get", &id, "--json"]).stdout).unwrap();
+    assert_eq!(got["status"], "done", "{got}");
+    assert_eq!(got["source"], "agent");
+    assert_eq!(got["result"], "build is green");
+    assert_eq!(got["answered_by"], "testbox/work/rev");
+    assert_eq!(got["truncated"], false);
+    let waited = task(&["wait", &id, "--timeout", "1", "--json"]);
+    assert!(waited.status.success(), "{}", text(&waited));
+
+    // --wait-reply with --task waits for that task's own answer.
+    let id2 = "t_wait_1".to_string();
+    let config = env.config.clone();
+    let runtime = env.runtime.clone();
+    let waiter = thread::spawn(move || {
+        Command::new(BIN)
+            .env("XDG_CONFIG_HOME", config)
+            .env("XDG_RUNTIME_DIR", runtime)
+            .env("KLARK_MACHINE_NAME", "testbox")
+            .env_remove("KLARK_SESSION")
+            .env_remove("KLARK_PANE_ID")
+            .env_remove("KLARK_SOCKET_PATH")
+            .args([
+                "msg",
+                "send",
+                "--task",
+                "t_wait_1",
+                "--wait-reply",
+                "30",
+                "work/rev",
+                "and the tests?",
+            ])
+            .output()
+            .unwrap()
+    });
+    wait_for("task 2 delivered", Duration::from_secs(15), || {
+        let out = task(&["get", &id2, "--json"]);
+        serde_json::from_slice::<Value>(&out.stdout)
+            .ok()
+            .filter(|v| v["status"] == "running")
+    });
+    assert!(env
+        .msg(
+            Some("work"),
+            Some(&pane),
+            &["reply", "--task", &id2, "412 passed"]
+        )
+        .status
+        .success());
+    let out = waiter.join().unwrap();
+    assert!(out.status.success(), "{}", text(&out));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "412 passed");
+
+    // Unknown ids: exit 1 with a JSON error.
+    let missing = task(&["get", "t_nope", "--json"]);
+    assert_eq!(missing.status.code(), Some(1));
+    let err: Value = serde_json::from_slice(&missing.stdout).unwrap();
+    assert_eq!(err["code"], "task_not_found", "{err}");
+
+    // Every change is a line in tasks.jsonl, for klark feed --follow.
+    let events = ["klark", "klark-dev"]
+        .iter()
+        .find_map(|app| fs::read_to_string(env.config.join(app).join("tasks.jsonl")).ok())
+        .expect("tasks.jsonl");
+    assert!(
+        events.contains(&format!("\"id\":\"{id}\"")) && events.contains("\"done\""),
+        "{events}"
+    );
+    assert!(
+        !events.contains("build is green"),
+        "events never carry results"
+    );
+
+    // Created queued by a caller (dmcp), delivered later, finished by the
+    // creator from the screen when the agent never answered; owners isolated.
+    let made = task(&[
+        "create",
+        "--to",
+        "work/rev",
+        "--owner",
+        "u@x",
+        "--from",
+        "dmcp:demo",
+        "--correlation",
+        "c1",
+        "--json",
+        "summarise",
+        "the",
+        "logs",
+    ]);
+    assert!(made.status.success(), "{}", text(&made));
+    let made: Value = serde_json::from_slice(&made.stdout).unwrap();
+    let id3 = made["id"].as_str().unwrap().to_string();
+    assert_eq!(made["status"], "queued");
+    let again = task(&[
+        "create",
+        "--to",
+        "work/rev",
+        "--owner",
+        "u@x",
+        "--from",
+        "dmcp:demo",
+        "--id",
+        &id3,
+        "--json",
+        "summarise",
+        "the",
+        "logs",
+    ]);
+    let again: Value = serde_json::from_slice(&again.stdout).unwrap();
+    assert_eq!(again["id"], made["id"], "idempotent create");
+    let conflict = task(&[
+        "create", "--to", "work/rev", "--owner", "u@x", "--id", &id3, "--json", "other",
+    ]);
+    assert_eq!(conflict.status.code(), Some(1));
+    let conflict: Value = serde_json::from_slice(&conflict.stdout).unwrap();
+    assert_eq!(conflict["code"], "task_conflict");
+    let queued = task(&[
+        "list",
+        "--status",
+        "queued,blocked",
+        "--from",
+        "dmcp:demo",
+        "--json",
+    ]);
+    let queued: Value = serde_json::from_slice(&queued.stdout).unwrap();
+    assert_eq!(queued.as_array().unwrap().len(), 1, "{queued}");
+    let sent = env.msg(
+        None,
+        None,
+        &[
+            "send",
+            "--task",
+            &id3,
+            "--owner",
+            "u@x",
+            "--from",
+            "dmcp:demo",
+            "--json",
+            "work/rev",
+            "summarise the logs",
+        ],
+    );
+    assert!(sent.status.success(), "{}", text(&sent));
+    let resend = env.msg(
+        None,
+        None,
+        &[
+            "send",
+            "--task",
+            &id3,
+            "--owner",
+            "u@x",
+            "--from",
+            "dmcp:demo",
+            "--json",
+            "work/rev",
+            "summarise the logs",
+        ],
+    );
+    let resend: Value = serde_json::from_slice(&resend.stdout).unwrap();
+    assert_eq!(resend["already"], true, "not typed twice: {resend}");
+    let hidden = task(&["get", &id3, "--owner", "intruder", "--json"]);
+    assert_eq!(hidden.status.code(), Some(1));
+    let not_creator = task(&[
+        "update", &id3, "--status", "done", "--from", "someone", "--result", "x", "--json",
+    ]);
+    assert_eq!(not_creator.status.code(), Some(1));
+    let done = task(&[
+        "update",
+        &id3,
+        "--status",
+        "done",
+        "--from",
+        "dmcp:demo",
+        "--source",
+        "screen",
+        "--result",
+        "3 errors in the logs",
+        "--json",
+    ]);
+    assert!(done.status.success(), "{}", text(&done));
+    let got: Value =
+        serde_json::from_slice(&task(&["get", &id3, "--owner", "u@x", "--json"]).stdout).unwrap();
+    assert_eq!(got["status"], "done");
+    assert_eq!(got["source"], "screen");
+    assert!(got.get("answered_by").is_none(), "{got}");
+    let mine = task(&["events", "--owner", "u@x"]);
+    let mine = String::from_utf8_lossy(&mine.stdout).to_string();
+    assert!(
+        mine.contains(&id3) && !mine.contains(&id),
+        "owner-scoped events: {mine}"
+    );
+
+    // Tasks are local only for now.
+    let remote = env.msg(
+        None,
+        None,
+        &["send", "--task", "new", "elsewhere/work/rev", "x"],
+    );
+    assert!(!remote.status.success());
+    assert!(
+        text(&remote).contains("this machine only"),
+        "{}",
+        text(&remote)
+    );
+}
