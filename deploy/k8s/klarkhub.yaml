@@ -25,7 +25,7 @@ spec:
       labels: { app: klarkhub }
     spec:
       securityContext:
-        fsGroup: 1654 # the .NET image's "app" user, so /data is writable
+        fsGroup: 65532 # the distroless nonroot user, so /data is writable
       containers:
         - name: klarkhub
           image: ghcr.io/muthuishere/klarkhub:latest
@@ -33,14 +33,14 @@ spec:
             - containerPort: 7470
               name: http
           env:
-            # - name: KLARK_HUB__PUBLICURL # the address people open; used in klark hub connect links
+            # - name: HUB_PUBLIC_URL # the address people open; used in klark hub connect links
             #   value: http://<node-ip>:30080
-            - name: KLARK_HUB__ADMIN__PASSWORD # used only on first start
+            - name: HUB_ADMIN_PASSWORD # used only on first start
               valueFrom:
                 secretKeyRef: { name: klarkhub, key: admin-password, optional: true }
-            - name: KLARK_HUB__JWT__KEY
+            - name: HUB_SESSION_KEY
               valueFrom:
-                secretKeyRef: { name: klarkhub, key: jwt-key, optional: true }
+                secretKeyRef: { name: klarkhub, key: session-key, optional: true }
           volumeMounts:
             - name: data
               mountPath: /data

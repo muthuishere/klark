@@ -3,6 +3,12 @@ title: HTTP API
 description: Tokens, agents, messages, assets, files and the machine connect flow.
 ---
 
+:::caution
+This page describes the old Blazor hub's API. The current hub's contract is
+`hub-go/API.md`: `/api/token` and `PUT /api/assets` (`klark offer`) are not
+available there yet, and some paths differ.
+:::
+
 Base URL: the hub, for example `http://hub.lan:7470`. JSON uses `snake_case`.
 
 ## Authentication

@@ -3,19 +3,13 @@ title: Run the hub
 description: klarkhub is one container on one port with its state on a volume. Docker, compose, sizing.
 ---
 
-The hub (klarkhub) is a C# Blazor Server app in `hub/`. People sign in to it and
+The hub (klarkhub) is a Go server with a React UI embedded, in `hub-go/`. People sign in to it and
 watch and answer the agents on every linked machine. It is a separate server:
 deploy it once, then link any number of machines to it.
 
-:::note
-This page is about the released hub, the C# Blazor Server one in `hub/`. A rewrite as a Go API with a React UI,
-still one container on port 7470, is in progress in `hub-go/` and is not released. Machines keep working with
-either, because the machine link does not change. Reasons: ADR 0014.
-:::
-
 - One container, one port: plain HTTP on **7470**.
-- All state in `/data`: `hub.db`, one file per machine, temporary assets, keys.
-- Run **exactly one replica**. SQLite and the asset store are local files.
+- All state in `/data`: `hub.db` (SQLite), `session.key`, and by default the backups in `/data/backup`.
+- Run **exactly one replica**. SQLite is a local file.
 - Machines dial out to the hub. Nothing listens on the machines.
 
 ## Start the hub
@@ -29,74 +23,51 @@ CI publishes a multi-arch image (linux/amd64 and linux/arm64) to GitHub's regist
 
 ```sh
 docker run -d --name klarkhub -p 7470:7470 -v klarkhub-data:/data \
+  -e HUB_ADMIN_PASSWORD='a long password' \
   ghcr.io/muthuishere/klarkhub:latest
 curl http://localhost:7470/healthz        # "ok"
 ```
 
-Or build it yourself from `hub/Dockerfile`:
+Or build it yourself from `hub-go/Dockerfile`:
 
 ```sh
-docker build -t klarkhub hub
+docker build -t klarkhub hub-go
 docker run -d --name klarkhub -p 7470:7470 -v klarkhub-data:/data klarkhub
 ```
 
-The image sets `ASPNETCORE_URLS=http://+:7470` and `Hub__DataDir=/data`, declares
-`VOLUME /data`, and exposes 7470. Keep `/data` on a volume: it holds `hub.db`, the
-per-machine files, assets and keys.
+The image is distroless and runs as non-root, sets `HUB_ADDR=:7470` and `HUB_DATA_DIR=/data`,
+declares `VOLUME /data`, and exposes 7470. Keep `/data` on a volume.
 
-Open `http://localhost:7470` and [sign in as admin](/hub/sign-in/). The first-start
-admin password is `adminadmin` (or the value of `KLARK_HUB__ADMIN__PASSWORD`); change it when the banner asks.
+Open `http://localhost:7470` and [sign in as admin](/hub/sign-in/) with `adminadmin`, or the value
+of `HUB_ADMIN_PASSWORD`.
 
 ### Docker Compose
 
-`hub/docker-compose.yml` builds the image, keeps `/data` in the named volume `hub-data`, and mounts
-`hub/appsettings.Production.json` read-only, so create that file first (it can be `{}`). Sign-in defaults to **LDAP**.
+`hub-go/docker-compose.yml` builds the image and keeps `/data` in a named volume. It sets
+`HUB_ADMIN_PASSWORD` (change it) and lists the other settings as comments.
 
 ```sh
-cd hub
-echo '{}' > appsettings.Production.json
-KLARK_HUB_AUTH_MODE=MockLdap docker compose up -d --build     # mock users, no directory needed
-docker compose --profile ldap up -d --build                   # or: a test OpenLDAP (alice/alice, bob/bob)
+cd hub-go
+docker compose up -d --build
+HUB_BACKUP=s3 HUB_BACKUP_PATH=klarkhub docker compose --profile s3 up -d   # with a local S3 (SeaweedFS) for backups
 ```
-
-The compose file passes these through (the left name is the shell variable, the right is the hub setting):
-
-| shell variable | hub setting | default in compose |
-|---|---|---|
-| `KLARK_HUB_AUTH_MODE` | `KLARK_HUB__AUTH__MODE` | `Ldap` |
-| `KLARK_HUB_LDAP_HOST` | `KLARK_HUB__AUTH__LDAP__HOST` | `ldap` |
-| `KLARK_HUB_LDAP_PORT` | `KLARK_HUB__AUTH__LDAP__PORT` | `1389` |
-| `KLARK_HUB_LDAP_USERDN` | `KLARK_HUB__AUTH__LDAP__USERDNTEMPLATE` | `cn={0},ou=users,dc=klark,dc=local` |
-| `KLARK_HUB_LDAP_GROUPBASE` | `KLARK_HUB__AUTH__LDAP__GROUPSEARCHBASE` | `dc=klark,dc=local` |
-| `KLARK_HUB_JWT_KEY` | `KLARK_HUB__JWT__KEY` | empty (a random key in `/data/jwt.key`) |
 
 ### From source
 
 ```sh
-cd hub
-dotnet run
+cd hub-go/ui && npm ci && npm run build     # the binary embeds the built UI
+cd .. && make build && ./bin/klarkhub
 ```
 
-The hub listens on `http://localhost:7470`, reachable from this machine only. To let other
-machines connect, listen on every interface:
-
-```sh
-ASPNETCORE_URLS=http://0.0.0.0:7470 dotnet run
-```
-
-Needs the .NET 10 SDK. Data goes to `hub/data/` unless `KLARK_HUB__DATADIR` is set.
-
-With nothing configured the hub uses its built-in mock directory
-(`user1`/`user1pass`, `user2`/`user2pass`). The built-in `admin` account (`adminadmin`) works in every mode.
+The hub listens on `:7470`. Needs Go and Node. Data goes to `./data` unless `HUB_DATA_DIR` is set.
+With nothing configured only the built-in `admin` and `HUB_USERS` sign in.
 
 ### Use your LDAP or Active Directory
 
-Add the LDAP settings as environment variables (`KLARK_` prefix, `__` between levels):
-
 ```sh
 docker run -d --name klarkhub -p 7470:7470 -v klarkhub-data:/data \
-  -e KLARK_HUB__AUTH__LDAP__HOST=ldap.corp.example.com \
-  -e KLARK_HUB__AUTH__LDAP__USERDNTEMPLATE='{0}@corp.example.com' \
+  -e HUB_LDAP_HOST=ldap.corp.example.com \
+  -e HUB_LDAP_USER_DN_TEMPLATE='{0}@corp.example.com' \
   ghcr.io/muthuishere/klarkhub:latest
 ```
 
@@ -105,19 +76,17 @@ directory later in the UI at `/admin/directory`.
 
 ### Environment variables
 
-The hub reads variables with the `KLARK_` prefix, and also unprefixed ones such as the Dockerfile's
-`Hub__DataDir` and `ASPNETCORE_URLS`. `Hub:Auth:Ldap:Host` is `KLARK_HUB__AUTH__LDAP__HOST`.
 The full list is in [Hub configuration](/reference/hub-config/). The ones you reach for first:
 
 | variable | meaning |
 |---|---|
-| `ASPNETCORE_URLS` | the address to listen on (`http://+:7470` in the image) |
-| `Hub__DataDir` or `KLARK_HUB__DATADIR` | where state lives (`/data` in the image) |
-| `KLARK_HUB__AUTH__MODE`, `KLARK_HUB__AUTH__LDAP__*` | sign-in; see [LDAP](/hub/ldap/) |
-| `KLARK_HUB__ADMIN__PASSWORD` | the built-in admin's first-start password |
-| `KLARK_HUB__PUBLICURL` | the address people open, used in the links `klark hub connect` prints |
-| `Hub__Brand__Name`, `Hub__Brand__Tagline`, `Hub__Brand__Logo` | [your own name, tagline and logo](/reference/hub-config/#branding) |
-| `Hub__AgentNote` | [the line the hub adds to messages](/reference/hub-config/#the-agent-note) |
+| `HUB_ADDR` | the address to listen on (`:7470`) |
+| `HUB_DATA_DIR` | where state lives (`/data` in the image) |
+| `HUB_ADMIN_PASSWORD` | the built-in admin's password (default `adminadmin`; set it) |
+| `HUB_AUTH_MODE`, `HUB_LDAP_*` | sign-in; see [LDAP](/hub/ldap/) |
+| `HUB_PUBLIC_URL` | the address people open, used in the links `klark hub connect` prints |
+| `HUB_BASE_PATH` | mount prefix behind a reverse proxy, e.g. `/klark` |
+| `HUB_BACKUP`, `HUB_BACKUP_PATH` | where SQLite backups go (a folder or S3) |
 
 ## Plain HTTP
 
@@ -133,8 +102,8 @@ Details in the [FAQ](/help/faq/#a-proxy-in-front-of-the-hub).
 
 ## Sizing
 
-Measured on the real hub image in experiment E-06, with the 100 and 500 machine
-rows extrapolated from per-unit costs.
+Measured on the old Blazor hub image in experiment E-06, with the 100 and 500 machine
+rows extrapolated from per-unit costs. The Go hub has not been load tested yet.
 
 | machines | viewers | memory limit | vCPU | sockets / fds | machine → hub traffic |
 |---|---|---|---|---|---|

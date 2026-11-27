@@ -3,10 +3,10 @@
 What exists, what has been verified, and what is left. IDs are referenced from
 the ADRs and experiments. Last updated 2026-11-06 (first real builds; messaging, ADR 0009).
 
-## Go + React hub (ADR 0014, in progress)
+## Go + React hub (ADR 0014)
 
-The released hub is still the Blazor one in `hub/`. The rewrite in `hub-go/` is tracked by its parity checklist
-(`hub-go/README.md`), not by IDs here, until it is released.
+The hub is the Go + React one in `hub-go/`; the Blazor hub (`hub/`) is removed. Its state is tracked in
+`hub-go/README.md` (known gaps) and GitHub issues. The D- and S- rows below about the Blazor hub are history.
 
 | item | state | verified how |
 |---|---|---|
@@ -18,7 +18,7 @@ The released hub is still the Blazor one in `hub/`. The rewrite in `hub-go/` is 
 | image upload, offers, slash-command server list, syntax highlighting, quick replies, token and password pages | not done | |
 | LDAP, per-machine groups, browser approval for `klark hub connect` | not done | |
 | load / soak test, memory per viewer | not done | |
-| cut-over and retiring `hub/` | not started | |
+| cut-over and retiring `hub/` | done: `hub/` removed | |
 
 ## Done
 | id | item | verified how |
@@ -66,7 +66,7 @@ The released hub is still the Blazor one in `hub/`. The rewrite in `hub-go/` is 
 | id | item | notes |
 |---|---|---|
 | S-08 | Admin page: machine tokens and users in hub.db | replaces appsettings editing |
-| S-12 | Measure Blazor circuits with 50+ viewers | **measured at 10 live viewers + 40 chat circuits on one hub (E-06)**: 1.2–13 MiB per circuit, ~0 idle CPU; 100 live viewers extrapolated, not run (one headless tab tops out ~20 circuits). Follow-ups from E-06: Dockerfile `--no-restore` breaks blazor.web.js (bug 1), dead tabs poll 3 min (bug 2), `/api/agents` fan-out unshared, global `Changed` re-renders every pane view |
+| S-12 | Measure Blazor circuits with 50+ viewers (old Blazor hub, removed) | **measured on the old Blazor hub, at 10 live viewers + 40 chat circuits on one hub (E-06)**: 1.2–13 MiB per circuit, ~0 idle CPU; 100 live viewers extrapolated, not run (one headless tab tops out ~20 circuits). Follow-ups from E-06: Dockerfile `--no-restore` breaks blazor.web.js (bug 1), dead tabs poll 3 min (bug 2), `/api/agents` fan-out unshared, global `Changed` re-renders every pane view |
 | S-15 | Switch the tree source from `session.snapshot` to klark `events.subscribe` (cheaper on the machine) | |
 | S-16 | Windows support for `klark expose` (named pipe) | |
 | S-17 | Remove dead updater code in `src/update.rs` | disabled, still compiled |

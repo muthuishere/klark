@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Removed
+- The C# Blazor hub (`hub/`) is removed; the hub is the Go + React one in `hub-go/`. Gaps it does not cover yet are tracked as GitHub issues.
+
 ### Fixed
 - macOS: a klark built in a repo (`target/`, one per worktree) now starts its server from one fixed copy, `<state dir>/dev-bin/klark`, signed with the same identity. macOS ties Full Disk Access for a plain executable to its path, so every build folder used to add another "klark" to System Settings. Now one grant covers every repo build. Installed binaries are unchanged; `KLARK_DEV_SERVER_COPY=0` turns it off.
 

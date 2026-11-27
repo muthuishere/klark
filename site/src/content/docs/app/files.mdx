@@ -46,8 +46,7 @@ The note is hidden in the chat. Slash commands never get it.
   **Download**.
 - Code with line numbers. Click a number for a `#L42` link; `path:42` links
   scroll to and mark that line. Word-wrap toggle, find in file.
-- Syntax highlighting for about 190 languages, loaded one language at a time.
-  Files over 2 MB stay plain.
+- Syntax highlighting is not available yet in the current hub.
 - **Markdown**: Preview or Code. **CSV/TSV**: a table (first 5000 rows).
   **JSON**: a collapsible tree. **Images**: inline, click to zoom. **PDF**: the
   browser's viewer. **Diffs**: red and green rows. **Binary**: size and Download.
@@ -67,7 +66,7 @@ The hub and the machine both check every request.
    `credentials`, `*.key`.
 4. Only regular files.
 5. **10 MB at most.** The machine refuses a bigger file before reading it, with
-   "file is X MB; limit 10 MB". The hub limit is `Hub:Files:MaxBytes`; the
+   "file is X MB; limit 10 MB". The
    machine can lower its own with `KLARK_FILES_MAX_BYTES`.
 6. Responses are `nosniff` with `Content-Security-Policy: default-src 'none';
    sandbox`, so a file never runs as part of the hub.
@@ -77,13 +76,4 @@ must run protocol v5 (a current klark); older machines get "update klark".
 
 ## Files from the agent: `klark offer`
 
-```sh
-klark offer ./report.pdf
-```
-
-Offered files appear as attachment cards at the end of the chat: a thumbnail or
-icon, name, size and download. The limit is 100 MB, and files expire after 24
-hours (`Hub:Assets:RetentionHours`).
-
-Downloads are served with `nosniff`. HTML, SVG and XML are sent as
-`application/octet-stream`, and anything that is not an image is an attachment.
+Agent-to-person files (`klark offer`) are not available yet in the current hub.

@@ -22,10 +22,9 @@ The hub needs no WebSockets, but its streams must not be buffered:
 - **Turn off response buffering.** The hub sends `X-Accel-Buffering: no` on the
   machine event stream, which nginx honours. Other proxies need it set.
 - **Allow responses to stay open 60 s or more.** `/agent/events` is held open
-  with a ping line every 15 s. The browser's `/_blazor` uses long polling.
-- **Set `KLARK_HUB__TRUSTFORWARDEDHEADERS=true`** so links and rate limits use
-  the real client address.
-- **Set `KLARK_HUB__PUBLICURL`** to the address people open.
+  with a ping line every 15 s. The browser's live views are Server-Sent Events.
+- **Set `HUB_PUBLIC_URL`** to the address people open (else it is taken from
+  `X-Forwarded-*`).
 
 Symptoms of buffering: machines connect but stay offline, panes never update,
 or the page shows "reconnecting".
@@ -47,7 +46,7 @@ protocol 5. Messaging answers `409` for a machine too old to receive messages.
 | none | klark machines: they only dial out |
 
 Change the host port with `docker run -p 9000:7470 …`. From source, use
-`ASPNETCORE_URLS=http://0.0.0.0:9000 dotnet run`.
+`HUB_ADDR=:9000 ./bin/klarkhub`.
 
 ## The machine shows "offline" in the hub
 
@@ -59,12 +58,11 @@ Change the host port with `docker run -p 9000:7470 …`. From source, use
 
 ## I cannot sign in
 
-- `admin` works in every mode. Its first password is `adminadmin`, or the
-  value of `KLARK_HUB__ADMIN__PASSWORD` on the first start.
-- `docker compose up` defaults to LDAP mode with a host called `ldap`. Without
-  the `ldap` profile only `admin` can sign in. Use
-  `KLARK_HUB_AUTH_MODE=MockLdap docker compose up -d --build` for mock users.
-- After 10 failed attempts in a minute, wait a minute.
+- `admin` works in every mode. Its password is `adminadmin`, or the value of
+  `HUB_ADMIN_PASSWORD` (`hub-go/docker-compose.yml` sets it).
+- With no LDAP host only `admin`, `HUB_USERS` and accounts made at
+  `/admin/users` sign in. `HUB_AUTH_MODE=mockldap` adds demo users.
+- Failed sign-ins are rate limited (5 per user per 15 min); wait and retry.
 
 ## "no hub configured"
 

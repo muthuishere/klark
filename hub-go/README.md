@@ -1,12 +1,11 @@
-# klarkhub (Go API + React UI), in progress
+# klarkhub (Go API + React UI)
 
-The rewrite of the klark hub: a Go API with the React UI embedded, in one binary and one container on one
+The klark hub: a Go API with the React UI embedded, in one binary and one container on one
 port (7470). Decision and reasons: [ADR 0014](../docs/adr/0014-go-react-hub.md). The contract:
 [API.md](API.md).
 
-**Status: in progress, not released. The released hub is still the C# Blazor one in [`../hub`](../hub)
-(v0.9.5.6).** The Go and React parts listed as done below are implemented and were checked by the project
-coordinator (2026-11-12); the gaps are listed under "Not done". Do not replace the released hub with this one yet.
+This is the hub; the old C# Blazor hub is removed. The parts listed as done below were checked by the project
+coordinator (2026-11-12); the gaps are listed under "Known gaps".
 
 | part | state |
 |---|---|
@@ -26,7 +25,7 @@ Checks reported by the coordinator: `go vet ./... && go test -race ./...` passes
 `TestPaneStreamIsLazyAndCountsViewers` under full parallel `-race` load, then 8 of 8 reruns passed);
 `npm test` passes 51 tests; the built hub served login, both sign-in providers and the UI in a real browser.
 
-### Not done (stubbed or missing)
+### Known gaps (stubbed or missing)
 
 - Agent-to-person files (`PUT /api/assets`, `klark offer`) are not ported; only person-to-agent images are.
 - `offers` and the `offer` event (`klark offer`).
@@ -230,7 +229,7 @@ HUB_MOCK_ADFS=1 HUB_MOCK_ADFS_USERS="alice=pw:admin,bob=pw" go run ./cmd/klarkhu
 
 The flow has an HTTP-level end-to-end test against the mock ADFS, which is the supported test path.
 
-## Parity checklist against the Blazor hub
+## Parity checklist against the Blazor hub (removed; kept as a record)
 
 Derived from reading `hub/` (pages, endpoints, services), updated 2026-11-12 from the coordinator's report.
 "done" = in the Go and React code and checked; "stub" = present but incomplete.

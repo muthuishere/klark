@@ -1,113 +1,71 @@
 ---
 title: Hub configuration
-description: Every Hub:* setting, its environment variable, and its default.
+description: Every HUB_* environment variable, and its default.
 ---
 
-The hub reads the `Hub` section from `appsettings.json`,
-`appsettings.Production.json`, and environment variables with the **`KLARK_`**
-prefix. Each `:` becomes `__`: `Hub:Auth:Mode` is `KLARK_HUB__AUTH__MODE`.
-Command-line arguments win over the environment.
-
-Source of truth: `hub/Services/HubOptions.cs`.
+The hub reads `HUB_*` environment variables. Source of truth: `hub-go/API.md`;
+code: `hub-go/internal/config`.
 
 ## General
 
-| setting | env | default | meaning |
-|---|---|---|---|
-| `Hub:DataDir` | `KLARK_HUB__DATADIR` | `data` (`/data` in the image) | where `hub.db`, `machines/`, `assets/`, `keys/` and `jwt.key` live |
-| `Hub:MaxBytesPerMachine` | `KLARK_HUB__MAXBYTESPERMACHINE` | `10485760` | cap on each machine's SQLite file; oldest output dropped first |
-| `Hub:PublicUrl` | `KLARK_HUB__PUBLICURL` | empty | the address people open; used in `klark hub connect` links. Empty: taken from the request |
-| `Hub:TrustForwardedHeaders` | `KLARK_HUB__TRUSTFORWARDEDHEADERS` | `false` | honour `X-Forwarded-For/Proto/Host` behind a proxy. Leave off otherwise, or clients can fake their address past the sign-in limit |
-| `Hub:Admin:Password` | `KLARK_HUB__ADMIN__PASSWORD` | empty (`adminadmin`) | the built-in admin's password on first start only |
+| variable | default | meaning |
+|---|---|---|
+| `HUB_ADDR` | `:7470` | listen address |
+| `HUB_BASE_PATH` | none | mount prefix behind a reverse proxy, e.g. `/klark` |
+| `HUB_PUBLIC_URL` | from the request (`X-Forwarded-*`) | public origin, no path; used in `klark hub connect` links and OIDC redirects |
+| `HUB_DATA_DIR` | `data` (`/data` in the image) | `hub.db` (SQLite) and `session.key` |
+| `HUB_SESSION_KEY` | generated into the data dir | signs the `klark_session` cookie |
+| `HUB_ADMIN_PASSWORD` | `adminadmin` | the built-in `admin` account's password; set it |
 
 ## Sign-in
 
-| setting | env | default | meaning |
-|---|---|---|---|
-| `Hub:Auth:Mode` | `KLARK_HUB__AUTH__MODE` | empty | `Ldap`, `MockLdap` or `Local`. Empty: `Ldap` if an LDAP host is set, else `MockLdap`. `/admin/directory` overrides it |
-| `Hub:Auth:AllowedGroups` | `KLARK_HUB__AUTH__ALLOWEDGROUPS__0` | `[]` | if set, only these groups may sign in |
-| `Hub:Auth:AdminGroups` | `KLARK_HUB__AUTH__ADMINGROUPS__0` | `["klark-admins"]` | members see every machine |
-| `Hub:Auth:ReadOnlyGroups` | `KLARK_HUB__AUTH__READONLYGROUPS__0` | `["klark-readonly"]` | members watch but never type |
-| `Hub:Auth:MockUsers` | `KLARK_HUB__AUTH__MOCKUSERS__0__UID`, `…__PASSWORD`, `…__DISPLAYNAME`, `…__GROUPS__0` | `[]` (seeds `user1`, `user2`) | seed for the mock directory on first start |
-| `Hub:Users` | `KLARK_HUB__USERS__0__NAME`, `…__PASSWORDHASH` | `[]` | users for `Local` mode; hash with `dotnet run -- hash-password <pw>` |
+| variable | default | meaning |
+|---|---|---|
+| `HUB_AUTH_MODE` | `local`, or `ldap` when `HUB_LDAP_HOST` is set | `local`, `ldap` or `mockldap`. `/admin/directory` overrides it |
+| `HUB_USERS` | empty | `alice=<bcrypt or sha256:hex>[:admin],bob=...`; hash with `klarkhub hash-password` |
+| `HUB_MOCK_USERS` | empty (seeds `user1`, `user2`) | only with `mockldap`: `name=password[:admin][:group1\|group2],...` |
+| `HUB_LDAP_*` | | see [LDAP and Active Directory](/hub/ldap/#settings) |
+| `HUB_OIDC_ISSUER`, `_CLIENT_ID`, `_CLIENT_SECRET`, `_SCOPES`, `_ADMIN_GROUP`, `_NAME` | scopes `openid profile email`, name `ADFS` | ADFS / OpenID Connect (code + PKCE) |
+| `HUB_OIDC_PROVIDERS` | empty | more OIDC providers as JSON; see `hub-go/docker-compose.yml` |
 
-Lists use an index: `KLARK_HUB__AUTH__ALLOWEDGROUPS__0=klark-users`,
-`KLARK_HUB__AUTH__ALLOWEDGROUPS__1=ops`.
+## Machines from configuration
 
-## LDAP
+Machines approved through `klark hub connect` are stored in `hub.db`.
 
-All under `Hub:Auth:Ldap:` (env `KLARK_HUB__AUTH__LDAP__…`).
-
-| setting | default |
+| variable | meaning |
 |---|---|
-| `Host` | `localhost` |
-| `Port` | `0` (636 with `UseSsl`, else 389) |
-| `UseSsl` | `false` |
-| `StartTls` | `false` |
-| `SkipCertificateCheck` | `false` |
-| `UserDnTemplate` | `cn={0},ou=users,dc=klark,dc=local` |
-| `UserSearchBase` | empty |
-| `UserFilter` | `(\|(uid={0})(sAMAccountName={0})(cn={0}))` |
-| `BindDn` | empty |
-| `BindPassword` | empty (give it through the environment) |
-| `GroupSearchBase` | `dc=klark,dc=local` |
-| `UseMemberOf` | `true` |
-| `TimeoutSeconds` | `10` |
+| `HUB_MACHINES` | `name=<sha256 of token>[,fleet*=<sha256>]`; a name ending in `*` is a fleet token. Hash with `klarkhub hash-token` |
 
-What each one does: [LDAP and Active Directory](/hub/ldap/).
+Per-machine access groups are not available yet in the current hub.
 
-## Branding
+## Analytics, storage and backups
 
-The hub calls itself klark by default. These show your own name, tagline and logo
-(`Hub:Brand` in `appsettings.json`, or the variables; in Docker the unprefixed `Hub__Brand__Name`
-form is what `hub/README.md` shows, and `KLARK_HUB__BRAND__NAME` works too).
+| variable | default | meaning |
+|---|---|---|
+| `HUB_STATS_INTERVAL_SECONDS`, `HUB_STATS_RETENTION_DAYS` | 30 (min 5), 14 | least time between two stats calls to one machine; days kept |
+| `HUB_BACKUP` | `none` (the image: `folder`) | `none`, `folder` or `s3`: the one target for SQLite backups and analytics files |
+| `HUB_BACKUP_PATH` | (the image: `/data/backup`) | a folder, or a key prefix for S3 |
+| `HUB_BACKUP_S3_BUCKET`, `_REGION`, `_ENDPOINT`, `_ACCESS_KEY_ID`, `_SECRET_ACCESS_KEY`, `_PATH_STYLE` | | S3 target |
+| `HUB_SQLITE_BACKUP_EVERY`, `HUB_SQLITE_BACKUP_KEEP` | `6h` (min `5m`), `7` | snapshot interval, how many to keep |
+| `HUB_POD_ID` | hostname + random | names this hub as the owner of the backup location |
 
-| setting | env | default | meaning |
-|---|---|---|---|
-| `Hub:Brand:Name` | `Hub__Brand__Name` | `klark` | name in the corner; tab titles read "`<name>` hub" |
-| `Hub:Brand:Tagline` | `Hub__Brand__Tagline` | empty | a small line under the name, for example `by Jane Doe` |
-| `Hub:Brand:Logo` | `Hub__Brand__Logo` | empty | an `https://` URL or a file under `wwwroot`; also the tab icon |
+Details: `hub-go/README.md`.
 
 ## The agent note
 
 When you send a message from the hub, it adds one short line so the agent names every file it
 creates or changes by absolute path. The hub turns those paths into links that open a preview.
-The agent sees the note (it is part of the prompt, and the terminal shows it); the hub's chat hides it.
+The note is fixed in the current hub; it is not a setting.
 
-| setting | env | default |
-|---|---|---|
-| `Hub:AgentNote` | `Hub__AgentNote` | `when you create or change a file, state its absolute path so it can be opened from the hub.` |
+## Limits
 
-The note goes on as `(klark hub: <note>)` at the end of your text. An empty value turns it off.
-**Slash commands never get it**, so `/model` and `/context` reach the agent unchanged.
+| what | limit |
+|---|---|
+| image a person sends to an agent | 10 MB |
+| largest file the viewer fetches | 10 MB |
+| message (`klark msg`) | 16 KB |
 
-## Tokens
-
-| setting | env | default | meaning |
-|---|---|---|---|
-| `Hub:Jwt:Key` | `KLARK_HUB__JWT__KEY` | empty | HS256 key, at least 32 bytes. Empty: a random key in `<DataDir>/jwt.key` (mode 0600) |
-| `Hub:Jwt:Hours` | `KLARK_HUB__JWT__HOURS` | `12` | user token lifetime |
-
-## Machines from configuration
-
-Machines approved through `klark hub connect` are stored in `hub.db`. You can
-also list machines here.
-
-| setting | env | meaning |
-|---|---|---|
-| `Hub:Machines[].Name` | `KLARK_HUB__MACHINES__0__NAME` | machine name on the hub |
-| `Hub:Machines[].TokenSha256` | `KLARK_HUB__MACHINES__0__TOKENSHA256` | hex SHA-256 of the token: `dotnet run -- hash-token <token>` |
-| `Hub:Machines[].Fleet` | `KLARK_HUB__MACHINES__0__FLEET` | one token for many machines, named `<Name>:<X-Klark-Machine>` |
-| `Hub:Machines[].Groups` | `KLARK_HUB__MACHINES__0__GROUPS__0` | only these groups see it; empty means everyone |
-
-## Assets and files
-
-| setting | env | default | meaning |
-|---|---|---|---|
-| `Hub:Assets:RetentionHours` | `KLARK_HUB__ASSETS__RETENTIONHOURS` | `24` | every asset is deleted after this |
-| `Hub:Assets:MaxImageBytes` | `KLARK_HUB__ASSETS__MAXIMAGEBYTES` | `20971520` (20 MB) | image a person sends to an agent |
-| `Hub:Assets:MaxFileBytes` | `KLARK_HUB__ASSETS__MAXFILEBYTES` | `104857600` (100 MB) | file an agent offers |
-| `Hub:Files:MaxBytes` | `KLARK_HUB__FILES__MAXBYTES` | `10485760` (10 MB) | largest file the viewer fetches |
+Agent-to-person files (`klark offer`) are not available yet in the current hub.
 
 ## klark (machine side) environment
 
