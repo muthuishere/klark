@@ -14,6 +14,10 @@
 //! A switch types the type's `switch` template plus Enter when the agent is
 //! idle and checks the pane for `confirm`; otherwise (or with `--restart`)
 //! it restarts the agent on the same conversation with `restart_args`.
+//! A type whose switch command also saves the model as the CLI's default
+//! (`switch_persists_default = true`; Claude's `/model` does, in
+//! ~/.claude/settings.json) switches by restart unless `--live` is passed,
+//! because the restart flag applies to that session only.
 
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
@@ -47,6 +51,10 @@ pub(crate) struct ModelSpec {
     /// Flags added to the resume command, `{model}` replaced.
     #[serde(default)]
     pub(crate) restart_args: Option<Vec<String>>,
+    /// The `switch` command also saves the model as the CLI's default for
+    /// new sessions, so the default is to switch by restart instead.
+    #[serde(default)]
+    pub(crate) switch_persists_default: Option<bool>,
 }
 
 impl ModelSpec {
@@ -66,6 +74,9 @@ impl ModelSpec {
         if other.restart_args.is_some() {
             self.restart_args = other.restart_args;
         }
+        if other.switch_persists_default.is_some() {
+            self.switch_persists_default = other.switch_persists_default;
+        }
     }
 }
 
@@ -80,6 +91,7 @@ pub(crate) fn defaults() -> BTreeMap<String, ModelSpec> {
                 switch: Some("/model {model}".into()),
                 confirm: Some("Set model to".into()),
                 restart_args: Some(strs(&["--model", "{model}"])),
+                switch_persists_default: Some(true),
             },
         ),
         (
@@ -90,6 +102,7 @@ pub(crate) fn defaults() -> BTreeMap<String, ModelSpec> {
                 switch: None,
                 confirm: None,
                 restart_args: Some(strs(&["--model", "{model}"])),
+                switch_persists_default: None,
             },
         ),
     ])
@@ -192,9 +205,15 @@ pub(crate) fn plan_switch(
     spec: &ModelSpec,
     model: &str,
     force_restart: bool,
+    force_live: bool,
 ) -> Result<SwitchPlan, String> {
+    if force_restart && force_live {
+        return Err("--live and --restart can't be used together".into());
+    }
+    let persists = spec.switch_persists_default == Some(true);
+    let live = !force_restart && (force_live || !persists || spec.restart_args.is_none());
     match (&spec.switch, &spec.restart_args) {
-        (Some(template), _) if !force_restart => Ok(SwitchPlan::Live(expand(template, model))),
+        (Some(template), _) if live => Ok(SwitchPlan::Live(expand(template, model))),
         (_, Some(args)) => Ok(SwitchPlan::Restart(expand_all(args, model))),
         (Some(_), None) => {
             Err("this agent type has no restart_args, so it can't switch by restart".into())
@@ -214,6 +233,7 @@ pub(crate) struct ModelCmd {
     pub(crate) target: String,
     pub(crate) model: String,
     pub(crate) restart: bool,
+    pub(crate) live: bool,
     pub(crate) wait: bool,
     pub(crate) force: bool,
     pub(crate) json: bool,
@@ -241,7 +261,10 @@ pub(crate) fn model_args() -> Vec<clap::Arg> {
         ),
         Arg::new("model").value_name("MODEL").required(true).help("Model to switch to"),
         Arg::new("restart").long("restart").action(ArgAction::SetTrue).help(
-            "Restart on the same conversation with the model flag instead of typing the switch command",
+            "Restart on the same conversation with the model flag instead of typing the switch command (the default for Claude, whose /model also changes its saved default model)",
+        ),
+        Arg::new("live").long("live").action(ArgAction::SetTrue).conflicts_with("restart").help(
+            "Type the switch command even if it also changes the agent CLI's saved default model (Claude's /model does)",
         ),
         Arg::new("wait").long("wait").action(ArgAction::SetTrue).help(
             "If the agent is working, wait until it is idle instead of refusing",
@@ -265,6 +288,7 @@ pub(crate) fn model_from(m: &clap::ArgMatches) -> ModelCmd {
         target: m.get_one::<String>("target").cloned().unwrap_or_default(),
         model: m.get_one::<String>("model").cloned().unwrap_or_default(),
         restart: m.get_flag("restart"),
+        live: m.get_flag("live"),
         wait: m.get_flag("wait"),
         force: m.get_flag("force"),
         json: m.get_flag("json"),
@@ -419,10 +443,20 @@ fn switch(
         }
         _ => {}
     }
-    let plan = match plan_switch(spec, &cmd.model, cmd.restart) {
+    let plan = match plan_switch(spec, &cmd.model, cmd.restart, cmd.live) {
         Ok(p) => p,
         Err(e) => return Ok(error("model_switch_unsupported", format!("{kind}: {e}"))),
     };
+    if cmd.live && spec.switch_persists_default == Some(true) {
+        let note = format!(
+            "--live: {kind}'s switch command also changes the {kind} CLI's saved default model for new sessions"
+        );
+        eprintln!("warning: {note}");
+        warning = Some(match warning {
+            Some(w) => format!("{w}; {note}"),
+            None => note,
+        });
+    }
 
     let status = agent["agent_status"].as_str().unwrap_or("unknown");
     if status == "blocked" {
@@ -548,7 +582,7 @@ mod tests {
             "unset fields keep the default"
         );
         assert_eq!(
-            plan_switch(&c["codex"], "o3", false).unwrap(),
+            plan_switch(&c["codex"], "o3", false, false).unwrap(),
             SwitchPlan::Restart(vec!["-m".into(), "o3".into()])
         );
         assert!(parse_config("[claude]\nbogus = 1\n").is_err());
@@ -559,18 +593,53 @@ mod tests {
     fn plans_live_or_restart() {
         let d = defaults();
         assert_eq!(
-            plan_switch(&d["claude"], "opus", false).unwrap(),
+            plan_switch(&d["claude"], "opus", false, true).unwrap(),
             SwitchPlan::Live("/model opus".into())
         );
         assert_eq!(
-            plan_switch(&d["claude"], "opus", true).unwrap(),
+            plan_switch(&d["claude"], "opus", true, false).unwrap(),
             SwitchPlan::Restart(vec!["--model".into(), "opus".into()])
         );
         assert_eq!(
-            plan_switch(&d["devin"], "swe-2-1", false).unwrap(),
+            plan_switch(&d["devin"], "swe-2-1", false, false).unwrap(),
             SwitchPlan::Restart(vec!["--model".into(), "swe-2-1".into()])
         );
-        assert!(plan_switch(&ModelSpec::default(), "x", false).is_err());
+        assert!(plan_switch(&ModelSpec::default(), "x", false, false).is_err());
+    }
+
+    #[test]
+    fn persisting_type_restarts_by_default_and_live_on_request() {
+        let d = defaults();
+        assert_eq!(d["claude"].switch_persists_default, Some(true));
+        assert_eq!(
+            plan_switch(&d["claude"], "opus", false, false).unwrap(),
+            SwitchPlan::Restart(vec!["--model".into(), "opus".into()])
+        );
+        assert_eq!(
+            plan_switch(&d["claude"], "opus", false, true).unwrap(),
+            SwitchPlan::Live("/model opus".into())
+        );
+        assert!(plan_switch(&d["claude"], "opus", true, true).is_err());
+        // no restart_args: live is the only way, even for a persisting type
+        let mut only_live = d["claude"].clone();
+        only_live.restart_args = None;
+        assert_eq!(
+            plan_switch(&only_live, "opus", false, false).unwrap(),
+            SwitchPlan::Live("/model opus".into())
+        );
+    }
+
+    #[test]
+    fn switch_persists_default_merges_per_field() {
+        let c = parse_config("[claude]\nswitch_persists_default = false\n").unwrap();
+        assert_eq!(c["claude"].switch_persists_default, Some(false));
+        assert_eq!(c["claude"].switch.as_deref(), Some("/model {model}"));
+        assert_eq!(
+            plan_switch(&c["claude"], "opus", false, false).unwrap(),
+            SwitchPlan::Live("/model opus".into())
+        );
+        let c = parse_config("[claude]\nmodels = [\"opus\"]\n").unwrap();
+        assert_eq!(c["claude"].switch_persists_default, Some(true));
     }
 
     #[test]
