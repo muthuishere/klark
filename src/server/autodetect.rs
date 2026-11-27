@@ -209,6 +209,9 @@ pub fn spawn_server_daemon() -> io::Result<u32> {
         )
     })?;
 
+    #[cfg(target_os = "macos")]
+    let exe = stable_dev_server_exe(exe);
+
     info!(exe = %exe.display(), "spawning server daemon");
 
     let mut command = build_server_daemon_command(exe);
@@ -220,6 +223,53 @@ pub fn spawn_server_daemon() -> io::Result<u32> {
     info!(pid, "server daemon spawned");
 
     Ok(pid)
+}
+
+/// macOS keys Full Disk Access for a plain executable to its path, and every
+/// pane inherits the server's access. A klark built in a repo (`target/...`,
+/// one per worktree) would add a new "klark" to System Settings each time it
+/// started a server. Such builds run their server from one fixed copy instead,
+/// signed with the same identity (scripts/macos_link.sh), so one grant covers
+/// them all. Installed binaries run from where they are. Any copy failure
+/// falls back to the build's own path.
+#[cfg(target_os = "macos")]
+fn stable_dev_server_exe(exe: PathBuf) -> PathBuf {
+    if !is_cargo_build(&exe) || std::env::var_os("KLARK_DEV_SERVER_COPY").is_some_and(|v| v == "0")
+    {
+        return exe;
+    }
+    let target = crate::config::state_dir().join("dev-bin").join("klark");
+    match copy_if_changed(&exe, &target) {
+        Ok(()) => target,
+        Err(err) => {
+            tracing::warn!(%err, "running the server from the build path");
+            exe
+        }
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn is_cargo_build(exe: &std::path::Path) -> bool {
+    exe.components().any(|c| c.as_os_str() == "target")
+}
+
+#[cfg(target_os = "macos")]
+fn copy_if_changed(src: &std::path::Path, dst: &std::path::Path) -> io::Result<()> {
+    let new = std::fs::read(src)?;
+    if std::fs::read(dst).is_ok_and(|old| old == new) {
+        return Ok(());
+    }
+    let dir = dst.parent().ok_or_else(|| io::Error::other("no parent"))?;
+    std::fs::create_dir_all(dir)?;
+    // Write beside it and rename, so a server starting from the old copy
+    // never sees a half-written file.
+    let tmp = dir.join(format!(".klark.{}", std::process::id()));
+    std::fs::write(&tmp, &new)?;
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755))?;
+    std::fs::rename(&tmp, dst).inspect_err(|_| {
+        let _ = std::fs::remove_file(&tmp);
+    })
 }
 
 fn build_server_daemon_command(exe: PathBuf) -> Command {
@@ -415,6 +465,38 @@ mod tests {
     use std::io::{BufRead, BufReader, Write};
     use std::os::unix::net::UnixListener;
     use std::sync::{Mutex, OnceLock};
+
+    #[test]
+    fn only_cargo_builds_get_the_fixed_server_copy() {
+        assert!(is_cargo_build(Path::new("/w/klark-x/target/debug/klark")));
+        assert!(is_cargo_build(Path::new("/w/klark/target/aarch64-apple-darwin/release/klark")));
+        assert!(!is_cargo_build(Path::new("/Users/u/.local/bin/klark")));
+        assert!(!is_cargo_build(Path::new("/opt/homebrew/bin/klark")));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn fixed_server_copy_is_replaced_only_when_the_build_changes() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let dir = std::env::temp_dir().join(format!("klark-devcopy-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("klark");
+        let dst = dir.join("dev-bin").join("klark");
+        std::fs::write(&src, b"build one").unwrap();
+        copy_if_changed(&src, &dst).unwrap();
+        assert_eq!(std::fs::read(&dst).unwrap(), b"build one");
+        assert_eq!(std::fs::metadata(&dst).unwrap().permissions().mode() & 0o777, 0o755);
+
+        let inode = std::fs::metadata(&dst).unwrap().ino();
+        copy_if_changed(&src, &dst).unwrap();
+        assert_eq!(std::fs::metadata(&dst).unwrap().ino(), inode, "unchanged build is not rewritten");
+
+        std::fs::write(&src, b"build two").unwrap();
+        copy_if_changed(&src, &dst).unwrap();
+        assert_eq!(std::fs::read(&dst).unwrap(), b"build two");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     fn env_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
