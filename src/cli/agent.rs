@@ -12,6 +12,7 @@ const PANE_SHELL_READINESS_RETRY_TIMEOUT: Duration = Duration::from_secs(2);
 pub(crate) mod bindings;
 #[cfg(test)]
 mod bindings_tests;
+mod models;
 mod restart;
 
 pub(crate) fn command() -> clap::Command {
@@ -63,6 +64,8 @@ pub(super) fn run_agent_command(args: &[String]) -> std::io::Result<i32> {
         Operation::Attach(params) => agent_attach(params),
         Operation::Explain(params) => agent_explain(params),
         Operation::Restart(params) => restart::run(params),
+        Operation::Models(params) => models::run_models(params),
+        Operation::Model(params) => models::run_model(params),
     }
 }
 

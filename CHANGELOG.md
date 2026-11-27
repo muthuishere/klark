@@ -2,10 +2,14 @@
 
 ## Unreleased
 
+### Added
+- `klark agent models <agent|type>` lists the models an agent can switch to (Devin: `devin models list --format json`; Claude: a configured list), and `klark agent model <agent> <model>` switches a running agent's model while keeping its conversation (#52). The agent is restarted on the same conversation with `--model <model>` (an earlier `--model` is replaced), which applies to that session only. Claude switches this way by default because its live `/model` also saves the model as Claude's default in `~/.claude/settings.json`, changing every future Claude session; `--live` types `/model <model>` anyway (idle agent, pane checked for the "Set model to" line, a model picker opening reported as `model_picker_open`) and warns about the saved default. `--live` and `--restart` together are a usage error. A type opts in with `switch_persists_default = true` in `models.toml`; types without it switch live when they have a switch command. Refuses while the agent is working unless `--wait`; a model missing from Devin's list is refused unless `--force`, one missing from Claude's list only warns. Other agent types are added, and the defaults overridden per field, in `models.toml` in the klark config dir (`models`, `list_command`, `switch`, `confirm`, `restart_args`, `switch_persists_default`, `{model}` placeholder).
+
 ### Removed
 - The C# Blazor hub (`hub/`) is removed; the hub is the Go + React one in `hub-go/`. Gaps it does not cover yet are tracked as GitHub issues.
 
 ### Fixed
+- `klark agent restart` picks the agent process its shell started when the agent runs a helper with the same name (Devin's `devin acp`), instead of refusing with `no_shell`.
 - macOS: a klark built in a repo (`target/`, one per worktree) now starts its server from one fixed copy, `<state dir>/dev-bin/klark`, signed with the same identity. macOS ties Full Disk Access for a plain executable to its path, so every build folder used to add another "klark" to System Settings. Now one grant covers every repo build. Installed binaries are unchanged; `KLARK_DEV_SERVER_COPY=0` turns it off.
 
 ## 0.11.9
