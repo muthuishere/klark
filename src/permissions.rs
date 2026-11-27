@@ -64,8 +64,12 @@ pub fn has_full_disk_access() -> Option<bool> {
         return None;
     }
     let home = std::env::var_os("HOME")?;
-    let db = PathBuf::from(home).join("Library/Application Support/com.apple.TCC/TCC.db");
-    match std::fs::File::open(&db) {
+    probe(&PathBuf::from(home).join("Library/Application Support/com.apple.TCC/TCC.db"))
+}
+
+/// Opens a file only Full Disk Access may read: yes, no, or cannot tell.
+fn probe(db: &std::path::Path) -> Option<bool> {
+    match std::fs::File::open(db) {
         Ok(_) => Some(true),
         Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => Some(false),
         // EPERM (operation not permitted) is how macOS refuses it.
@@ -254,6 +258,12 @@ mod tests {
 
     #[test]
     fn probe_answers_on_macos_only() {
-        assert_eq!(has_full_disk_access().is_some(), cfg!(target_os = "macos"));
+        // A fixed path: other tests point HOME at temporary folders while this runs.
+        let system_db = std::path::Path::new("/Library/Application Support/com.apple.TCC/TCC.db");
+        assert_eq!(probe(system_db).is_some(), cfg!(target_os = "macos"));
+        assert_eq!(probe(std::path::Path::new("/nonexistent/klark/TCC.db")), None);
+        if !cfg!(target_os = "macos") {
+            assert_eq!(has_full_disk_access(), None);
+        }
     }
 }
