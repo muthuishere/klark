@@ -66,6 +66,7 @@ The installed binary is the authority for syntax: `klark --help`, then a group w
 - Use `--current`, an explicit pane ID, or a unique agent name. Do not rely on another client's focused pane.
 - Parse IDs from JSON responses. Do not derive them from sidebar order or examples.
 - Do not close workspaces, tabs, panes, or sessions you did not create unless the user explicitly asked. Ordinary CLI/API closes do not inherit the TUI's last-pane confirmation. `workspace close --group` closes the primary workspace and its linked worktree workspaces; never add it merely to bypass `workspace_group_close_required`.
+- Only inside a klark pane (`KLARK_ENV=1`), "worktree" means `klark worktree` (`create --cwd <repo> --branch <name>`, `list`, `open`, `remove`), never `git worktree add`: klark opens it as a workspace linked to its repo, so it shows in the sidebar and in `klark msg ls`. Outside klark this rule does not apply: use git worktree as usual.
 - Use `--trust-repository` only after the user has verified the repository. It grants per-request Git trust; it is not a routine retry for a failed worktree command.
 - Client and server versions can differ after an update. Check `klark status` before relying on new server features. A missing method is not permission to stop or upgrade a server.
 - Never run `klark server stop` from an active session unless the user explicitly intends to stop the server and its pane processes.
