@@ -1,6 +1,6 @@
 //! `klark hub` — link this machine to klark hubs (ADR 0012).
 //!
-//! The hub (klarkhub, the `hub/` image) is deployed separately. `klark hub
+//! The hub (klarkhub, `hub-go/`) is deployed separately. `klark hub
 //! connect --url <hub>` asks the hub for a device code, the owner approves the
 //! machine in the browser, and the hub hands back a machine token. Saved hubs
 //! live in `<config dir>/hubs.json` (0600): `{default, hubs: {name: {url,

@@ -35,10 +35,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Rust tests
         run: cargo nextest run --workspace --locked --no-fail-fast --status-level fail --final-status-level fail --failure-output final
-      - uses: actions/setup-dotnet@v4
-        with: { dotnet-version: "10.0.x" }
-      - name: Hub tests
-        run: dotnet test hub/hub.Tests
 
   # Native Windows: the named pipe client, feed workers and Job Objects, and
   # `klark feed` end to end (tests/feed_windows.rs). Not a release gate yet.

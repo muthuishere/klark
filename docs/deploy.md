@@ -21,13 +21,11 @@ see `hub-go/API.md`) to use LDAP, or switch later in the UI at `/admin/directory
 ```sh
 kubectl create secret generic klarkhub \
   --from-literal=admin-password="$(openssl rand -base64 18)" \
-  --from-literal=jwt-key="$(openssl rand -base64 48)"   # optional
+  --from-literal=session-key="$(openssl rand -base64 48)"   # optional (HUB_SESSION_KEY)
 kubectl apply -f deploy/k8s/
 ```
 
-The example manifest still passes these as the old hub's `KLARK_HUB__ADMIN__PASSWORD` and
-`KLARK_HUB__JWT__KEY`, which the current hub does not read: until it is updated, rename the first to
-`HUB_ADMIN_PASSWORD` (the second has no equivalent), or admin keeps `adminadmin`.
+The manifest passes them as `HUB_ADMIN_PASSWORD` and `HUB_SESSION_KEY`.
 
 `deploy/k8s/` is a plain example: a Deployment (1 replica, `Recreate`), a
 NodePort Service (plain http on every node at `:30080`), a PVC for `/data`, and

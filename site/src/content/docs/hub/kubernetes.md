@@ -24,12 +24,6 @@ kubectl create secret generic klarkhub \
 
 `admin-password` is the built-in admin's password (`HUB_ADMIN_PASSWORD`).
 
-:::caution
-The example manifest still maps it to the old hub's `KLARK_HUB__ADMIN__PASSWORD` (and a `jwt-key` to
-`KLARK_HUB__JWT__KEY`), which the current hub does not read. Rename the variable to `HUB_ADMIN_PASSWORD`
-in the manifest, or admin keeps `adminadmin`.
-:::
-
 ## 3. Apply
 
 ```sh
@@ -59,7 +53,7 @@ cluster has one.
 ## Set the public URL
 
 `klark hub connect` prints a link for people to open. Tell the hub its real
-address so that link is right. In the manifest (its commented line still has the old name `KLARK_HUB__PUBLICURL`):
+address so that link is right. In the manifest:
 
 ```yaml
 - name: HUB_PUBLIC_URL
