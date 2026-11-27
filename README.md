@@ -38,7 +38,7 @@ Docs: **https://muthuishere.github.io/klark/**
   - search across agents, folders and messages (⌘K);
   - click a file path to open it in a GitHub-style viewer and download it
     (10 MB limit, secrets refused);
-  - send images from your phone to an agent; agents share files with `klark offer`;
+  - send images from your phone to an agent; `klark offer` (agents share files) is not available yet in the current hub;
   - sign-in with LDAP / Active Directory or the built-in user directory;
   - machines join by browser approval (`klark hub connect --url …`).
 - **Light on load.** Panes stream only while someone is watching. An idle
@@ -58,10 +58,8 @@ Prebuilt Linux binaries come with each tagged release.
 
 ## Hub in two steps
 
-The hub below is the released one (C# Blazor Server, `hub/`). It is being rewritten as klarkhub in Go (API) and
-React (UI), shipped as one container on the same port 7470: **in progress**, the released hub is still the
-Blazor one ([status and parity checklist](hub-go/README.md), [why](docs/adr/0014-go-react-hub.md)). Existing
-klark machines will keep working against either, because the machine link protocol does not change.
+The hub is klarkhub: a Go API with the React UI embedded, one container on port 7470 ([hub-go/README.md](hub-go/README.md),
+known gaps there; [why](docs/adr/0014-go-react-hub.md)). The old C# Blazor hub is removed.
 
 1. Run klarkhub (see [deploy guide](docs/deploy.md)):
 
@@ -70,7 +68,7 @@ klark machines will keep working against either, because the machine link protoc
    # or: kubectl apply -f deploy/k8s/
    ```
 
-   Open `http://<host>:7470`, sign in as `admin` / `adminadmin`, and change the password.
+   Open `http://<host>:7470` and sign in as `admin` / `adminadmin` (set `HUB_ADMIN_PASSWORD` to change it).
 
 2. On each machine:
 
@@ -87,8 +85,7 @@ klark machines will keep working against either, because the machine link protoc
 |---|---|
 | `src/` | klark itself (Rust) |
 | `crates/klark-link` | the machine side of the hub link (HTTP: NDJSON down, POST up) |
-| `hub/` | klarkhub, the released hub: C# Blazor Server (.NET 10), SQLite, Docker |
-| `hub-go/` | klarkhub (Go API + React UI, single container): **in progress**, not released; see [hub-go/README.md](hub-go/README.md) and [ADR 0014](docs/adr/0014-go-react-hub.md) |
+| `hub-go/` | klarkhub, the hub: Go API + React UI, one container, SQLite; see [hub-go/README.md](hub-go/README.md) and [ADR 0014](docs/adr/0014-go-react-hub.md) |
 | `deploy/k8s/` | example Kubernetes manifest |
 | `site/` | the documentation site (`just docs`) |
 | `skills/klark` | the skill that teaches agents to use klark |

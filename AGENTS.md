@@ -13,8 +13,7 @@ This file is for any agent (or person) working in this repository.
 | `src/` | klark itself: server, TUI client, panes, agent detection, socket API | Rust |
 | `crates/klark-link` | the machine side of the hub link, plus `klark-loadtest` | Rust |
 | `crates/ghostty-vt` | bindings to the vendored libghostty-vt terminal core | Rust + Zig |
-| `hub/` | the released hub: ASP.NET Core Blazor Server, SQLite, Docker | C# (.NET 9) |
-| `hub-go/` | the hub rewrite (in progress, ADR 0014): Go API, React UI embedded, one container | Go, TypeScript |
+| `hub-go/` | the hub (ADR 0014): Go API, React UI embedded, one container, SQLite | Go, TypeScript |
 | `api/klark-api.schema.json` | socket API schema | JSON |
 | `docs/STATUS.md` | **the backlog**: done, must do, features (IDs like S-05) | |
 | `docs/adr/` | decisions; `docs/experiments/` measured experiments | |
@@ -161,27 +160,15 @@ Don't add shared behavior that only works through the private TUI client socket.
   and use `AppState::assert_invariants_for_test()` /
   `Workspace::assert_invariants_for_test()` with the adversarial-state helpers.
 
-## Hub (C#, `hub/`)
+## Hub (Go + React, `hub-go/`)
 
-This is the released hub. Its Go + React rewrite is in `hub-go/` (ADR 0014, in progress); keep to `hub-go/API.md`
-there and do not change `hub/` for it. The rules below are for `hub/`.
+The contract is `hub-go/API.md`; keep the code and that file in step. Known gaps: `hub-go/README.md`.
 
-- Blazor Server with per-page `@rendermode InteractiveServer`. Sign-in uses a
-  plain HTML form posting to `/account/login`, which is not interactive.
-- **Every permission check runs on the server**, through `HubAccess`
-  (`CanSee`, `CanType`). Hiding a button is never the only guard.
-- **Hot path:** `MachineConnection.ReceiveLoopAsync` → `HandleBinaryFrameAsync`
-  → `Dispatch`.
-  - No awaiting viewers there: each viewer has its own bounded queue
-    (`PaneViewer`).
-  - No disk there: SQLite writes go through `HubStore`'s channel.
-- **Lazy everywhere.** Pages pull what they show (`EnsureTreeAsync`,
-  `RefreshTreesAsync`, `CallAsync`) and only while they are open. Don't add
-  background polling that runs with no viewer.
-- Config lives in the `Hub` section of `appsettings*.json`, bound to
-  `HubOptions`. Secrets are stored as hashes (`dotnet run -- hash-password`,
-  `hash-token`), never in clear text, except in the mock directory, which is
-  for development only.
+- **Every permission check runs on the server.** Hiding a button is never the only guard.
+- **Lazy everywhere.** The hub talks to a machine only while someone is looking (per-pane SSE by viewer count,
+  tree polling only while a stream is open). Don't add background polling that runs with no viewer.
+- Config is `HUB_*` environment variables (`hub-go/internal/config`). Secrets are stored as hashes
+  (`klarkhub hash-password`, `hash-token`), never in clear text.
 - Keep the UI usable at 375 px wide (phones).
 
 ## Testing
@@ -193,8 +180,8 @@ in the commit or PR what you ran.
 cargo test -p klark-link                 # link: unit + end-to-end (no Zig needed)
 just test                                # klark core (needs Zig 0.16: ZIG=/path/to/zig)
 just check                               # formatting + tests
-cd hub && dotnet build                   # hub (needs .NET 9 SDK), or:
-cd hub && docker compose up -d --build   # http://localhost:7470, admin/adminadmin (built-in admin)
+cd hub-go && make test                  # hub: gofmt, vet, go test -race, UI tests (Go + Node)
+cd hub-go && docker compose up -d --build   # http://localhost:7470, admin / HUB_ADMIN_PASSWORD from the compose file
 python3 experiments/drive.py             # load matrix against the stand-in hub
 ```
 
@@ -228,8 +215,7 @@ plainly and add or keep the matching item in `docs/STATUS.md`.
   explains what changed and why, with the STATUS IDs it touches (`S-05`).
 - Commit on a branch and open a pull request into `master`. Don't push to
   `master` directly.
-- Never commit secrets: tokens, passwords, `appsettings.Development.json` or
-  `appsettings.Production.json` (both are ignored).
+- Never commit secrets: tokens, passwords, `.env` files.
 
 <!-- ctx-optimize:begin -->
 <ctx-optimize>

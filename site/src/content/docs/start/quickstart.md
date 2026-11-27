@@ -93,7 +93,7 @@ klark hub connect --url http://localhost:7470
 ```
 
 Approve the code it shows in the hub (open `http://localhost:7470`, sign in as `admin`,
-first password `adminadmin`, and change it when asked). Your agents then appear in the
+password `adminadmin`, or `HUB_ADMIN_PASSWORD`). Your agents then appear in the
 browser, with a phone layout. `klark hub stop` disconnects. The full guide is
 [Run the hub](/hub/run/).
 

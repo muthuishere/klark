@@ -81,14 +81,14 @@ link at once; the token then gets 401. The machine has to be approved again.
 
 ## Machines from configuration
 
-You can also list machines in `Hub:Machines` with the SHA-256 of their token,
+You can also list machines in `HUB_MACHINES` with the SHA-256 of their token,
 which is useful for fleets and load tests:
 
 ```sh
-cd hub
-dotnet run -- hash-token "$(openssl rand -hex 32)"    # prints TokenSha256; keep the token
+openssl rand -hex 32 | tee token.txt | klarkhub hash-token   # prints the SHA-256; keep the token
+# HUB_MACHINES=mac=<sha256>,fleet*=<sha256>
 ```
 
-A `Fleet: true` entry lets one token serve many machines; each connection is
-named `<Name>:<X-Klark-Machine header>`. `Groups` limits who sees the machine.
-Both approved and configured tokens are accepted.
+A name ending in `*` is a fleet token: one token serves many machines.
+Both approved and configured tokens are accepted. Per-machine access groups are
+not available yet in the current hub.

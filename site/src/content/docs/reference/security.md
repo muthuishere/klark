@@ -13,12 +13,10 @@ certificates with rustls (`KLARK_HUB_CA_FILE` for a private CA).
 ## One hub is one trust domain
 
 - A **machine token** can message every machine on its hub.
-- An **admin** (the built-in `admin`, or `AdminGroups`) sees and drives every
-  machine.
-- Other users see machines by group (`Hub:Machines[].Groups`; approved machines
-  are visible to everyone signed in).
-- **Read-only** users (`ReadOnlyGroups`) cannot type. This is enforced on the
-  server, not only by hiding the box.
+- An **admin** (the built-in `admin`, or `HUB_LDAP_ADMIN_GROUP`) sees and drives
+  every machine.
+- Every signed-in user sees every machine. Per-machine access groups are not
+  available yet in the current hub.
 
 ## What a machine accepts from the hub
 
@@ -34,17 +32,13 @@ everything outside the list is hidden and refused.
 - Machine tokens: only their SHA-256 is stored in `hub.db`. `klark hub ls` never
   prints a token. `hubs.json` and `hub.json` are mode 0600.
 - Directory passwords: never stored. LDAP checks them by a bind.
-- Mock and admin passwords: ASP.NET `PasswordHasher` hashes in `hub.db`.
-- JWT key: `KLARK_HUB__JWT__KEY`, or `<DataDir>/jwt.key` (0600). Deleting the file
-  revokes every token.
-- Cookie keys: `<DataDir>/keys`, so a redeploy does not sign people out.
+- Local and mock passwords: bcrypt hashes in `hub.db` (`HUB_USERS` also takes `sha256:`).
+- Cookie key: `HUB_SESSION_KEY`, or `<DataDir>/session.key`, so a redeploy does not sign people out.
 
 ## Sign-in
 
-- 10 attempts per minute per address, for the form and `/api/token`.
-- `Hub:TrustForwardedHeaders` is off by default, so clients cannot fake their
-  address. Turn it on only behind your own proxy.
-- While `admin` still has the default password, every page shows a banner.
+- Failures are rate limited per user and per address (see `hub-go/API.md`).
+- Set `HUB_ADMIN_PASSWORD`: the default is `adminadmin`.
 
 ## Files and assets
 
@@ -55,7 +49,6 @@ everything outside the list is hidden and refused.
   never credential-shaped paths, at most 10 MB, checked by both the hub and the
   machine. Responses carry a sandboxing CSP.
 - `klark offer` refuses credential-looking paths without `--force`.
-- Every asset expires after 24 hours.
 
 ## Known risks
 

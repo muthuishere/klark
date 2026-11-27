@@ -5,7 +5,8 @@ description: Measured numbers for the hub, the link and the web app.
 
 Performance is treated as a requirement. These numbers come from the
 experiments in `docs/experiments/` (E-06, E-11, E-12). Where a number is
-extrapolated, it says so.
+extrapolated, it says so. The hub numbers (E-06, E-11) and the web app numbers
+(E-12) were measured on the old Blazor hub; the Go hub has not been measured yet.
 
 ## Idle costs almost nothing
 

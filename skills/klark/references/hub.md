@@ -4,7 +4,7 @@ Part of the klark skill; the rules in `SKILL.md` (KLARK_ENV check, safety) apply
 
 ## Linking to a hub (`klark hub`)
 
-The hub (klarkhub, the `hub/` image) is deployed separately. To link this machine (owner only; it puts the machine on the hub):
+The hub (klarkhub, the `hub-go/` image) is deployed separately. To link this machine (owner only; it puts the machine on the hub):
 
 ```bash
 klark hub connect --url http://hub.lan:7470   # prints "Open <url> … (code ABCD-EFGH)"; the owner approves in the browser
@@ -39,6 +39,8 @@ klark expose url
 Options: `--pane <id>` (default `KLARK_PANE_ID`), `--hub <url>` (default `KLARK_HUB_URL`), `--name <machine>` (default `KLARK_MACHINE_NAME`, else the hostname), `--agents` (default `KLARK_EXPOSE_AGENTS`; pass the same list the running `klark expose` uses so an unexposed pane is caught). The URL is built locally; nothing is sent. Share only your own pane unless the person names another.
 
 ## Files
+
+The current hub does not accept `klark offer` yet (agent-to-person files); write the absolute path instead.
 
 ```bash
 klark offer ./report.pdf            # appears on this pane's hub page as a download/image

@@ -74,7 +74,7 @@ Type `/` to complete an agent's slash commands, and the answer lands in the chat
 
 ## 60-second quickstart
 
-You need klark and Docker (or the .NET 10 SDK to run the hub from source).
+You need klark and Docker (or Go and Node to build the hub from source).
 
 <Steps>
 
@@ -95,8 +95,8 @@ You need klark and Docker (or the .NET 10 SDK to run the hub from source).
      ghcr.io/muthuishere/klarkhub:latest
    ```
 
-   Open `http://localhost:7470` and sign in as `admin` / `adminadmin`. Change the password when the banner asks.
-   From source instead: `cd hub && dotnet run` (listens on `http://localhost:7470`). See [Run the hub](/hub/run/).
+   Open `http://localhost:7470` and sign in as `admin` / `adminadmin`. Set `HUB_ADMIN_PASSWORD` (`-e`) to change it.
+   From source instead: see [Run the hub](/hub/run/).
 
 3. Link this machine.
 

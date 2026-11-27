@@ -64,6 +64,10 @@ with an error instead of a dead link.
 
 ## Offer a file to the person: `klark offer`
 
+:::note
+Not available yet in the current hub: it does not accept agent-to-person files.
+:::
+
 ```sh
 klark offer ./report.pdf          # shows up on this pane's hub page
 klark offer out.png --pane w1:p2
