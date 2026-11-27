@@ -44,6 +44,9 @@ pub(crate) struct Restart {
     pub(crate) timeout_ms: Option<u64>,
     pub(crate) notice: bool,
     pub(crate) notify_senders: bool,
+    /// Launch flags added to the resume command (`klark agent model --restart`);
+    /// an earlier value of the same flag is replaced.
+    pub(crate) extra_args: Vec<String>,
 }
 
 pub(crate) fn args() -> Vec<clap::Arg> {
@@ -94,6 +97,7 @@ pub(crate) fn from_matches(matches: &clap::ArgMatches) -> Restart {
         timeout_ms: matches.get_one::<u64>("timeout").copied(),
         notice: !matches.get_flag("no-notice"),
         notify_senders: matches.get_flag("notify-senders"),
+        extra_args: Vec::new(),
     }
 }
 
@@ -121,7 +125,7 @@ fn request(method: Method) -> std::io::Result<Value> {
 }
 
 /// Runs inside the session that holds `target` (see `send_routed`).
-fn restart(params: &Restart, target: &str) -> std::io::Result<Value> {
+pub(super) fn restart(params: &Restart, target: &str) -> std::io::Result<Value> {
     let got = request(Method::AgentGet(AgentTarget {
         target: target.to_owned(),
     }))?;
@@ -236,11 +240,23 @@ fn hard_restart(
     let info = &info["result"]["process_info"];
     let shell_pid = info["shell_pid"].as_u64().map(|p| p as i32);
     let executable = crate::detect::interactive_agent_executable(detected);
-    let agent_process = info["foreground_processes"]
+    let table = process::table();
+    // The agent CLI may run helpers with the same name (`devin acp`): prefer
+    // the one the shell started.
+    let candidates: Vec<&Value> = info["foreground_processes"]
         .as_array()
         .into_iter()
         .flatten()
-        .find(|p| is_agent_process(p, &kind, executable));
+        .filter(|p| is_agent_process(p, &kind, executable))
+        .collect();
+    let agent_process = candidates
+        .iter()
+        .find(|p| {
+            shell_pid.is_some()
+                && process::parent(&table, p["pid"].as_u64().unwrap_or(0) as i32) == shell_pid
+        })
+        .or(candidates.first())
+        .copied();
     let Some(agent_process) = agent_process else {
         return Ok(error(
             "agent_process_not_found",
@@ -255,7 +271,6 @@ fn hard_restart(
         .filter_map(|a| a.as_str().map(str::to_owned))
         .collect();
 
-    let table = process::table();
     if process::is_ancestor(&table, pid, std::process::id() as i32) {
         return Ok(error(
             "self_restart",
@@ -283,7 +298,7 @@ fn hard_restart(
     }
 
     // Arguments to resume with.
-    let (args, not_carried) = resume_args(&kind, &original_argv, &plan.argv);
+    let (args, not_carried) = resume_args(&kind, &original_argv, &plan.argv, &params.extra_args);
     let name = agent["name"]
         .as_str()
         .map(str::to_owned)
@@ -441,13 +456,25 @@ fn start(
 /// with (`--dangerously-skip-permissions`, `--model`, ...) minus the ones that
 /// pick a conversation or replay a prompt; other agents get their plain resume
 /// command and the dropped flags are reported.
-fn resume_args(kind: &str, original: &[String], plan: &[String]) -> (Vec<String>, Vec<String>) {
-    let resume: Vec<String> = plan.iter().skip(1).cloned().collect();
+fn resume_args(
+    kind: &str,
+    original: &[String],
+    plan: &[String],
+    extra: &[String],
+) -> (Vec<String>, Vec<String>) {
+    let mut resume: Vec<String> = plan.iter().skip(1).cloned().collect();
     let flags: Vec<String> = original.iter().skip(1).cloned().collect();
     if kind != "claude" {
         let dropped = flags.into_iter().filter(|f| !resume.contains(f)).collect();
+        resume.extend(extra.iter().cloned());
         return (resume, dropped);
     }
+    // Flags the caller sets again (`--model`) replace the original ones.
+    let replaced: Vec<&str> = extra
+        .iter()
+        .filter(|f| f.starts_with('-'))
+        .map(|f| f.split('=').next().unwrap_or(f))
+        .collect();
     // Flags that never take a value; any other flag takes the next token
     // unless it is written --flag=value.
     const BOOLEAN: &[&str] = &[
@@ -500,6 +527,17 @@ fn resume_args(kind: &str, original: &[String], plan: &[String]) -> (Vec<String>
             i += 1;
             continue;
         }
+        if replaced.contains(&bare) {
+            dropped.push(flag.clone());
+            if !has_inline && !BOOLEAN.contains(&bare) {
+                if let Some(value) = flags.get(i + 1).filter(|v| !v.starts_with('-')) {
+                    dropped.push(value.clone());
+                    i += 1;
+                }
+            }
+            i += 1;
+            continue;
+        }
         kept.push(flag.clone());
         if !has_inline && !BOOLEAN.contains(&bare) {
             if let Some(value) = flags.get(i + 1).filter(|v| !v.starts_with('-')) {
@@ -510,6 +548,7 @@ fn resume_args(kind: &str, original: &[String], plan: &[String]) -> (Vec<String>
         i += 1;
     }
     kept.extend(resume);
+    kept.extend(extra.iter().cloned());
     (kept, dropped)
 }
 
@@ -853,6 +892,7 @@ mod tests {
                 "OLD",
             ]),
             &plan,
+            &[],
         );
         assert_eq!(
             args,
@@ -876,6 +916,7 @@ mod tests {
                 "fix the bug",
             ]),
             &plan,
+            &[],
         );
         assert_eq!(
             args,
@@ -891,6 +932,7 @@ mod tests {
             "claude",
             &s(&["claude", "--session-id", "X", "--add-dir", "/a"]),
             &plan,
+            &[],
         );
         assert_eq!(args, s(&["--add-dir", "/a", "--resume", "NEW"]));
     }
@@ -901,9 +943,32 @@ mod tests {
             "codex",
             &s(&["codex", "--yolo"]),
             &s(&["codex", "resume", "ID"]),
+            &[],
         );
         assert_eq!(args, s(&["resume", "ID"]));
         assert_eq!(dropped, s(&["--yolo"]));
+    }
+
+    #[test]
+    fn extra_args_replace_the_same_flag_and_go_last() {
+        let (args, dropped) = resume_args(
+            "claude",
+            &s(&["claude", "--model", "haiku", "--verbose", "--model=opus"]),
+            &s(&["claude", "--resume", "NEW"]),
+            &s(&["--model", "sonnet"]),
+        );
+        assert_eq!(
+            args,
+            s(&["--verbose", "--resume", "NEW", "--model", "sonnet"])
+        );
+        assert_eq!(dropped, s(&["--model", "haiku", "--model=opus"]));
+        let (args, _) = resume_args(
+            "devin",
+            &s(&["devin"]),
+            &s(&["devin", "-r", "ID"]),
+            &s(&["--model", "swe-2-1"]),
+        );
+        assert_eq!(args, s(&["-r", "ID", "--model", "swe-2-1"]));
     }
 
     #[test]

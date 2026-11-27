@@ -2,10 +2,14 @@
 
 ## Unreleased
 
+### Added
+- `klark agent models <agent|type>` lists the models an agent can switch to (Devin: `devin models list --format json`; Claude: a configured list), and `klark agent model <agent> <model>` switches a running agent's model while keeping its conversation (#52). When the agent type has a switch command (Claude: `/model <model>`) and the agent is idle, it is typed with Enter and the pane is checked for Claude's "Set model to" line; a model picker opening instead is reported as `model_picker_open`. Otherwise, or with `--restart`, the agent is restarted on the same conversation with `--model <model>` (an earlier `--model` is replaced). Refuses while the agent is working unless `--wait`; a model missing from Devin's list is refused unless `--force`, one missing from Claude's list only warns. Other agent types are added, and the defaults overridden per field, in `models.toml` in the klark config dir (`models`, `list_command`, `switch`, `confirm`, `restart_args`, `{model}` placeholder). Note: Claude's `/model` also saves the model as Claude's default for new sessions; `--restart` does not.
+
 ### Removed
 - The C# Blazor hub (`hub/`) is removed; the hub is the Go + React one in `hub-go/`. Gaps it does not cover yet are tracked as GitHub issues.
 
 ### Fixed
+- `klark agent restart` picks the agent process its shell started when the agent runs a helper with the same name (Devin's `devin acp`), instead of refusing with `no_shell`.
 - macOS: a klark built in a repo (`target/`, one per worktree) now starts its server from one fixed copy, `<state dir>/dev-bin/klark`, signed with the same identity. macOS ties Full Disk Access for a plain executable to its path, so every build folder used to add another "klark" to System Settings. Now one grant covers every repo build. Installed binaries are unchanged; `KLARK_DEV_SERVER_COPY=0` turns it off.
 
 ## 0.11.9
