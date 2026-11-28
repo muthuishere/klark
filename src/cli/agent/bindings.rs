@@ -230,6 +230,8 @@ cli_projection! {
 pub(crate) struct ListOpts {
     pub(crate) all_sessions: bool,
     pub(crate) json: bool,
+    pub(crate) status: Option<String>,
+    pub(crate) idle_for: Option<String>,
 }
 
 pub(crate) enum Operation {
@@ -263,6 +265,15 @@ pub(crate) fn command() -> Command {
                     .short('a')
                     .action(clap::ArgAction::SetTrue)
                     .help("List the agents of every running klark session on this machine"),
+                clap::Arg::new("status")
+                    .long("status")
+                    .value_name("STATUS")
+                    .value_parser(crate::agent_lifecycle::LIST_STATUSES.to_vec())
+                    .help("Only agents in this state (idle, working, blocked, done, unknown, closed)"),
+                clap::Arg::new("idle-for")
+                    .long("idle-for")
+                    .value_name("DURATION")
+                    .help("Only idle or done agents that have been so for at least this long (30m, 3h, 1d, 90s)"),
                 clap::Arg::new("json")
                     .long("json")
                     .action(clap::ArgAction::SetTrue)
@@ -317,6 +328,8 @@ pub(crate) fn from_matches(matches: &ArgMatches) -> Result<Operation, ParseError
         "list" => Operation::List(ListOpts {
             all_sessions: matches.get_flag("all-sessions"),
             json: matches.get_flag("json"),
+            status: matches.get_one::<String>("status").cloned(),
+            idle_for: matches.get_one::<String>("idle-for").cloned(),
         }),
         "get" => Operation::Get(TargetProjection::from_matches(matches)?),
         "focus" => Operation::Focus(TargetProjection::from_matches(matches)?),

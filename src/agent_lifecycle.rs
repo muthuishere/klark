@@ -128,6 +128,29 @@ pub(crate) fn agent_table(agents: &[Value]) -> String {
     out
 }
 
+pub(crate) const LIST_STATUSES: &[&str] = &["idle", "working", "blocked", "done", "unknown", "closed"];
+
+/// Whether an agent counts as idle for `--idle-for` and bulk close: waiting
+/// for input (`idle`) or finished with an unseen result (`done`).
+pub(crate) fn is_idle_like(agent: &Value) -> bool {
+    matches!(agent["agent_status"].as_str(), Some("idle" | "done"))
+}
+
+/// `--status` and `--idle-for` for `agent list`.
+pub(crate) fn matches_filter(agent: &Value, status: Option<&str>, idle_for: Option<u64>) -> bool {
+    if let Some(status) = status {
+        if agent["agent_status"].as_str() != Some(status) {
+            return false;
+        }
+    }
+    if let Some(min) = idle_for {
+        if !is_idle_like(agent) || agent["status_seconds"].as_u64().unwrap_or(0) < min {
+            return false;
+        }
+    }
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -153,6 +176,23 @@ mod tests {
         assert_eq!(format_duration(3 * 3600 + 12 * 60 + 5), "3h12m");
         assert_eq!(format_duration(3600), "1h");
         assert_eq!(format_duration(2 * 86400 + 4 * 3600), "2d4h");
+    }
+
+    #[test]
+    fn filters_select_by_status_and_idle_time() {
+        let idle3h = json!({"agent_status":"idle","status_seconds":10800});
+        let idle5m = json!({"agent_status":"idle","status_seconds":300});
+        let done3h = json!({"agent_status":"done","status_seconds":10800});
+        let working = json!({"agent_status":"working","status_seconds":99999});
+        let blocked = json!({"agent_status":"blocked","status_seconds":99999});
+        assert!(matches_filter(&idle3h, None, None));
+        assert!(matches_filter(&idle3h, Some("idle"), Some(10800)));
+        assert!(!matches_filter(&idle5m, Some("idle"), Some(10800)));
+        assert!(matches_filter(&done3h, None, Some(3600)));
+        assert!(!matches_filter(&done3h, Some("idle"), None));
+        assert!(!matches_filter(&working, None, Some(60)));
+        assert!(!matches_filter(&blocked, None, Some(60)));
+        assert!(matches_filter(&working, Some("working"), None));
     }
 
     #[test]

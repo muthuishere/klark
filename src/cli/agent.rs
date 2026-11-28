@@ -353,6 +353,12 @@ fn agent_start(params: AgentStartParams) -> std::io::Result<i32> {
 }
 
 fn agent_list(opts: bindings::ListOpts) -> std::io::Result<i32> {
+    if let Some(text) = &opts.idle_for {
+        if let Err(message) = crate::agent_lifecycle::parse_duration(text) {
+            eprintln!("--idle-for: {message}");
+            return Ok(2);
+        }
+    }
     if opts.all_sessions {
         if super::target::is_remote() {
             eprintln!("--all-sessions lists the sessions of this machine; it cannot be combined with --machine");
@@ -380,6 +386,22 @@ fn agent_list(opts: bindings::ListOpts) -> std::io::Result<i32> {
 /// Prints the list as JSON, or as a table on a terminal.
 fn print_agent_list(response: &serde_json::Value, opts: &bindings::ListOpts) -> std::io::Result<i32> {
     use std::io::IsTerminal;
+    let mut filtered;
+    let response = if opts.status.is_some() || opts.idle_for.is_some() {
+        filtered = response.clone();
+        let idle_for = opts
+            .idle_for
+            .as_deref()
+            .and_then(|t| crate::agent_lifecycle::parse_duration(t).ok());
+        if let Some(agents) = filtered["result"]["agents"].as_array_mut() {
+            agents.retain(|a| {
+                crate::agent_lifecycle::matches_filter(a, opts.status.as_deref(), idle_for)
+            });
+        }
+        &filtered
+    } else {
+        response
+    };
     if !opts.json && response.get("error").is_none() && std::io::stdout().is_terminal() {
         let agents = response["result"]["agents"].as_array().cloned().unwrap_or_default();
         print!("{}", crate::agent_lifecycle::agent_table(&agents));
