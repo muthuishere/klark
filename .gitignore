@@ -19,3 +19,6 @@ __pycache__/
 
 /.wrangler/
 **/.wrangler/
+
+# the removed C# Blazor hub: leftover build output and local data
+/hub/
