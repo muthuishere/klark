@@ -66,6 +66,8 @@ pub(super) fn run_agent_command(args: &[String]) -> std::io::Result<i32> {
         Operation::Explain(params) => agent_explain(params),
         Operation::Restart(params) => restart::run(params),
         Operation::Resume(target) => lifecycle::run_resume(&target),
+        Operation::Pin(target, pin) => lifecycle::run_pin(&target, pin),
+        Operation::Close(cmd) => lifecycle::run_close(cmd),
         Operation::Models(params) => models::run_models(params),
         Operation::Model(params) => models::run_model(params),
     }
@@ -411,6 +413,20 @@ fn print_agent_list(response: &serde_json::Value, opts: &bindings::ListOpts) -> 
         );
         response["result"]["agents"] = agents.into();
     }
+    let pins = crate::agent_lifecycle::load_pins(&crate::agent_lifecycle::pins_path());
+    if !pins.is_empty() {
+        if let Some(agents) = response["result"]["agents"].as_array_mut() {
+            for agent in agents {
+                let key = match (agent["session"].as_str(), agent["name"].as_str()) {
+                    (Some(session), Some(name)) => crate::agent_lifecycle::pin_key(session, name),
+                    _ => continue,
+                };
+                if pins.contains(&key) {
+                    agent["pinned"] = true.into();
+                }
+            }
+        }
+    }
     if opts.status.is_some() || opts.idle_for.is_some() {
         let idle_for = opts
             .idle_for
@@ -474,7 +490,7 @@ fn agent_list_all_sessions(opts: &bindings::ListOpts) -> std::io::Result<i32> {
 /// TARGET and `klark msg send` accept) to one `agent.list` entry, and where its
 /// folder sits in git: `checkout` (`main` or `worktree`), `worktree` (the
 /// linked worktree's folder name) and `branch`, each only when known.
-fn annotate_agent(agent: &mut serde_json::Value, machine: &str, session: &str) {
+pub(super) fn annotate_agent(agent: &mut serde_json::Value, machine: &str, session: &str) {
     let Some(object) = agent.as_object_mut() else {
         return;
     };
@@ -509,7 +525,7 @@ fn annotate_agent(agent: &mut serde_json::Value, machine: &str, session: &str) {
 
 /// The name of the session this command talks to by default, when it is a
 /// named session directory (not a raw `KLARK_SOCKET_PATH` override).
-fn current_session_name() -> Option<String> {
+pub(super) fn current_session_name() -> Option<String> {
     let name = crate::session::active_name()
         .unwrap_or_else(|| crate::session::DEFAULT_SESSION_NAME.to_owned());
     (crate::agent_index::session_socket(&name) == crate::session::active_api_socket_path())
@@ -577,7 +593,7 @@ fn send_routed(
     }
 }
 
-fn send_to_session(
+pub(super) fn send_to_session(
     session: &str,
     agent: String,
     request_id: &str,
@@ -827,7 +843,7 @@ fn agent_wait_timeout() -> serde_json::Value {
     )
 }
 
-fn cli_agent_error(id: &str, code: &str, message: impl Into<String>) -> serde_json::Value {
+pub(super) fn cli_agent_error(id: &str, code: &str, message: impl Into<String>) -> serde_json::Value {
     serde_json::json!({
         "id": id,
         "error": { "code": code, "message": message.into() }

@@ -249,6 +249,8 @@ pub(crate) enum Operation {
     Explain(Explain),
     Restart(super::restart::Restart),
     Resume(String),
+    Pin(String, bool),
+    Close(super::lifecycle::CloseCmd),
     Models(super::models::ModelsCmd),
     Model(super::models::ModelCmd),
 }
@@ -317,6 +319,20 @@ pub(crate) fn command() -> Command {
             .args(super::lifecycle::resume_args())
             .override_usage("klark agent resume <NAME>")
             .after_help("Reads the closed-agent record (klark agent list --closed). Agents with a resume command (claude --resume ID, devin --resume ID, ...) continue the same conversation; others start a new one and say so."))
+        .subcommand(Command::new("pin")
+            .about("Never close this agent automatically or in bulk")
+            .args(super::lifecycle::pin_args())
+            .override_usage("klark agent pin <TARGET>")
+            .after_help("For agents whose work lives in the session, such as an in-session schedule. The pin is kept by session and agent name, so it survives restarts; a pinned agent is skipped by `klark agent close --idle-for` and `[agents] close_idle_after`. `klark agent close <TARGET>` still closes it."))
+        .subcommand(Command::new("unpin")
+            .about("Allow closing this agent in bulk again")
+            .args(super::lifecycle::pin_args())
+            .override_usage("klark agent unpin <TARGET>"))
+        .subcommand(Command::new("close")
+            .about("Close an agent's pane and keep it resumable, or close every long-idle agent")
+            .args(super::lifecycle::close_args())
+            .override_usage("klark agent close <TARGET> | --idle-for DURATION [-a] [--dry-run] [--json]")
+            .after_help("The agent is recorded as closed (klark agent list --closed) and comes back with `klark agent resume NAME`. --idle-for never closes working or blocked agents, pinned agents (klark agent pin), or the agent running the command. Without -a only this session is considered."))
         .subcommand(Command::new("models")
             .about("List the models an agent (or agent type) can switch to")
             .args(super::models::models_args())
@@ -367,6 +383,11 @@ pub(crate) fn from_matches(matches: &ArgMatches) -> Result<Operation, ParseError
         "resume" => Operation::Resume(
             matches.get_one::<String>("target").cloned().unwrap_or_default(),
         ),
+        "pin" | "unpin" => Operation::Pin(
+            matches.get_one::<String>("target").cloned().unwrap_or_default(),
+            name == "pin",
+        ),
+        "close" => Operation::Close(super::lifecycle::close_from(matches)),
         "models" => Operation::Models(super::models::models_from(matches)),
         "model" => Operation::Model(super::models::model_from(matches)),
         _ => return Err(ParseError::Usage(format!("unknown agent command: {name}"))),

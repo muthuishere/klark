@@ -10,7 +10,7 @@ fn klark_leaves_a_sibling_herdr_config_alone() {
     fs::create_dir_all(herdr.join("sessions/work")).unwrap();
     fs::write(herdr.join("config.toml"), "onboarding = false\n").unwrap();
     let out = Command::new(env!("CARGO_BIN_EXE_klark"))
-        .env("XDG_CONFIG_HOME", &base)
+        .env("XDG_STATE_HOME", &base).env("XDG_CONFIG_HOME", &base)
         .args(["session", "list"])
         .output()
         .unwrap();

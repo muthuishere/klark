@@ -15,7 +15,7 @@ fn capture(args: &[&str], response: Value) -> Capture {
     let mut child = Command::new(env!("CARGO_BIN_EXE_klark"))
         .args(args)
         .env("KLARK_SOCKET_PATH", &socket)
-        .env("XDG_CONFIG_HOME", &base)
+        .env("XDG_STATE_HOME", &base).env("XDG_CONFIG_HOME", &base)
         .env("XDG_RUNTIME_DIR", &base)
         .env_remove("KLARK_CLIENT_SOCKET_PATH")
         .env_remove("KLARK_ENV")

@@ -67,7 +67,7 @@ impl Env {
 
     fn cmd(&self, session: Option<&str>) -> Command {
         let mut c = Command::new(BIN);
-        c.env("XDG_CONFIG_HOME", &self.config)
+        c.env("XDG_STATE_HOME", &self.config).env("XDG_CONFIG_HOME", &self.config)
             .env("XDG_RUNTIME_DIR", &self.runtime)
             .env("SHELL", "/bin/sh")
             .env("KLARK_MACHINE_NAME", "testbox")
@@ -477,7 +477,7 @@ fn a_task_is_answered_by_its_addressee_and_read_back() {
     let runtime = env.runtime.clone();
     let waiter = thread::spawn(move || {
         Command::new(BIN)
-            .env("XDG_CONFIG_HOME", config)
+            .env("XDG_STATE_HOME", &config).env("XDG_CONFIG_HOME", config)
             .env("XDG_RUNTIME_DIR", runtime)
             .env("KLARK_MACHINE_NAME", "testbox")
             .env_remove("KLARK_SESSION")
