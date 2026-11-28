@@ -252,3 +252,129 @@ fn recognized_image_extension(extension: &str) -> Option<&'static str> {
         None
     }
 }
+
+// ---- SPIKE: KLARK_SPIKE_PASTE_IMAGE_AS_PATH (local panes) ----
+
+#[cfg(unix)]
+pub(super) fn spike_paste_image_as_path_enabled() -> bool {
+    std::env::var("KLARK_SPIKE_PASTE_IMAGE_AS_PATH").is_ok_and(|v| v == "1")
+}
+
+/// Days since 1970-01-01 -> (year, month, day), proleptic Gregorian.
+fn civil_from_days(days: i64) -> (i64, u32, u32) {
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    (yoe + era * 400 + i64::from(m <= 2), m, d)
+}
+
+pub(super) fn spike_paste_image_path(
+    pastes_dir: &std::path::Path,
+    unix_millis: u128,
+    extension: &str,
+) -> PathBuf {
+    let (y, m, d) = civil_from_days((unix_millis / 86_400_000) as i64);
+    pastes_dir
+        .join(format!("{y:04}-{m:02}-{d:02}"))
+        .join(format!("paste-{unix_millis}.{extension}"))
+}
+
+pub(super) fn spike_prune_old_pastes(pastes_dir: &std::path::Path, max_age: std::time::Duration) {
+    let now = std::time::SystemTime::now();
+    let Ok(days) = std::fs::read_dir(pastes_dir) else {
+        return;
+    };
+    for day in days.flatten() {
+        let day_path = day.path();
+        let Ok(files) = std::fs::read_dir(&day_path) else {
+            continue;
+        };
+        for file in files.flatten() {
+            let old = file
+                .metadata()
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| now.duration_since(t).ok())
+                .is_some_and(|age| age > max_age);
+            if old {
+                let _ = std::fs::remove_file(file.path());
+            }
+        }
+        let _ = std::fs::remove_dir(&day_path); // only succeeds when empty
+    }
+}
+
+pub(super) fn spike_path_paste_bytes(path: &std::path::Path) -> Vec<u8> {
+    format!("\x1b[200~@{} \x1b[201~", path.display()).into_bytes()
+}
+
+/// Saves the clipboard image under the state dir and returns the bytes to forward instead.
+#[cfg(unix)]
+pub(super) fn spike_clipboard_image_as_path_input() -> Option<Vec<u8>> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let image = crate::platform::read_clipboard_image()?;
+    let pastes_dir = crate::config::state_dir().join("pastes");
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_millis();
+    let path = spike_paste_image_path(&pastes_dir, millis, image.extension);
+    let write = || -> std::io::Result<()> {
+        std::fs::create_dir_all(path.parent().unwrap())?;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)?;
+        f.write_all(&image.bytes)
+    };
+    if let Err(err) = write() {
+        warn!(%err, path = %path.display(), "spike: could not save pasted image");
+        return None;
+    }
+    spike_prune_old_pastes(&pastes_dir, std::time::Duration::from_secs(2 * 86_400));
+    info!(path = %path.display(), bytes = image.bytes.len(), "spike: pasting clipboard image as file path");
+    Some(spike_path_paste_bytes(&path))
+}
+
+#[cfg(test)]
+mod spike_paste_tests {
+    use super::*;
+
+    #[test]
+    fn spike_path_is_dated_and_millis_named() {
+        let p = spike_paste_image_path(std::path::Path::new("/s/pastes"), 1_795_000_000_123, "png");
+        assert_eq!(p, PathBuf::from("/s/pastes/2026-11-18/paste-1795000000123.png"));
+    }
+
+    #[test]
+    fn spike_prune_removes_only_old_files() {
+        let root = std::env::temp_dir().join(format!("klark-spike-prune-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let day = root.join("2026-01-01");
+        std::fs::create_dir_all(&day).unwrap();
+        let old = day.join("old.png");
+        let new = day.join("new.png");
+        std::fs::write(&old, b"x").unwrap();
+        std::fs::write(&new, b"x").unwrap();
+        let three_days_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(3 * 86_400);
+        std::fs::File::options().write(true).open(&old).unwrap().set_modified(three_days_ago).unwrap();
+        spike_prune_old_pastes(&root, std::time::Duration::from_secs(2 * 86_400));
+        assert!(!old.exists());
+        assert!(new.exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn spike_path_paste_bytes_are_bracketed_with_at_prefix() {
+        let b = spike_path_paste_bytes(std::path::Path::new("/a/b.png"));
+        assert_eq!(b, b"\x1b[200~@/a/b.png \x1b[201~".to_vec());
+    }
+}

@@ -855,6 +855,18 @@ async fn run_client_loop(
                     write_stream.active_id(),
                     write_stream.active_surface_available(),
                 );
+                // SPIKE: local pane, image on the clipboard -> paste its saved file path instead.
+                let data = if !image_bridge_active
+                    && clipboard_images::spike_paste_image_as_path_enabled()
+                    && clipboard_images::should_bridge_clipboard_image_paste(
+                        &data,
+                        true,
+                        state.remote_image_paste_key,
+                    ) {
+                    clipboard_images::spike_clipboard_image_as_path_input().unwrap_or(data)
+                } else {
+                    data
+                };
                 if state.shell.is_some() {
                     if will_query_host_cell_size {
                         let events = crate::raw_input::parse_framed_input(&data);
