@@ -646,10 +646,18 @@ func shapeMarkdown(raw string) string {
 // ---- agy (Antigravity CLI) --------------------------------------------------------
 
 var (
-	agyBanner  = rx(`(?m)Antigravity CLI \d`)
-	agyPrompt  = rx(`^>\s(\S.*)$`)
-	agyLogo    = rx(`^\s*[▄▀][▄▀ ]*(\s{3,}\S.*)?$`)
-	agyAccount = rx(`^\s*\S+@\S+\s+\(Antigravity[^)]*\)`)
+	agyBanner = rx(`(?m)Antigravity CLI \d`)
+	agyPrompt = rx(`^>\s(\S.*)$`)
+	agyLogo   = rx(`^\s*[▄▀][▄▀ ]*(\s{3,}\S.*)?$`)
+	// "user@example.com (Antigravity Starter Quota)" and, since 1.5.18, "user@example.com (Google AI Pro)": any plan name.
+	agyAccount = rx(`^\s*\S+@\S+\s+\([^)]*\)\s*$`)
+	// "Gemini 4 Neon (Medium)": the model line of the banner, once its logo row has scrolled out of the capture.
+	agyModel = rx(`^\s*Gemini [^()]*\((Minimal|Low|Medium|High)\)\s*$`)
+	// A wrapped prompt's continuation: "  text" right under "> text", two columns in.
+	agyContinuation = rx(`^  \S`)
+	// What an in-pane restart leaves between two banners: "Resume with -c (or command below):", "agy --conversation=<id>"
+	// and the shell prompt line that started it ("➜  repo git:(main) ✗ agy --dangerously-skip-permissions").
+	agyRestart = rx(`^(Resume with -c\b.*|agy --conversation=\S+|[➜❯$%#]\s.*\bagy(\s+-\S+)*\s*)$`)
 	listMarker = rx(`^([-*+]|\d+[.)])\s+\S`)
 	pythonLine = rx(`^\s*(def \w|class \w+.*:\s*$|import \w|from \w+ import )`)
 	jsLine     = rx(`^\s*(function |const |let |var |export |=>)`)
@@ -682,7 +690,7 @@ func agy(raw string) []ScreenTurn {
 	}
 	var keep []string
 	for _, l := range lines {
-		if !agyLogo.MatchString(l) && !agyAccount.MatchString(l) {
+		if !agyLogo.MatchString(l) && !agyAccount.MatchString(l) && !agyModel.MatchString(l) && !agyRestart.MatchString(l) {
 			keep = append(keep, l)
 		}
 	}
@@ -701,10 +709,18 @@ func agy(raw string) []ScreenTurn {
 		}
 		buf = nil
 	}
-	for _, line := range strings.Split(cleaned, "\n") {
+	rows := strings.Split(cleaned, "\n")
+	for i := 0; i < len(rows); i++ {
+		line := rows[i]
 		if m := agyPrompt.FindStringSubmatch(line); m != nil {
 			flush()
-			turns = append(turns, ScreenTurn{Role: "user", Kind: "text", Text: strings.TrimSpace(m[1])})
+			text := strings.TrimSpace(m[1])
+			// a long prompt wraps onto the lines right under it (no blank line, not a "⎿" result): same turn
+			for i+1 < len(rows) && agyContinuation.MatchString(rows[i+1]) && !strings.HasPrefix(strings.TrimLeft(rows[i+1], " \t"), "⎿") {
+				i++
+				text += " " + strings.TrimSpace(rows[i])
+			}
+			turns = append(turns, ScreenTurn{Role: "user", Kind: "text", Text: text})
 			continue
 		}
 		t := strings.TrimLeft(line, " \t")

@@ -48,6 +48,7 @@
 :where(.khu) .badge-a[data-agent="claude"] { background: color-mix(in srgb, #d97757 22%, transparent); color: #d97757; }
 :where(.khu) .badge-a[data-agent="devin"] { background: color-mix(in srgb, #3b82f6 20%, transparent); color: #3b82f6; }
 :where(.khu) .badge-a[data-agent="codex"] { background: color-mix(in srgb, #10a37f 20%, transparent); color: #10a37f; }
+:where(.khu) .badge-a[data-agent="agy"] { background: color-mix(in srgb, #8b5cf6 20%, transparent); color: #8b5cf6; }
 :where(.khu) .badge-a[data-agent="shell"] { font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); }
 :where(.khu) .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted, #656d76); opacity: .45; flex: none; }
 :where(.khu) .dot-working { background: var(--working, #2563eb); opacity: 1; animation: pulse 1.2s ease-in-out infinite; }
@@ -134,6 +135,7 @@
 :where(.khu) .a-b { font-weight: 700; } :where(.khu) .a-d { opacity: .65; } :where(.khu) .a-i { font-style: italic; } :where(.khu) .a-u { text-decoration: underline; }
 /* devin and other agents: same chat, their own accent */
 :where(.khu) .reader-devin .msg.user .bubble { background: color-mix(in srgb, #3b82f6 14%, var(--bubble, #f6f8fa)); }
+:where(.khu) .reader-agy .msg.user .bubble { background: color-mix(in srgb, #8b5cf6 14%, var(--bubble, #f6f8fa)); }
 :where(.khu) .reader-generic .msg.asst, :where(.khu) .reader-shell .msg.asst { font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); font-size: 1rem; }
 :where(.khu) .blocked { border: 1px solid var(--blocked, #c2410c); border-radius: 14px; padding: 12px 14px; background: color-mix(in srgb, var(--blocked, #c2410c) 7%, var(--card, #fff)); }
 :where(.khu) .blocked-label { font-weight: 600; color: var(--blocked, #c2410c); font-size: .85rem; margin-bottom: 4px; }

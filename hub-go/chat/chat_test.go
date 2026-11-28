@@ -187,6 +187,77 @@ func TestAgyTurns(t *testing.T) {
 	}
 }
 
+// agyScreen builds an Antigravity 1.5.18 screen: banner (logo, account, model, cwd), then body.
+func agyScreen(body string) string {
+	return "      ▄▀▀▄        Antigravity CLI 1.5.18\n" +
+		"     ▀▀▀▀▀▀       dev@example.com (Google AI Pro)\n" +
+		"    ▀▀▀▀▀▀▀▀      Gemini 4 Neon (Medium)\n" +
+		"   ▄▀▀    ▀▀▄     ~/work/demo\n" +
+		"  ▄▀▀      ▀▀▄\n\n" + body
+}
+
+func TestAgyWrappedPromptIsOneUserTurn(t *testing.T) {
+	rule := strings.Repeat("─", 40)
+	turns := flat(Transform("agy", agyScreen(rule+"\n"+
+		"> Please list the open tickets for the demo project and group them by owner, then tell me which ones are\n"+
+		"  blocked and why, keeping the answer short enough to read aloud.\n"+
+		"  Thanks.\n\n"+
+		"○ Thought for 2.0s (Plan the lookup.)\n"+
+		"● Ran 1 command (tickets list)\n\n"+
+		"  Three tickets are open; one is blocked.\n\n"+
+		rule+"\n>\n"+rule+"\n? for shortcuts      Gemini 4 Neon (Medium)\n")))
+	if len(turns) != 2 || turns[0].role != "user" || turns[1].role != "assistant" {
+		t.Fatalf("%+v", turns)
+	}
+	want := "Please list the open tickets for the demo project and group them by owner, then tell me which ones are blocked and why, keeping the answer short enough to read aloud. Thanks."
+	if turns[0].text != want {
+		t.Errorf("user turn = %q", turns[0].text)
+	}
+	for _, w := range []string{"○ Thought for 2.0s (Plan the lookup.)", "● Ran 1 command (tickets list)", "Three tickets are open; one is blocked."} {
+		if !strings.Contains(turns[1].text, w) {
+			t.Errorf("reply lost %q:\n%s", w, turns[1].text)
+		}
+	}
+	if strings.Contains(turns[1].text, "blocked and why") {
+		t.Errorf("prompt continuation leaked into the reply:\n%s", turns[1].text)
+	}
+}
+
+func TestAgyChromeIsStripped(t *testing.T) {
+	// account and model lines whose logo row scrolled out of the capture, plus an in-pane restart
+	rule := strings.Repeat("─", 40)
+	raw := "dev@example.com (Google AI Pro)\nGemini 4 Neon (Medium)\n" + rule + "\n" +
+		"> first question\n\n  First answer.\n\n" +
+		"Resume with -c (or command below):\nagy --conversation=00000000-0000-4000-8000-000000000000\n" +
+		"➜  demo git:(main) ✗ agy --dangerously-skip-permissions\n\n" +
+		"      ▄▀▀▄        Antigravity CLI 1.5.18\n     ▀▀▀▀▀▀       dev@example.com (Google AI Pro)\n" +
+		"    ▀▀▀▀▀▀▀▀      Gemini 4 Neon (Medium)\n   ▄▀▀    ▀▀▄     ~/work/demo\n  ▄▀▀      ▀▀▄\n" +
+		rule + "\n> second question\n\n  Second answer.\n\n" + rule + "\n>\n" + rule + "\n"
+	turns := flat(Transform("agy", raw))
+	want := [][2]string{{"user", "first question"}, {"assistant", "First answer."}, {"user", "second question"}, {"assistant", "Second answer."}}
+	if len(turns) != len(want) {
+		t.Fatalf("%+v", turns)
+	}
+	for i, w := range want {
+		if turns[i].role != w[0] || turns[i].text != w[1] {
+			t.Errorf("%d: %+v", i, turns[i])
+		}
+	}
+}
+
+func TestAgyKeepsRepliesAndToolOutput(t *testing.T) {
+	turns := flat(Transform("agy", agyScreen("> run it\n  ⎿  Model set to Gemini 3.8 Flash (Low)\n\n"+
+		"  The model is **Gemini 4 Neon (Medium)** and it contacts dev@example.com (not Google AI Pro).\n")))
+	if len(turns) != 2 || turns[0].text != "run it" {
+		t.Fatalf("%+v", turns)
+	}
+	for _, w := range []string{"Model set to Gemini 3.8 Flash (Low)", "**Gemini 4 Neon (Medium)** and it contacts dev@example.com (not Google AI Pro)."} {
+		if !strings.Contains(turns[1].text, w) {
+			t.Errorf("reply lost %q: %q", w, turns[1].text)
+		}
+	}
+}
+
 func TestGenericShell(t *testing.T) {
 	turns := Transform("", fixture(t, "generic-shell.screen.txt"))
 	var kinds []string
