@@ -57,4 +57,12 @@ jobs:
       - name: Publish
         if: steps.check.outputs.published != 'yes'
         working-directory: hub-go/ui/packages/hub-ui/release
-        run: npm publish --access public --provenance
+        run: |
+          # npm view can lag for minutes after a publish; npm's own refusal is the reliable signal.
+          if npm publish --access public --provenance > publish.log 2>&1; then cat publish.log; exit 0; fi
+          cat publish.log
+          if grep -q "cannot publish over the previously published" publish.log; then
+            echo "::notice title=npm::@muthuishere/klark-hub-ui@$VERSION is already published; nothing to do"
+            exit 0
+          fi
+          exit 1
