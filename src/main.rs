@@ -12,6 +12,7 @@ const NESTED_KLARK_MESSAGES: [&str; 6] = [
 ];
 
 mod agent_index;
+mod agent_lifecycle;
 mod agent_resume;
 mod agent_view_eval;
 mod api;

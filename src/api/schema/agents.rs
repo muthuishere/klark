@@ -241,6 +241,12 @@ pub struct AgentInfo {
     pub interactive_ready: bool,
     #[serde(default)]
     pub state_change_seq: u64,
+    /// Unix seconds when `agent_status` last changed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_since: Option<u64>,
+    /// Seconds spent in `agent_status` so far.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_seconds: Option<u64>,
     /// The current idle transition completed work, independently of who has viewed it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub completion_seq: Option<u64>,

@@ -52,7 +52,7 @@ pub(super) fn run_agent_command(args: &[String]) -> std::io::Result<i32> {
         Err(ParseError::Io(error)) => return Err(error),
     };
     match operation {
-        Operation::List { all_sessions } => agent_list(all_sessions),
+        Operation::List(opts) => agent_list(opts),
         Operation::Get(params) => agent_get(params),
         Operation::Focus(params) => agent_focus(params),
         Operation::Read(params) => agent_read(params),
@@ -352,13 +352,13 @@ fn agent_start(params: AgentStartParams) -> std::io::Result<i32> {
     }
 }
 
-fn agent_list(all_sessions: bool) -> std::io::Result<i32> {
-    if all_sessions {
+fn agent_list(opts: bindings::ListOpts) -> std::io::Result<i32> {
+    if opts.all_sessions {
         if super::target::is_remote() {
             eprintln!("--all-sessions lists the sessions of this machine; it cannot be combined with --machine");
             return Ok(2);
         }
-        return agent_list_all_sessions();
+        return agent_list_all_sessions(&opts);
     }
     let mut response = super::send_request(&Request {
         id: "cli:agent:list".into(),
@@ -374,13 +374,24 @@ fn agent_list(all_sessions: bool) -> std::io::Result<i32> {
             }
         }
     }
-    super::print_response(&response)
+    print_agent_list(&response, &opts)
+}
+
+/// Prints the list as JSON, or as a table on a terminal.
+fn print_agent_list(response: &serde_json::Value, opts: &bindings::ListOpts) -> std::io::Result<i32> {
+    use std::io::IsTerminal;
+    if !opts.json && response.get("error").is_none() && std::io::stdout().is_terminal() {
+        let agents = response["result"]["agents"].as_array().cloned().unwrap_or_default();
+        print!("{}", crate::agent_lifecycle::agent_table(&agents));
+        return Ok(0);
+    }
+    super::print_response(response)
 }
 
 /// `klark agent list -a`: the same JSON shape as `agent list`, with the agents
 /// of every running session. A session that cannot answer is reported under
 /// `result.errors` (and on stderr) instead of failing the whole list.
-fn agent_list_all_sessions() -> std::io::Result<i32> {
+fn agent_list_all_sessions(opts: &bindings::ListOpts) -> std::io::Result<i32> {
     let machine = crate::msg_cmd::my_machine();
     let listed = crate::agent_index::list_running();
     if listed.is_empty() {
@@ -414,7 +425,7 @@ fn agent_list_all_sessions() -> std::io::Result<i32> {
     if !errors.is_empty() {
         result["errors"] = serde_json::Value::Array(errors);
     }
-    super::print_response(&serde_json::json!({"id": "cli:agent:list", "result": result}))
+    print_agent_list(&serde_json::json!({"id": "cli:agent:list", "result": result}), opts)
 }
 
 /// Adds `session` and `address` (machine/session/name-or-pane, the form every

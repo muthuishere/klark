@@ -6708,6 +6708,24 @@
               },
               "type": "object"
             },
+            "status_seconds": {
+              "description": "Seconds spent in `agent_status` so far.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "status_since": {
+              "description": "Unix seconds when `agent_status` last changed.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
             "tab_id": {
               "type": "string"
             },

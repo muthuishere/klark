@@ -226,8 +226,14 @@ cli_projection! {
     }
 }
 
+#[derive(Debug, Default, Clone)]
+pub(crate) struct ListOpts {
+    pub(crate) all_sessions: bool,
+    pub(crate) json: bool,
+}
+
 pub(crate) enum Operation {
-    List { all_sessions: bool },
+    List(ListOpts),
     Get(AgentTarget),
     Focus(AgentTarget),
     Read(AgentReadParams),
@@ -257,8 +263,12 @@ pub(crate) fn command() -> Command {
                     .short('a')
                     .action(clap::ArgAction::SetTrue)
                     .help("List the agents of every running klark session on this machine"),
+                clap::Arg::new("json")
+                    .long("json")
+                    .action(clap::ArgAction::SetTrue)
+                    .help("Print JSON even on a terminal (piped output is always JSON)"),
             ], "List agents (this session; -a for every session)")
-            .after_help("Each agent carries `session` and `address` (machine/session/name-or-pane). Any command that takes a TARGET accepts that address, or session/agent."))
+            .after_help("On a terminal the output is a table (NAME SESSION AGENT STATE FOR FOLDER); piped or with --json it is JSON. Each agent carries `status_since` (unix seconds) and `status_seconds` (time in its state). Each agent carries `session` and `address` (machine/session/name-or-pane). Any command that takes a TARGET accepts that address, or session/agent."))
         .subcommand(leaf("get", TargetProjection::arguments(), "Show an agent"))
         .subcommand(leaf("focus", TargetProjection::arguments(), "Focus an agent"))
         .subcommand(leaf("read", AgentReadProjection::arguments(), "Read agent terminal output")
@@ -304,9 +314,10 @@ pub(crate) fn from_matches(matches: &ArgMatches) -> Result<Operation, ParseError
         return Err(ParseError::Usage("missing agent command".into()));
     };
     Ok(match name {
-        "list" => Operation::List {
+        "list" => Operation::List(ListOpts {
             all_sessions: matches.get_flag("all-sessions"),
-        },
+            json: matches.get_flag("json"),
+        }),
         "get" => Operation::Get(TargetProjection::from_matches(matches)?),
         "focus" => Operation::Focus(TargetProjection::from_matches(matches)?),
         "read" => {
