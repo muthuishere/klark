@@ -25,7 +25,7 @@ git tag "hub-go/v$V"
 (cd "$UI" && npm run build >/dev/null)
 W=$(mktemp -d)
 git worktree add -q "$W" hub-ui-release
-rsync -a --delete --exclude .git "$UI/release/" "$W/"
+rsync -a --checksum --delete --exclude .git "$UI/release/" "$W/"   # --checksum: a version bump keeps package.json the same size and second
 (cd "$W" && git add -A && { git diff --cached --quiet || git commit -qm "hub-ui $V"; } && git tag "hub-ui-v$V")
 git worktree remove --force "$W"
 
