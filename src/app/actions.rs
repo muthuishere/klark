@@ -629,6 +629,7 @@ impl AppState {
         &mut self,
         terminal_ids: impl IntoIterator<Item = crate::terminal::TerminalId>,
     ) {
+        let workspace_label = self.closing_workspace_label.take();
         for terminal_id in terminal_ids {
             let still_attached = self.workspaces.iter().any(|ws| {
                 ws.tabs.iter().any(|tab| {
@@ -637,12 +638,36 @@ impl AppState {
                         .any(|pane| pane.attached_terminal_id == terminal_id)
                 })
             });
+            if !still_attached {
+                self.record_closed_agent(&terminal_id, self.close_reason, workspace_label.clone());
+            }
             if !still_attached
                 && self.terminals.remove(&terminal_id).is_some()
                 && !self.terminal_runtime_shutdowns.contains(&terminal_id)
             {
                 self.terminal_runtime_shutdowns.push(terminal_id);
             }
+        }
+    }
+
+    /// Writes the closed-agent record for a terminal that is about to go away.
+    pub(crate) fn record_closed_agent(
+        &self,
+        terminal_id: &crate::terminal::TerminalId,
+        reason: &str,
+        workspace: Option<String>,
+    ) {
+        let Some(path) = &self.closed_agents_path else {
+            return;
+        };
+        let Some(terminal) = self.terminals.get(terminal_id) else {
+            return;
+        };
+        let Some(record) = closed_record_for(terminal, reason, workspace) else {
+            return;
+        };
+        if let Err(error) = crate::agent_lifecycle::append_closed(path, &record) {
+            warn!(%error, "failed to record closed agent");
         }
     }
 
@@ -676,6 +701,12 @@ impl AppState {
 
         let mut terminal_ids = Vec::new();
         let mut pane_ids = Vec::new();
+        if self.closing_workspace_label.is_none() {
+            self.closing_workspace_label = close_indices
+                .first()
+                .and_then(|idx| self.workspaces.get(*idx))
+                .map(|ws| ws.display_name_from_terminals(&self.terminals));
+        }
         for idx in &close_indices {
             terminal_ids.extend(self.terminal_ids_for_workspace(*idx));
             pane_ids.extend(self.pane_ids_for_workspace(*idx));
@@ -1048,6 +1079,36 @@ pub(super) fn url_from_link_target(target: crate::ghostty::LinkTarget) -> Option
             url_at_byte(&text, clicked_byte).map(str::to_owned)
         }
     }
+}
+
+/// The closed-agent record for a terminal, when it runs a known agent.
+pub(crate) fn closed_record_for(
+    terminal: &crate::terminal::TerminalState,
+    reason: &str,
+    workspace: Option<String>,
+) -> Option<crate::agent_lifecycle::ClosedRecord> {
+    let agent = terminal.effective_agent_label()?.to_owned();
+    let session = super::creation::terminal_agent_session_info(terminal);
+    let folder = terminal.cwd.display().to_string();
+    Some(crate::agent_lifecycle::ClosedRecord {
+        name: terminal.agent_name.clone(),
+        session: crate::session::active_name()
+            .unwrap_or_else(|| crate::session::DEFAULT_SESSION_NAME.to_owned()),
+        workspace,
+        folder: (!folder.is_empty()).then_some(folder),
+        agent,
+        conversation_id: session.as_ref().map(|s| s.value.clone()),
+        conversation_kind: session.as_ref().map(|s| {
+            match s.kind {
+                crate::agent_resume::AgentSessionRefKind::Id => "id",
+                crate::agent_resume::AgentSessionRefKind::Path => "path",
+            }
+            .to_owned()
+        }),
+        source: session.map(|s| s.source),
+        closed_at: crate::agent_lifecycle::now_secs(),
+        reason: reason.to_owned(),
+    })
 }
 
 pub(crate) fn safe_web_url(url: &str) -> Option<&str> {
@@ -1698,6 +1759,7 @@ impl AppState {
             .clone();
         let previous_seen = self.workspaces[ws_idx].pane_state(pane_id)?.seen;
         let now = Instant::now();
+        let mut released_record = None;
         let (
             mutation,
             managed_changed,
@@ -1710,7 +1772,19 @@ impl AppState {
             let previous_agent_name = terminal.agent_name.clone();
             let had_completion = terminal.last_agent_completion_seq.is_some() || !previous_seen;
             let resume_revision = terminal.reported_resume_revision();
+            let exit_record = if self.closed_agents_path.is_some() {
+                closed_record_for(
+                    terminal,
+                    crate::agent_lifecycle::REASON_EXIT,
+                    None,
+                )
+            } else {
+                None
+            };
             let mutation = update(terminal);
+            if mutation.as_ref().is_some_and(|m| m.agent_released) {
+                released_record = exit_record;
+            }
             terminal.reconcile_reported_resume();
             // Resume-only changes return no mutation but must still be saved.
             if terminal.reported_resume_revision() != resume_revision {
@@ -1741,6 +1815,15 @@ impl AppState {
                 completion_reset,
             )
         };
+        if let (Some(path), Some(mut record)) = (&self.closed_agents_path, released_record) {
+            record.workspace = self
+                .workspaces
+                .get(ws_idx)
+                .map(|ws| ws.display_name_from_terminals(&self.terminals));
+            if let Err(error) = crate::agent_lifecycle::append_closed(path, &record) {
+                warn!(%error, "failed to record exited agent");
+            }
+        }
         if completion_reset {
             self.pending_agent_notifications.remove(&pane_id);
             self.workspaces[ws_idx].pane_state_mut(pane_id)?.seen = true;
@@ -1756,6 +1839,7 @@ impl AppState {
             self.next_agent_state_change_seq += 1;
             if let Some(terminal) = self.terminals.get_mut(&terminal_id) {
                 terminal.last_agent_state_change_seq = Some(self.next_agent_state_change_seq);
+                terminal.agent_state_since = crate::agent_lifecycle::now_secs();
                 terminal.last_agent_completion_seq = (!suppress_completion
                     && is_completion_transition(&change))
                 .then_some(self.next_agent_state_change_seq);
@@ -4579,6 +4663,41 @@ mod tests {
 
         assert!(!state.terminals.contains_key(&terminal_id));
         state.assert_invariants_for_test();
+    }
+
+    #[test]
+    fn closing_an_agent_pane_records_it_as_closed() {
+        let dir = std::env::temp_dir().join(format!("klark-closed-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("agents-closed.jsonl");
+        let mut state = app_with_workspaces(&["test"]);
+        state.closed_agents_path = Some(path.clone());
+        let pane_id = state.workspaces[0].test_split(Direction::Horizontal);
+        state.ensure_test_terminals();
+        let terminal_id = state.terminal_id_for_pane(0, pane_id).unwrap();
+        // A plain shell pane next to it must not be recorded.
+        let terminal = state.terminals.get_mut(&terminal_id).unwrap();
+        terminal.detected_agent = Some(Agent::Claude);
+        terminal.agent_name = Some("worker".into());
+        terminal.persisted_agent_session = Some(crate::agent_resume::PersistedAgentSession {
+            source: "klark:claude".into(),
+            agent: "claude".into(),
+            session_ref: crate::agent_resume::AgentSessionRef::id("conv-1").unwrap(),
+        });
+
+        state.close_pane();
+
+        let records = crate::agent_lifecycle::read_closed(&path, crate::agent_lifecycle::now_secs());
+        assert_eq!(records.len(), 1, "{records:?}");
+        assert_eq!(records[0].name.as_deref(), Some("worker"));
+        assert_eq!(records[0].agent, "claude");
+        assert_eq!(records[0].conversation_id.as_deref(), Some("conv-1"));
+        assert_eq!(records[0].reason, "user");
+        assert_eq!(
+            crate::agent_lifecycle::resume_args(&records[0]),
+            Some(vec!["--resume".into(), "conv-1".into()])
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

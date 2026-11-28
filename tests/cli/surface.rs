@@ -593,7 +593,7 @@ fn explicit_client_command_respects_nested_guard() {
     let output = Command::new(env!("CARGO_BIN_EXE_klark"))
         .arg("client")
         .env("KLARK_ENV", "1")
-        .env("XDG_CONFIG_HOME", &base)
+        .env("XDG_STATE_HOME", &base).env("XDG_CONFIG_HOME", &base)
         .env_remove("KLARK_CONFIG_PATH")
         .output()
         .unwrap();

@@ -73,6 +73,86 @@ impl App {
         encode_success(id, ResponseResult::AgentInfo { agent })
     }
 
+    /// `[agents] close_idle_after`: every few minutes, close the agents that
+    /// have been idle that long, by the same rules as `klark agent close
+    /// --idle-for` (never working, blocked or pinned agents). Returns whether
+    /// anything was closed.
+    pub(crate) fn close_idle_agents_if_due(&mut self, now: std::time::Instant) -> bool {
+        const CHECK_EVERY: Duration = Duration::from_secs(300);
+        let Some(idle_for) = self.state.close_idle_after_secs else {
+            return false;
+        };
+        if now.duration_since(self.state.last_idle_close_check) < CHECK_EVERY {
+            return false;
+        }
+        self.state.last_idle_close_check = now;
+        let session = crate::session::active_name()
+            .unwrap_or_else(|| crate::session::DEFAULT_SESSION_NAME.to_owned());
+        let rows: Vec<serde_json::Value> = self
+            .collect_agent_infos()
+            .into_iter()
+            .filter_map(|agent| serde_json::to_value(agent).ok())
+            .map(|mut row| {
+                row["session"] = session.clone().into();
+                row
+            })
+            .collect();
+        let pins = crate::agent_lifecycle::load_pins(&crate::agent_lifecycle::pins_path());
+        let selection = crate::agent_lifecycle::select_closable(&rows, idle_for, &pins, None);
+        let mut closed = false;
+        for row in selection.close {
+            let Some(pane_id) = row["pane_id"].as_str() else {
+                continue;
+            };
+            let response = self.handle_agent_close(
+                "idle-close".into(),
+                crate::api::schema::AgentCloseParams {
+                    target: pane_id.to_owned(),
+                    reason: Some(crate::agent_lifecycle::REASON_IDLE_CLOSE.into()),
+                },
+            );
+            closed |= !response.contains("\"error\"");
+            tracing::info!(pane = pane_id, idle_for, "closed idle agent");
+        }
+        closed
+    }
+
+    pub(super) fn handle_agent_close(
+        &mut self,
+        id: String,
+        params: crate::api::schema::AgentCloseParams,
+    ) -> String {
+        let reason = match params.reason.as_deref() {
+            None | Some(crate::agent_lifecycle::REASON_USER) => crate::agent_lifecycle::REASON_USER,
+            Some(crate::agent_lifecycle::REASON_IDLE_CLOSE) => {
+                crate::agent_lifecycle::REASON_IDLE_CLOSE
+            }
+            Some(other) => {
+                return encode_error(
+                    id,
+                    "invalid_close_reason",
+                    format!("close reason must be user or idle-close, not {other}"),
+                )
+            }
+        };
+        let agent = match self.agent_info_for_target(&params.target) {
+            Ok(agent) => agent,
+            Err(err) => return encode_error_body(id, self.agent_target_error_body(err)),
+        };
+        self.state.close_reason = reason;
+        let closed = self.close_pane(
+            id.clone(),
+            &crate::api::schema::PaneTarget {
+                pane_id: agent.pane_id.clone(),
+            },
+        );
+        self.state.close_reason = crate::agent_lifecycle::REASON_USER;
+        match closed {
+            Ok(()) => encode_success(id, ResponseResult::AgentInfo { agent }),
+            Err(response) => response,
+        }
+    }
+
     pub(super) fn handle_agent_rename(&mut self, id: String, params: AgentRenameParams) -> String {
         let agent = match self.rename_agent_target(&params.target, params.name) {
             Ok(agent) => agent,
@@ -1232,6 +1312,99 @@ mod tests {
             panic!("expected agent info response");
         };
         assert_eq!(agent.agent_status, AgentStatus::Idle);
+    }
+
+    fn closed_log_for_test(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("klark-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir.join("agents-closed.jsonl")
+    }
+
+    #[test]
+    fn agent_close_closes_the_pane_and_records_the_agent() {
+        let path = closed_log_for_test("agent-close");
+        let mut app = app_with_agent();
+        app.state.closed_agents_path = Some(path.clone());
+        let pane_id = app.state.workspaces[0].tabs[0].root_pane;
+        let terminal_id = app.state.workspaces[0].tabs[0].panes[&pane_id]
+            .attached_terminal_id
+            .clone();
+        let terminal = app.state.terminals.get_mut(&terminal_id).unwrap();
+        terminal.set_detected_state(Some(Agent::Pi), AgentState::Idle);
+        terminal.agent_name = Some("worker".into());
+        let target = app.public_pane_id(0, pane_id).unwrap();
+
+        let response = app.handle_agent_close(
+            "req".into(),
+            crate::api::schema::AgentCloseParams {
+                target,
+                reason: None,
+            },
+        );
+        let success: SuccessResponse = serde_json::from_str(&response).unwrap();
+        assert!(matches!(success.result, ResponseResult::AgentInfo { .. }));
+        let records = crate::agent_lifecycle::read_closed(&path, crate::agent_lifecycle::now_secs());
+        assert_eq!(records.len(), 1, "{response}");
+        assert_eq!(records[0].name.as_deref(), Some("worker"));
+        assert_eq!(records[0].agent, "pi");
+        assert_eq!(records[0].reason, "user");
+        assert_eq!(app.state.close_reason, "user");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn agent_close_rejects_an_unknown_reason() {
+        let mut app = app_with_agent();
+        let response = app.handle_agent_close(
+            "req".into(),
+            crate::api::schema::AgentCloseParams {
+                target: "nope".into(),
+                reason: Some("whim".into()),
+            },
+        );
+        assert!(response.contains("invalid_close_reason"), "{response}");
+    }
+
+    #[test]
+    fn idle_agents_are_closed_on_the_timer_and_busy_ones_are_not() {
+        let path = closed_log_for_test("idle-close");
+        let mut app = app_with_agent();
+        app.state.closed_agents_path = Some(path.clone());
+        let pane_id = app.state.workspaces[0].tabs[0].root_pane;
+        let terminal_id = app.state.workspaces[0].tabs[0].panes[&pane_id]
+            .attached_terminal_id
+            .clone();
+        {
+            let terminal = app.state.terminals.get_mut(&terminal_id).unwrap();
+            terminal.set_detected_state(Some(Agent::Pi), AgentState::Working);
+            terminal.agent_state_since = crate::agent_lifecycle::now_secs() - 5 * 3600;
+        }
+        let long_ago = std::time::Instant::now() - Duration::from_secs(3600);
+
+        // Off by default.
+        app.state.last_idle_close_check = long_ago;
+        assert!(!app.close_idle_agents_if_due(std::time::Instant::now()));
+        app.state.close_idle_after_secs = Some(3 * 3600);
+
+        // Not due yet.
+        app.state.last_idle_close_check = std::time::Instant::now();
+        assert!(!app.close_idle_agents_if_due(std::time::Instant::now()));
+
+        // Working for 5h is never closed.
+        app.state.last_idle_close_check = long_ago;
+        assert!(!app.close_idle_agents_if_due(std::time::Instant::now()));
+        assert_eq!(app.state.workspaces.len(), 1);
+
+        // Idle for 5h is.
+        let terminal = app.state.terminals.get_mut(&terminal_id).unwrap();
+        terminal.set_detected_state(Some(Agent::Pi), AgentState::Idle);
+        terminal.agent_state_since = crate::agent_lifecycle::now_secs() - 5 * 3600;
+        app.state.last_idle_close_check = long_ago;
+        assert!(app.close_idle_agents_if_due(std::time::Instant::now()));
+        let records = crate::agent_lifecycle::read_closed(&path, crate::agent_lifecycle::now_secs());
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].reason, "idle-close");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
     #[test]

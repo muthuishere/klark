@@ -540,6 +540,8 @@ impl App {
             launch_pending: terminal.managed_agent_launch_pending(),
             interactive_ready: terminal.managed_agent_interactive_ready(),
             state_change_seq: terminal.last_agent_state_change_seq.unwrap_or(0),
+            status_since: Some(terminal.agent_state_since),
+            status_seconds: Some(crate::agent_lifecycle::now_secs().saturating_sub(terminal.agent_state_since)),
             completion_seq: terminal.last_agent_completion_seq,
             cwd: pane.cwd,
             foreground_cwd: pane.foreground_cwd,

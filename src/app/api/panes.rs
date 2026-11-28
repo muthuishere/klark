@@ -1988,6 +1988,11 @@ impl App {
         }
         let workspace_snapshot = self.workspace_info(ws_idx);
         let terminal_id = self.state.terminal_id_for_pane(ws_idx, pane_id);
+        self.state.closing_workspace_label = self
+            .state
+            .workspaces
+            .get(ws_idx)
+            .map(|ws| ws.display_name_from_terminals(&self.state.terminals));
         let should_close_workspace = {
             let Some(ws) = self.state.workspaces.get_mut(ws_idx) else {
                 return Err(pane_not_found(id, &target.pane_id));

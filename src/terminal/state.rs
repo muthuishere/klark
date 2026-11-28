@@ -165,6 +165,8 @@ pub struct TerminalState {
     /// `set_effective_state`.
     blocked_signal: std::sync::Arc<std::sync::atomic::AtomicBool>,
     pub last_agent_state_change_seq: Option<u64>,
+    /// Unix seconds when the agent state last changed (terminal creation until then).
+    pub agent_state_since: u64,
     pub last_agent_completion_seq: Option<u64>,
     pub revision: u64,
     pub launch_argv: Option<Vec<String>>,
@@ -208,6 +210,7 @@ impl TerminalState {
             state: AgentState::Unknown,
             blocked_signal: Default::default(),
             last_agent_state_change_seq: None,
+            agent_state_since: crate::agent_lifecycle::now_secs(),
             last_agent_completion_seq: None,
             revision: 0,
             launch_argv: None,
@@ -2390,6 +2393,7 @@ impl TerminalState {
         self.stale_full_lifecycle_hook_sessions.clear();
         self.set_effective_state(AgentState::Unknown);
         self.last_agent_state_change_seq = None;
+        self.agent_state_since = crate::agent_lifecycle::now_secs();
         self.last_agent_completion_seq = None;
         self.launch_argv = None;
         self.respawn_shell_on_exit = false;

@@ -24,7 +24,7 @@ pub use self::{
     },
     model::{
         validated_sidebar_bounds, AgentPanelSortConfig, Config, ConfigReloadReport,
-        ConfigReloadStatus, FeedsConfig, HostCursorModeConfig, NewTerminalCwdConfig,
+        AgentsConfig, ConfigReloadStatus, FeedsConfig, HostCursorModeConfig, NewTerminalCwdConfig,
         PaneBordersConfig, ShellModeConfig, SidebarCollapsedModeConfig, StatusIndicatorStyle,
         TabBarPositionConfig, ToastClipboardPosition, ToastConfig, ToastDelivery,
         ToastKlarkPosition, UpdateChannelConfig, MAX_TOAST_DELAY_SECONDS,

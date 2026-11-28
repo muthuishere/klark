@@ -12,6 +12,7 @@ const PANE_SHELL_READINESS_RETRY_TIMEOUT: Duration = Duration::from_secs(2);
 pub(crate) mod bindings;
 #[cfg(test)]
 mod bindings_tests;
+mod lifecycle;
 mod models;
 mod restart;
 
@@ -52,7 +53,7 @@ pub(super) fn run_agent_command(args: &[String]) -> std::io::Result<i32> {
         Err(ParseError::Io(error)) => return Err(error),
     };
     match operation {
-        Operation::List { all_sessions } => agent_list(all_sessions),
+        Operation::List(opts) => agent_list(opts),
         Operation::Get(params) => agent_get(params),
         Operation::Focus(params) => agent_focus(params),
         Operation::Read(params) => agent_read(params),
@@ -64,6 +65,9 @@ pub(super) fn run_agent_command(args: &[String]) -> std::io::Result<i32> {
         Operation::Attach(params) => agent_attach(params),
         Operation::Explain(params) => agent_explain(params),
         Operation::Restart(params) => restart::run(params),
+        Operation::Resume(target) => lifecycle::run_resume(&target),
+        Operation::Pin(target, pin) => lifecycle::run_pin(&target, pin),
+        Operation::Close(cmd) => lifecycle::run_close(cmd),
         Operation::Models(params) => models::run_models(params),
         Operation::Model(params) => models::run_model(params),
     }
@@ -352,13 +356,20 @@ fn agent_start(params: AgentStartParams) -> std::io::Result<i32> {
     }
 }
 
-fn agent_list(all_sessions: bool) -> std::io::Result<i32> {
-    if all_sessions {
+fn agent_list(opts: bindings::ListOpts) -> std::io::Result<i32> {
+    crate::agent_lifecycle::load_keep_closed_from_config();
+    if let Some(text) = &opts.idle_for {
+        if let Err(message) = crate::agent_lifecycle::parse_duration(text) {
+            eprintln!("--idle-for: {message}");
+            return Ok(2);
+        }
+    }
+    if opts.all_sessions {
         if super::target::is_remote() {
             eprintln!("--all-sessions lists the sessions of this machine; it cannot be combined with --machine");
             return Ok(2);
         }
-        return agent_list_all_sessions();
+        return agent_list_all_sessions(&opts);
     }
     let mut response = super::send_request(&Request {
         id: "cli:agent:list".into(),
@@ -374,13 +385,72 @@ fn agent_list(all_sessions: bool) -> std::io::Result<i32> {
             }
         }
     }
+    print_agent_list(&response, &opts)
+}
+
+/// Closed rows are added by `--closed`, `--status closed` and `-a`.
+fn wants_closed(opts: &bindings::ListOpts) -> bool {
+    opts.closed || opts.all_sessions || opts.status.as_deref() == Some("closed")
+}
+
+/// Prints the list as JSON, or as a table on a terminal.
+fn print_agent_list(response: &serde_json::Value, opts: &bindings::ListOpts) -> std::io::Result<i32> {
+    use std::io::IsTerminal;
+    let mut response = response.clone();
+    if response.get("error").is_none() && wants_closed(opts) {
+        let only_closed = opts.closed || opts.status.as_deref() == Some("closed");
+        let now = crate::agent_lifecycle::now_secs();
+        let session = current_session_name();
+        let mut agents: Vec<serde_json::Value> = if only_closed {
+            Vec::new()
+        } else {
+            response["result"]["agents"].as_array().cloned().unwrap_or_default()
+        };
+        agents.extend(
+            crate::agent_lifecycle::read_closed(&crate::agent_lifecycle::closed_log_path(), now)
+                .iter()
+                .filter(|r| opts.all_sessions || session.as_deref() == Some(r.session.as_str()))
+                .map(|r| crate::agent_lifecycle::closed_row(r, now)),
+        );
+        response["result"]["agents"] = agents.into();
+    }
+    let pins = crate::agent_lifecycle::load_pins(&crate::agent_lifecycle::pins_path());
+    if !pins.is_empty() {
+        if let Some(agents) = response["result"]["agents"].as_array_mut() {
+            for agent in agents {
+                let key = match (agent["session"].as_str(), agent["name"].as_str()) {
+                    (Some(session), Some(name)) => crate::agent_lifecycle::pin_key(session, name),
+                    _ => continue,
+                };
+                if pins.contains(&key) {
+                    agent["pinned"] = true.into();
+                }
+            }
+        }
+    }
+    if opts.status.is_some() || opts.idle_for.is_some() {
+        let idle_for = opts
+            .idle_for
+            .as_deref()
+            .and_then(|t| crate::agent_lifecycle::parse_duration(t).ok());
+        if let Some(agents) = response["result"]["agents"].as_array_mut() {
+            agents.retain(|a| {
+                crate::agent_lifecycle::matches_filter(a, opts.status.as_deref(), idle_for)
+            });
+        }
+    }
+    if !opts.json && response.get("error").is_none() && std::io::stdout().is_terminal() {
+        let agents = response["result"]["agents"].as_array().cloned().unwrap_or_default();
+        print!("{}", crate::agent_lifecycle::agent_table(&agents));
+        return Ok(0);
+    }
     super::print_response(&response)
 }
 
 /// `klark agent list -a`: the same JSON shape as `agent list`, with the agents
 /// of every running session. A session that cannot answer is reported under
 /// `result.errors` (and on stderr) instead of failing the whole list.
-fn agent_list_all_sessions() -> std::io::Result<i32> {
+fn agent_list_all_sessions(opts: &bindings::ListOpts) -> std::io::Result<i32> {
     let machine = crate::msg_cmd::my_machine();
     let listed = crate::agent_index::list_running();
     if listed.is_empty() {
@@ -414,14 +484,14 @@ fn agent_list_all_sessions() -> std::io::Result<i32> {
     if !errors.is_empty() {
         result["errors"] = serde_json::Value::Array(errors);
     }
-    super::print_response(&serde_json::json!({"id": "cli:agent:list", "result": result}))
+    print_agent_list(&serde_json::json!({"id": "cli:agent:list", "result": result}), opts)
 }
 
 /// Adds `session` and `address` (machine/session/name-or-pane, the form every
 /// TARGET and `klark msg send` accept) to one `agent.list` entry, and where its
 /// folder sits in git: `checkout` (`main` or `worktree`), `worktree` (the
 /// linked worktree's folder name) and `branch`, each only when known.
-fn annotate_agent(agent: &mut serde_json::Value, machine: &str, session: &str) {
+pub(super) fn annotate_agent(agent: &mut serde_json::Value, machine: &str, session: &str) {
     let Some(object) = agent.as_object_mut() else {
         return;
     };
@@ -456,7 +526,7 @@ fn annotate_agent(agent: &mut serde_json::Value, machine: &str, session: &str) {
 
 /// The name of the session this command talks to by default, when it is a
 /// named session directory (not a raw `KLARK_SOCKET_PATH` override).
-fn current_session_name() -> Option<String> {
+pub(super) fn current_session_name() -> Option<String> {
     let name = crate::session::active_name()
         .unwrap_or_else(|| crate::session::DEFAULT_SESSION_NAME.to_owned());
     (crate::agent_index::session_socket(&name) == crate::session::active_api_socket_path())
@@ -524,7 +594,7 @@ fn send_routed(
     }
 }
 
-fn send_to_session(
+pub(super) fn send_to_session(
     session: &str,
     agent: String,
     request_id: &str,
@@ -774,7 +844,7 @@ fn agent_wait_timeout() -> serde_json::Value {
     )
 }
 
-fn cli_agent_error(id: &str, code: &str, message: impl Into<String>) -> serde_json::Value {
+pub(super) fn cli_agent_error(id: &str, code: &str, message: impl Into<String>) -> serde_json::Value {
     serde_json::json!({
         "id": id,
         "error": { "code": code, "message": message.into() }

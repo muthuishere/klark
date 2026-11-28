@@ -226,8 +226,17 @@ cli_projection! {
     }
 }
 
+#[derive(Debug, Default, Clone)]
+pub(crate) struct ListOpts {
+    pub(crate) all_sessions: bool,
+    pub(crate) json: bool,
+    pub(crate) closed: bool,
+    pub(crate) status: Option<String>,
+    pub(crate) idle_for: Option<String>,
+}
+
 pub(crate) enum Operation {
-    List { all_sessions: bool },
+    List(ListOpts),
     Get(AgentTarget),
     Focus(AgentTarget),
     Read(AgentReadParams),
@@ -239,6 +248,9 @@ pub(crate) enum Operation {
     Attach(Attach),
     Explain(Explain),
     Restart(super::restart::Restart),
+    Resume(String),
+    Pin(String, bool),
+    Close(super::lifecycle::CloseCmd),
     Models(super::models::ModelsCmd),
     Model(super::models::ModelCmd),
 }
@@ -257,8 +269,25 @@ pub(crate) fn command() -> Command {
                     .short('a')
                     .action(clap::ArgAction::SetTrue)
                     .help("List the agents of every running klark session on this machine"),
+                clap::Arg::new("status")
+                    .long("status")
+                    .value_name("STATUS")
+                    .value_parser(crate::agent_lifecycle::LIST_STATUSES.to_vec())
+                    .help("Only agents in this state (idle, working, blocked, done, unknown, closed)"),
+                clap::Arg::new("idle-for")
+                    .long("idle-for")
+                    .value_name("DURATION")
+                    .help("Only idle or done agents that have been so for at least this long (30m, 3h, 1d, 90s)"),
+                clap::Arg::new("closed")
+                    .long("closed")
+                    .action(clap::ArgAction::SetTrue)
+                    .help("Only closed agents that can be brought back with `klark agent resume`"),
+                clap::Arg::new("json")
+                    .long("json")
+                    .action(clap::ArgAction::SetTrue)
+                    .help("Print JSON even on a terminal (piped output is always JSON)"),
             ], "List agents (this session; -a for every session)")
-            .after_help("Each agent carries `session` and `address` (machine/session/name-or-pane). Any command that takes a TARGET accepts that address, or session/agent."))
+            .after_help("On a terminal the output is a table (NAME SESSION AGENT STATE FOR FOLDER); piped or with --json it is JSON. Each agent carries `status_since` (unix seconds) and `status_seconds` (time in its state). With -a, closed agents are listed too (STATE closed). Each agent carries `session` and `address` (machine/session/name-or-pane). Any command that takes a TARGET accepts that address, or session/agent."))
         .subcommand(leaf("get", TargetProjection::arguments(), "Show an agent"))
         .subcommand(leaf("focus", TargetProjection::arguments(), "Focus an agent"))
         .subcommand(leaf("read", AgentReadProjection::arguments(), "Read agent terminal output")
@@ -285,6 +314,25 @@ pub(crate) fn command() -> Command {
             .args(super::restart::args())
             .override_usage("klark agent restart <TARGET> [--soft] [--force] [--kill] [--reason TEXT] [--timeout MS] [--no-notice] [--notify-senders]")
             .after_help("Refuses, unless --force, while the agent shows a dialog or runs a git, deploy or install command. Also refuses with no conversation id to resume, with no shell under the agent, or from inside the agent itself.\n\nThe agent gets SIGTERM and is started again in its pane with its resume command; Claude Code keeps its launch flags. Its current turn, background helpers and shell commands stop; messages delivered since its last reply are listed as possibly unhandled and told to the resumed agent.\n\n--soft only presses Escape: the current turn stops and Claude Code runs its queued messages next."))
+        .subcommand(Command::new("resume")
+            .about("Bring back a closed agent: a new pane in its folder and session, resuming its conversation")
+            .args(super::lifecycle::resume_args())
+            .override_usage("klark agent resume <NAME>")
+            .after_help("Reads the closed-agent record (klark agent list --closed). Agents with a resume command (claude --resume ID, devin --resume ID, ...) continue the same conversation; others start a new one and say so."))
+        .subcommand(Command::new("pin")
+            .about("Never close this agent automatically or in bulk")
+            .args(super::lifecycle::pin_args())
+            .override_usage("klark agent pin <TARGET>")
+            .after_help("For agents whose work lives in the session, such as an in-session schedule. The pin is kept by session and agent name, so it survives restarts; a pinned agent is skipped by `klark agent close --idle-for` and `[agents] close_idle_after`. `klark agent close <TARGET>` still closes it."))
+        .subcommand(Command::new("unpin")
+            .about("Allow closing this agent in bulk again")
+            .args(super::lifecycle::pin_args())
+            .override_usage("klark agent unpin <TARGET>"))
+        .subcommand(Command::new("close")
+            .about("Close an agent's pane and keep it resumable, or close every long-idle agent")
+            .args(super::lifecycle::close_args())
+            .override_usage("klark agent close <TARGET> | --idle-for DURATION [-a] [--dry-run] [--json]")
+            .after_help("The agent is recorded as closed (klark agent list --closed) and comes back with `klark agent resume NAME`. --idle-for never closes working or blocked agents, pinned agents (klark agent pin), or the agent running the command. Without -a only this session is considered."))
         .subcommand(Command::new("models")
             .about("List the models an agent (or agent type) can switch to")
             .args(super::models::models_args())
@@ -304,9 +352,13 @@ pub(crate) fn from_matches(matches: &ArgMatches) -> Result<Operation, ParseError
         return Err(ParseError::Usage("missing agent command".into()));
     };
     Ok(match name {
-        "list" => Operation::List {
+        "list" => Operation::List(ListOpts {
             all_sessions: matches.get_flag("all-sessions"),
-        },
+            json: matches.get_flag("json"),
+            closed: matches.get_flag("closed"),
+            status: matches.get_one::<String>("status").cloned(),
+            idle_for: matches.get_one::<String>("idle-for").cloned(),
+        }),
         "get" => Operation::Get(TargetProjection::from_matches(matches)?),
         "focus" => Operation::Focus(TargetProjection::from_matches(matches)?),
         "read" => {
@@ -328,6 +380,14 @@ pub(crate) fn from_matches(matches: &ArgMatches) -> Result<Operation, ParseError
         "attach" => Operation::Attach(AttachProjection::from_matches(matches)?),
         "explain" => Operation::Explain(ExplainProjection::from_matches(matches)?),
         "restart" => Operation::Restart(super::restart::from_matches(matches)),
+        "resume" => Operation::Resume(
+            matches.get_one::<String>("target").cloned().unwrap_or_default(),
+        ),
+        "pin" | "unpin" => Operation::Pin(
+            matches.get_one::<String>("target").cloned().unwrap_or_default(),
+            name == "pin",
+        ),
+        "close" => Operation::Close(super::lifecycle::close_from(matches)),
         "models" => Operation::Models(super::models::models_from(matches)),
         "model" => Operation::Model(super::models::model_from(matches)),
         _ => return Err(ParseError::Usage(format!("unknown agent command: {name}"))),

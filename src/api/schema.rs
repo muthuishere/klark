@@ -93,6 +93,7 @@ operations::define_operations! {
     AgentStart(AgentStartParams) => "agent.start", true, false;
     AgentPrompt(AgentPromptParams) => "agent.prompt", true, false;
     AgentWait(AgentWaitParams) => "agent.wait", false, false;
+    AgentClose(AgentCloseParams) => "agent.close", true, false;
     PaneSplit(PaneSplitParams) => "pane.split", true, true;
     PaneSwap(PaneSwapParams) => "pane.swap", true, true;
     PaneMove(PaneMoveParams) => "pane.move", true, false;

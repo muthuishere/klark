@@ -67,7 +67,7 @@ impl Env {
 
     fn cmd(&self, session: Option<&str>) -> Command {
         let mut c = Command::new(BIN);
-        c.env("XDG_CONFIG_HOME", &self.config)
+        c.env("XDG_STATE_HOME", &self.config).env("XDG_CONFIG_HOME", &self.config)
             .env("XDG_RUNTIME_DIR", &self.runtime)
             .env("SHELL", "/bin/sh")
             .env("KLARK_MACHINE_NAME", "testbox")

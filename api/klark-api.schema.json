@@ -1235,6 +1235,25 @@
     },
     "request": {
       "$defs": {
+        "AgentCloseParams": {
+          "description": "Closes an agent's pane and records the agent as closed (resumable).",
+          "properties": {
+            "reason": {
+              "description": "`user` (default) or `idle-close`.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "target": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "target"
+          ],
+          "type": "object"
+        },
         "AgentPromptParams": {
           "properties": {
             "target": {
@@ -5470,6 +5489,22 @@
         {
           "properties": {
             "method": {
+              "const": "agent.close",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/AgentCloseParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
               "const": "pane.split",
               "type": "string"
             },
@@ -6707,6 +6742,24 @@
                 "type": "string"
               },
               "type": "object"
+            },
+            "status_seconds": {
+              "description": "Seconds spent in `agent_status` so far.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "status_since": {
+              "description": "Unix seconds when `agent_status` last changed.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
             },
             "tab_id": {
               "type": "string"

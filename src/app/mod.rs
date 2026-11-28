@@ -541,6 +541,14 @@ impl App {
             sidebar_agents: config.ui.sidebar.agents.clone(),
             sidebar_spaces: config.ui.sidebar.spaces.clone(),
             next_agent_state_change_seq: 0,
+            close_idle_after_secs: {
+                crate::agent_lifecycle::set_keep_closed(config.agents.keep_closed_secs());
+                config.agents.close_idle_after_secs()
+            },
+            last_idle_close_check: std::time::Instant::now(),
+            closed_agents_path: (!cfg!(test)).then(crate::agent_lifecycle::closed_log_path),
+            close_reason: crate::agent_lifecycle::REASON_USER,
+            closing_workspace_label: None,
             confirm_close: config.ui.confirm_close,
             pane_borders: config.ui.pane_borders,
             pane_outer_borders: config.ui.pane_outer_borders,
@@ -931,6 +939,8 @@ impl App {
                 self.state.agent_panel_sort =
                     agent_panel_sort_from_config(config.ui.agent_panel_sort);
                 self.state.sidebar_agents = config.ui.sidebar.agents.clone();
+                self.state.close_idle_after_secs = config.agents.close_idle_after_secs();
+                crate::agent_lifecycle::set_keep_closed(config.agents.keep_closed_secs());
                 self.state.sidebar_spaces = config.ui.sidebar.spaces.clone();
                 self.state.sound = config.ui.sound.clone();
                 self.state.toast_config = config.ui.toast.clone();

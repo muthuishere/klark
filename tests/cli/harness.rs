@@ -177,7 +177,7 @@ pub(super) fn spawn_named_server(
     let mut command = Command::new(env!("CARGO_BIN_EXE_klark"));
     command
         .args(["--session", session, "server"])
-        .env("XDG_CONFIG_HOME", config_home)
+        .env("XDG_STATE_HOME", &config_home).env("XDG_CONFIG_HOME", config_home)
         .env("XDG_RUNTIME_DIR", runtime_dir)
         .env_remove("KLARK_SOCKET_PATH")
         .env_remove("KLARK_CLIENT_SOCKET_PATH")
@@ -229,7 +229,7 @@ pub(super) fn run_named_cli_with_env_and_socket_override(
     let mut command = Command::new(env!("CARGO_BIN_EXE_klark"));
     command
         .args(args)
-        .env("XDG_CONFIG_HOME", config_home)
+        .env("XDG_STATE_HOME", &config_home).env("XDG_CONFIG_HOME", config_home)
         .env("XDG_RUNTIME_DIR", runtime_dir)
         .env_remove("KLARK_CLIENT_SOCKET_PATH")
         .env_remove("KLARK_ENV");
@@ -304,6 +304,7 @@ pub(super) fn spawn_klark_with_config(
     let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_klark"));
     isolate_klark_test_process(&mut cmd);
     cmd.arg("server");
+    cmd.env("XDG_STATE_HOME", &config_home);
     cmd.env("XDG_CONFIG_HOME", config_home);
     cmd.env("XDG_RUNTIME_DIR", runtime_dir);
     cmd.env("KLARK_SOCKET_PATH", socket_path);

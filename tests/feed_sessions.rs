@@ -73,7 +73,7 @@ impl Env {
 
     fn cmd(&self) -> Command {
         let mut c = Command::new(BIN);
-        c.env("XDG_CONFIG_HOME", &self.config)
+        c.env("XDG_STATE_HOME", &self.config).env("XDG_CONFIG_HOME", &self.config)
             .env("XDG_RUNTIME_DIR", &self.runtime)
             .env("XDG_DATA_HOME", self.base.join("data"))
             .env("SHELL", "/bin/sh")

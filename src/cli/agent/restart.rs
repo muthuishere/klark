@@ -412,8 +412,7 @@ fn is_agent_process(process: &Value, kind: &str, executable: &str) -> bool {
 }
 
 /// Starts the agent and waits until it is ready, like `klark agent start`.
-#[cfg(unix)]
-fn start(
+pub(super) fn start(
     name: &str,
     kind: &str,
     pane_id: &str,

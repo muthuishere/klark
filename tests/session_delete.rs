@@ -48,7 +48,7 @@ impl SessionConfig {
     fn delete(&self, name: &str) -> Output {
         Command::new(env!("CARGO_BIN_EXE_klark"))
             .args(["session", "delete", name, "--json"])
-            .env("XDG_CONFIG_HOME", &self.root)
+            .env("XDG_STATE_HOME", &self.root).env("XDG_CONFIG_HOME", &self.root)
             .env_remove("KLARK_SESSION")
             .env_remove("KLARK_SOCKET_PATH")
             .env_remove("KLARK_CLIENT_SOCKET_PATH")

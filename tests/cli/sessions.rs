@@ -234,7 +234,7 @@ fn dead_server_cli_reports_one_session_aware_json_line() {
     drop(UnixListener::bind(&stale_socket).unwrap());
     let stale = Command::new(env!("CARGO_BIN_EXE_klark"))
         .args(["workspace", "create"])
-        .env("XDG_CONFIG_HOME", &config_home)
+        .env("XDG_STATE_HOME", &config_home).env("XDG_CONFIG_HOME", &config_home)
         .env("XDG_RUNTIME_DIR", &runtime_dir)
         .env("KLARK_SOCKET_PATH", &stale_socket)
         .env("KLARK_SESSION", "unrelated")
