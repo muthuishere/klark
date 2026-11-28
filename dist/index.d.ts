@@ -11,6 +11,7 @@ export { ChatView, type ChatViewHandle, type ChatViewProps } from './components/
 export { ChoiceBar, choiceKeys } from './components/ChoiceBar';
 export { Composer, slashMatches, type Attachment, type SlashCommand } from './components/Composer';
 export { PaneHeader, type PaneHeaderProps } from './components/PaneHeader';
+export { HubPane, type HubPaneProps, type HubPaneActions } from './components/HubPane';
 export { Sidebar, type SidebarProps } from './components/Sidebar';
 export { Terminal, decodeBase64, type TerminalHandle, type TerminalProps } from './components/Terminal';
 export { VirtualList, type VirtualHandle } from './components/VirtualList';

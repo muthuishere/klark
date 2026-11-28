@@ -304,7 +304,7 @@ const paneStatus = (p) => p.agent_status && p.agent_status !== "unknown" ? p.age
 const isAgent = (p) => paneAgent(p).length > 0 || paneStatus(p) !== "";
 function agentKey(agent) {
   const a = agent.toLowerCase();
-  return a.includes("claude") ? "claude" : a.includes("devin") ? "devin" : a.includes("codex") ? "codex" : a === "" ? "shell" : "other";
+  return a.includes("claude") ? "claude" : a.includes("devin") ? "devin" : a.includes("codex") ? "codex" : a.includes("opencode") ? "opencode" : a === "" ? "shell" : "other";
 }
 function agentIcon(agent) {
   switch (agentKey(agent)) {
@@ -314,6 +314,8 @@ function agentIcon(agent) {
       return "◆";
     case "codex":
       return "◎";
+    case "opencode":
+      return "◇";
     case "shell":
       return "$";
     default:
@@ -1074,8 +1076,179 @@ function PaneHeader({ title, agent = "", session, status = "", statusText = "", 
     actions
   ] });
 }
+const sessionDrafts = webStorage(() => sessionStorage, "klark:");
+function readerClass(agent) {
+  if (!agent) return "shell";
+  const k = agentKey(agent);
+  return k === "claude" ? "claude" : k === "opencode" ? "opencode" : k === "other" ? "generic" : "devin";
+}
+function sizeLabel(n) {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(n < 10 * 1024 ? 1 : 0)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+function HubPane({
+  transport,
+  machine,
+  pane,
+  info,
+  online,
+  session = "",
+  view,
+  onViewChange,
+  canType = true,
+  readOnlyText = "Read-only",
+  offlineText = "Machine offline",
+  leading,
+  renderActions,
+  commands = [],
+  onNavigate,
+  offerHref = (o) => o.url,
+  drafts = sessionDrafts,
+  imageLine = (p) => `[image from hub] ${p}`
+}) {
+  var _a, _b;
+  const term = useRef(null);
+  const list = useRef(null);
+  const chat = useChat(transport, machine, pane, view === "terminal", term);
+  const offline = !online;
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [attachments, setAttachments] = useState([]);
+  const [uploading, setUploading] = useState(false);
+  const [toast, setToast] = useState(null);
+  const [dropping, setDropping] = useState(false);
+  useEffect(() => {
+    setAttachments([]);
+    setToast(null);
+  }, [machine, pane]);
+  const agent = info ? paneAgent(info) : "";
+  const status = offline ? "" : ((_b = (_a = chat.blocked) == null ? void 0 : _a.choices) == null ? void 0 : _b.length) ? "blocked" : info ? paneStatus(info) : "";
+  const title = info ? displayName(info) : pane;
+  const statusText = offline ? "offline" : chat.live === "retrying" ? "reconnecting…" : status === "working" ? "working…" : status === "blocked" ? "needs you" : status === "idle" ? "idle" : "";
+  const notSent = (e) => setToast({ text: `Not sent: ${e.message}`, bad: true });
+  const keys = (k) => transport.keys(machine, pane, k).catch(notSent);
+  const dropPreview = (a) => {
+    if (a.preview) try {
+      URL.revokeObjectURL(a.preview);
+    } catch {
+    }
+  };
+  const send = async (text) => {
+    var _a2;
+    const lines = attachments.map((a) => imageLine(a.path));
+    const full = [...lines, ...text ? [text] : []].join(" ");
+    attachments.forEach(dropPreview);
+    setAttachments([]);
+    if (!full) return;
+    await transport.input(machine, pane, full).catch(notSent);
+    await keys(["enter"]);
+    (_a2 = list.current) == null ? void 0 : _a2.scrollToBottom();
+  };
+  const upload = async (files) => {
+    setUploading(true);
+    for (const f of files) {
+      try {
+        const r = await transport.upload(machine, pane, f);
+        const preview = typeof URL.createObjectURL === "function" ? URL.createObjectURL(f) : void 0;
+        setAttachments((cur) => [...cur, { name: r.name || f.name, path: r.path, preview }]);
+      } catch (e) {
+        setToast({ text: `Not uploaded: ${e.message}`, bad: true });
+      }
+    }
+    setUploading(false);
+  };
+  const fileHref = useMemo(() => (path, line) => transport.fileUrl(machine, pane, path, line), [transport, machine, pane]);
+  const typing = online && canType;
+  return /* @__PURE__ */ jsxs(
+    "main",
+    {
+      className: "pane-app reader-" + readerClass(agent) + (dropping ? " dropping" : ""),
+      onDragOver: (e) => {
+        if (typing && e.dataTransfer.types.includes("Files")) {
+          e.preventDefault();
+          setDropping(true);
+        }
+      },
+      onDragLeave: () => setDropping(false),
+      onDrop: (e) => {
+        e.preventDefault();
+        setDropping(false);
+        if (!typing) return;
+        const f = [...e.dataTransfer.files].filter((x) => x.type.startsWith("image/"));
+        if (f.length) void upload(f);
+      },
+      children: [
+        /* @__PURE__ */ jsx(
+          PaneHeader,
+          {
+            title,
+            agent,
+            session,
+            status,
+            statusText,
+            cwd: info ? paneCwd(info) : void 0,
+            view,
+            onToggleView: () => onViewChange(view === "terminal" ? "chat" : "terminal"),
+            leading,
+            actions: renderActions == null ? void 0 : renderActions({ view, searchOpen, toggleSearch: () => setSearchOpen((o) => !o), agent, status, offline })
+          }
+        ),
+        /* @__PURE__ */ jsxs("div", { className: "pane-body", children: [
+          view === "chat" && /* @__PURE__ */ jsx(
+            ChatView,
+            {
+              ref: list,
+              items: chat.items,
+              loading: chat.loading,
+              error: chat.error,
+              blocked: chat.blocked,
+              status,
+              offline,
+              fileHref,
+              onNavigate,
+              searchOpen,
+              onSearchClose: () => setSearchOpen(false),
+              onKeys: typing ? async (k) => {
+                await keys(k);
+                setTimeout(() => void chat.reload(), 400);
+              } : void 0,
+              footer: chat.offers.length > 0 && /* @__PURE__ */ jsx("div", { className: "files chat-col", "aria-label": "Files offered by the agent", children: chat.offers.map((o) => /* @__PURE__ */ jsxs("a", { className: "fcard", href: offerHref(o), download: o.name, children: [
+                /* @__PURE__ */ jsx("span", { className: "ficon", children: /* @__PURE__ */ jsx(IconFile, {}) }),
+                /* @__PURE__ */ jsxs("span", { className: "fmeta", children: [
+                  /* @__PURE__ */ jsx("span", { className: "fname", children: o.name }),
+                  o.size != null && /* @__PURE__ */ jsx("span", { className: "muted", children: sizeLabel(o.size) })
+                ] })
+              ] }, o.id)) })
+            }
+          ),
+          /* @__PURE__ */ jsx(Terminal, { ref: term, cols: chat.size.cols, rows: chat.size.rows, visible: view === "terminal" })
+        ] }),
+        toast && /* @__PURE__ */ jsx("div", { className: "toast" + (toast.bad ? " bad" : ""), role: "alert", onClick: () => setToast(null), children: toast.text }),
+        offline ? /* @__PURE__ */ jsx("div", { className: "composer-wrap", children: /* @__PURE__ */ jsx("div", { className: "composer ro muted", children: offlineText }) }) : !canType ? /* @__PURE__ */ jsx("div", { className: "composer-wrap", children: /* @__PURE__ */ jsx("div", { className: "composer ro muted", children: readOnlyText }) }) : /* @__PURE__ */ jsx(
+          Composer,
+          {
+            draftKey: machine + "/" + pane,
+            storage: drafts,
+            commands: info && isAgent(info) ? commands : [],
+            terminal: view === "terminal",
+            attachments,
+            uploading,
+            onRemoveAttachment: (a) => {
+              dropPreview(a);
+              setAttachments((c) => c.filter((x) => x !== a));
+            },
+            onFiles: (f) => void upload(f),
+            onSend: send,
+            onKey: (k) => void keys([k])
+          },
+          machine + "/" + pane
+        )
+      ]
+    }
+  );
+}
 const plainClick = (e) => e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey;
-function Sidebar({ items, loaded = true, current, hrefFor, onOpen, filter: filterProp, onFilterChange, store = defaultStorage, renderGroupExtra, renderSubtitle, header, footer, empty }) {
+function Sidebar({ items, loaded = true, current, hrefFor, onOpen, filter: filterProp, onFilterChange, store = defaultStorage, renderGroupExtra, renderSubtitle, header, belowHeader, footer, empty }) {
   const [own, setOwn] = useState("");
   const filter = filterProp ?? own;
   const setFilter = (f) => {
@@ -1112,6 +1285,7 @@ function Sidebar({ items, loaded = true, current, hrefFor, onOpen, filter: filte
   };
   return /* @__PURE__ */ jsxs("aside", { className: "side", "aria-label": "Agents", children: [
     header && /* @__PURE__ */ jsx("div", { className: "side-head", children: header }),
+    belowHeader && /* @__PURE__ */ jsx("div", { className: "side-below", children: belowHeader }),
     /* @__PURE__ */ jsxs("div", { className: "side-search", children: [
       /* @__PURE__ */ jsx("input", { ref: search, type: "search", placeholder: "Search agents", "aria-label": "Search agents", value: filter, onChange: (e) => setFilter(e.target.value) }),
       /* @__PURE__ */ jsx("kbd", { children: "⌘K" })
@@ -1191,6 +1365,7 @@ export {
   ChoiceBar,
   Composer,
   FileHrefCtx,
+  HubPane,
   IconBack,
   IconChat,
   IconFile,

@@ -4,7 +4,7 @@ export declare const paneCwd: (p: PaneInfo) => string;
 export declare const paneAgent: (p: PaneInfo) => string;
 export declare const paneStatus: (p: PaneInfo) => string;
 export declare const isAgent: (p: PaneInfo) => boolean;
-export declare function agentKey(agent: string): 'claude' | 'devin' | 'codex' | 'shell' | 'other';
+export declare function agentKey(agent: string): 'claude' | 'devin' | 'codex' | 'opencode' | 'shell' | 'other';
 export declare function agentIcon(agent: string): string;
 export declare function folderName(cwd?: string): string;
 /** The pane's own name; else "agent · folder"; never a raw pane id when anything better exists. */

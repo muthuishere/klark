@@ -25,10 +25,12 @@ export interface SidebarProps {
     /** A row's second line. Default: "needs you · kind · machine · session". The "needs you" mark stays in front either way. */
     renderSubtitle?: (r: Row) => ReactNode;
     header?: ReactNode;
+    /** Blocks under the header (lists, alerts), stacked full width: never in the header's one row. */
+    belowHeader?: ReactNode;
     /** Right side of the footer (account menu, theme...). */
     footer?: ReactNode;
     /** Shown when there are no machines. */
     empty?: ReactNode;
 }
 /** Agents grouped by project folder, needs-you first; search with ⌘K. */
-export declare function Sidebar({ items, loaded, current, hrefFor, onOpen, filter: filterProp, onFilterChange, store, renderGroupExtra, renderSubtitle, header, footer, empty }: SidebarProps): import("react").JSX.Element;
+export declare function Sidebar({ items, loaded, current, hrefFor, onOpen, filter: filterProp, onFilterChange, store, renderGroupExtra, renderSubtitle, header, belowHeader, footer, empty }: SidebarProps): import("react").JSX.Element;
