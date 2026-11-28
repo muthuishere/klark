@@ -415,6 +415,26 @@ impl Default for SessionConfig {
     }
 }
 
+/// `[paste]`: how the local client pastes a clipboard image into a pane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct PasteConfig {
+    /// Save a clipboard image to a file and paste its `@path` instead of the
+    /// image bytes (local panes, macOS and Linux). Default: true.
+    pub image_as_path: bool,
+    /// Pasted image files older than this many days are deleted. Default: 2.
+    pub keep_days: u32,
+}
+
+impl Default for PasteConfig {
+    fn default() -> Self {
+        Self {
+            image_as_path: true,
+            keep_days: 2,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ConfigReloadStatus {
@@ -449,6 +469,7 @@ pub struct Config {
     pub theme: ThemeConfig,
     pub terminal: TerminalConfig,
     pub session: SessionConfig,
+    pub paste: PasteConfig,
     pub server: ServerConfig,
     pub update: UpdateConfig,
     pub keys: KeysConfig,
@@ -1620,6 +1641,21 @@ startup_per_agent_delay_ms = 0
         let config: Config = toml::from_str(toml).unwrap();
         assert!(!config.session.resume_agents_on_restore);
         assert_eq!(config.session.startup_per_agent_delay_ms, 0);
+    }
+
+    #[test]
+    fn paste_config_defaults_on_and_parses() {
+        let default_config = Config::default();
+        assert!(default_config.paste.image_as_path);
+        assert_eq!(default_config.paste.keep_days, 2);
+
+        let config: Config = toml::from_str("[paste]\nimage_as_path = false\nkeep_days = 7\n").unwrap();
+        assert!(!config.paste.image_as_path);
+        assert_eq!(config.paste.keep_days, 7);
+
+        let partial: Config = toml::from_str("[paste]\nkeep_days = 1\n").unwrap();
+        assert!(partial.paste.image_as_path);
+        assert_eq!(partial.paste.keep_days, 1);
     }
 
     #[test]

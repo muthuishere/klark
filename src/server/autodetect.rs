@@ -209,6 +209,16 @@ pub fn spawn_server_daemon() -> io::Result<u32> {
         )
     })?;
 
+    #[test]
+    fn dev_server_copy_is_skipped_when_xdg_state_home_is_set() {
+        let build = Path::new("/w/klark/target/debug/klark");
+        assert!(should_copy_dev_server(build, None, false));
+        assert!(!should_copy_dev_server(build, None, true));
+        assert!(!should_copy_dev_server(build, Some(std::ffi::OsStr::new("0")), false));
+        assert!(should_copy_dev_server(build, Some(std::ffi::OsStr::new("1")), false));
+        assert!(!should_copy_dev_server(Path::new("/usr/local/bin/klark"), None, false));
+    }
+
     #[cfg(target_os = "macos")]
     let exe = stable_dev_server_exe(exe);
 
@@ -234,8 +244,11 @@ pub fn spawn_server_daemon() -> io::Result<u32> {
 /// falls back to the build's own path.
 #[cfg(target_os = "macos")]
 fn stable_dev_server_exe(exe: PathBuf) -> PathBuf {
-    if !is_cargo_build(&exe) || std::env::var_os("KLARK_DEV_SERVER_COPY").is_some_and(|v| v == "0")
-    {
+    if !should_copy_dev_server(
+        &exe,
+        std::env::var_os("KLARK_DEV_SERVER_COPY").as_deref(),
+        std::env::var_os("XDG_STATE_HOME").is_some(),
+    ) {
         return exe;
     }
     // One path for every repo build, debug or release, so one grant covers them.
@@ -252,6 +265,18 @@ fn stable_dev_server_exe(exe: PathBuf) -> PathBuf {
             exe
         }
     }
+}
+
+/// No copy when `XDG_STATE_HOME` is set: tests and sandboxes point it at a
+/// temp dir, and each temp copy would add another denied "klark" entry to
+/// macOS Full Disk Access.
+#[cfg(any(target_os = "macos", test))]
+fn should_copy_dev_server(
+    exe: &std::path::Path,
+    copy_env: Option<&std::ffi::OsStr>,
+    xdg_state_home_set: bool,
+) -> bool {
+    is_cargo_build(exe) && copy_env.is_none_or(|v| v != "0") && !xdg_state_home_set
 }
 
 #[cfg(any(target_os = "macos", test))]
