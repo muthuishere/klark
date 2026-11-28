@@ -30,8 +30,10 @@ var (
 	ocComposerEnd = rx(`^\s*╹▀+`)
 	ocSteps       = rx(`^\s*\+\s+(\d+\s+\w+(,\s*\d+\s+\w+)*)\s*$`)
 	ocTurnMeta    = rx(`^\s*\S+(\s\S+)?\s·\s.+\s·\s\d+(\.\d+)?(ms|s|m)\b`)
-	ocStatus      = rx(`ctrl\+p commands`)
-	ocSidebar     = rx(`\s{4,}(Context|MCP|LSP|Modified Files|Todo)\s*$`)
+	// "     ↳ Shell finished · JAVA_HOME=/opt/x/bin run.sh…" : an inline tool completion under a step row.
+	ocShell   = rx(`^\s*↳\s+Shell finished(?:\s+·\s*(.*))?$`)
+	ocStatus  = rx(`ctrl\+p commands`)
+	ocSidebar = rx(`\s{4,}(Context|MCP|LSP|Modified Files|Todo)\s*$`)
 )
 
 func runeCut(s string, col int) string {
@@ -129,7 +131,7 @@ func opencode(raw string) []ScreenTurn {
 	var turns []ScreenTurn
 	var buf, user []string
 	flushText := func() {
-		text := shapeMarkdown(boxTables(strings.Join(buf, "\n")))
+		text := shapeMarkdownIn(boxTables(strings.Join(buf, "\n")), true)
 		buf = nil
 		if strings.TrimSpace(text) != "" {
 			turns = append(turns, ScreenTurn{Role: "assistant", Kind: "text", Text: text})
@@ -154,6 +156,9 @@ func opencode(raw string) []ScreenTurn {
 		switch {
 		case ocStatus.MatchString(l), ocTurnMeta.MatchString(l):
 			continue
+		case ocShell.MatchString(l):
+			flushText()
+			turns = append(turns, ScreenTurn{Role: "assistant", Kind: "tool_use", Tool: "shell", Summary: ocShell.FindStringSubmatch(l)[1]})
 		case ocSteps.MatchString(l):
 			flushText()
 			turns = append(turns, ScreenTurn{Role: "assistant", Kind: "tool_use", Tool: "steps", Summary: ocSteps.FindStringSubmatch(l)[1]})

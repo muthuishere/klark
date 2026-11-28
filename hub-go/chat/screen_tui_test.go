@@ -103,6 +103,36 @@ func TestOpenCodeScreen(t *testing.T) {
 	}
 }
 
+func TestOpenCodeBulletListAndShellRows(t *testing.T) {
+	turns := Transform("opencode", fixture(t, "opencode-3.screen.txt"))
+	var reply string
+	var shells []ScreenTurn
+	for _, tt := range turns {
+		if tt.Kind == "text" && tt.Role == "assistant" {
+			if strings.Contains(tt.Text, "Done.") {
+				reply = tt.Text
+			}
+			if strings.Contains(tt.Text, "Shell finished") {
+				t.Errorf("shell status became prose: %q", tt.Text)
+			}
+		}
+		if tt.Kind == "tool_use" && tt.Tool == "shell" {
+			shells = append(shells, tt)
+		}
+	}
+	if strings.Contains(reply, "```") {
+		t.Errorf("bullet list fenced as code:\n%s", reply)
+	}
+	for _, want := range []string{"- Adaptive: remote assignment", "- #3 — closed by its author for inactivity; not a confirmation of the feature\nbeing implemented, and a very long note that wraps onto a second line here.", "- Telemetry: counts exist"} {
+		if !strings.Contains(reply, want) {
+			t.Errorf("list item %q missing:\n%s", want, reply)
+		}
+	}
+	if len(shells) != 1 || !strings.HasPrefix(shells[0].Summary, "JAVA_HOME=/opt/demo/jdk") {
+		t.Errorf("shell rows: %v", shells)
+	}
+}
+
 func TestOpenCodeScreenWithDialogDoesNotPanic(t *testing.T) {
 	// A model picker drawn over the transcript: unreadable, but chrome is still removed and nothing panics.
 	turns := Transform("opencode", fixture(t, "opencode.screen.txt"))
