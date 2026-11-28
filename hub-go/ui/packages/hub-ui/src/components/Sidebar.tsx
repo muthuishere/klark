@@ -23,6 +23,8 @@ export interface SidebarProps {
   /** A row's second line. Default: "needs you · kind · machine · session". The "needs you" mark stays in front either way. */
   renderSubtitle?: (r: Row) => ReactNode;
   header?: ReactNode;
+  /** Blocks under the header (lists, alerts), stacked full width: never in the header's one row. */
+  belowHeader?: ReactNode;
   /** Right side of the footer (account menu, theme...). */
   footer?: ReactNode;
   /** Shown when there are no machines. */
@@ -32,7 +34,7 @@ export interface SidebarProps {
 const plainClick = (e: MouseEvent) => e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey;
 
 /** Agents grouped by project folder, needs-you first; search with ⌘K. */
-export function Sidebar({ items, loaded = true, current, hrefFor, onOpen, filter: filterProp, onFilterChange, store = defaultStorage, renderGroupExtra, renderSubtitle, header, footer, empty }: SidebarProps) {
+export function Sidebar({ items, loaded = true, current, hrefFor, onOpen, filter: filterProp, onFilterChange, store = defaultStorage, renderGroupExtra, renderSubtitle, header, belowHeader, footer, empty }: SidebarProps) {
   const [own, setOwn] = useState('');
   const filter = filterProp ?? own;
   const setFilter = (f: string) => { if (filterProp === undefined) setOwn(f); onFilterChange?.(f); };
@@ -66,6 +68,7 @@ export function Sidebar({ items, loaded = true, current, hrefFor, onOpen, filter
   return (
     <aside className="side" aria-label="Agents">
       {header && <div className="side-head">{header}</div>}
+      {belowHeader && <div className="side-below">{belowHeader}</div>}
       <div className="side-search">
         <input ref={search} type="search" placeholder="Search agents" aria-label="Search agents" value={filter} onChange={(e) => setFilter(e.target.value)} />
         <kbd>⌘K</kbd>
