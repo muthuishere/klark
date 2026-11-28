@@ -73,6 +73,42 @@ impl App {
         encode_success(id, ResponseResult::AgentInfo { agent })
     }
 
+    pub(super) fn handle_agent_close(
+        &mut self,
+        id: String,
+        params: crate::api::schema::AgentCloseParams,
+    ) -> String {
+        let reason = match params.reason.as_deref() {
+            None | Some(crate::agent_lifecycle::REASON_USER) => crate::agent_lifecycle::REASON_USER,
+            Some(crate::agent_lifecycle::REASON_IDLE_CLOSE) => {
+                crate::agent_lifecycle::REASON_IDLE_CLOSE
+            }
+            Some(other) => {
+                return encode_error(
+                    id,
+                    "invalid_close_reason",
+                    format!("close reason must be user or idle-close, not {other}"),
+                )
+            }
+        };
+        let agent = match self.agent_info_for_target(&params.target) {
+            Ok(agent) => agent,
+            Err(err) => return encode_error_body(id, self.agent_target_error_body(err)),
+        };
+        self.state.close_reason = reason;
+        let closed = self.close_pane(
+            id.clone(),
+            &crate::api::schema::PaneTarget {
+                pane_id: agent.pane_id.clone(),
+            },
+        );
+        self.state.close_reason = crate::agent_lifecycle::REASON_USER;
+        match closed {
+            Ok(()) => encode_success(id, ResponseResult::AgentInfo { agent }),
+            Err(response) => response,
+        }
+    }
+
     pub(super) fn handle_agent_rename(&mut self, id: String, params: AgentRenameParams) -> String {
         let agent = match self.rename_agent_target(&params.target, params.name) {
             Ok(agent) => agent,

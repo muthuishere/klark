@@ -1235,6 +1235,25 @@
     },
     "request": {
       "$defs": {
+        "AgentCloseParams": {
+          "description": "Closes an agent's pane and records the agent as closed (resumable).",
+          "properties": {
+            "reason": {
+              "description": "`user` (default) or `idle-close`.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "target": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "target"
+          ],
+          "type": "object"
+        },
         "AgentPromptParams": {
           "properties": {
             "target": {
@@ -5459,6 +5478,22 @@
             },
             "params": {
               "$ref": "#/schemas/request/$defs/AgentWaitParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "agent.close",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/AgentCloseParams"
             }
           },
           "required": [

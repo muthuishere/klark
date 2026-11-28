@@ -12,6 +12,7 @@ const PANE_SHELL_READINESS_RETRY_TIMEOUT: Duration = Duration::from_secs(2);
 pub(crate) mod bindings;
 #[cfg(test)]
 mod bindings_tests;
+mod lifecycle;
 mod models;
 mod restart;
 
@@ -64,6 +65,7 @@ pub(super) fn run_agent_command(args: &[String]) -> std::io::Result<i32> {
         Operation::Attach(params) => agent_attach(params),
         Operation::Explain(params) => agent_explain(params),
         Operation::Restart(params) => restart::run(params),
+        Operation::Resume(target) => lifecycle::run_resume(&target),
         Operation::Models(params) => models::run_models(params),
         Operation::Model(params) => models::run_model(params),
     }
@@ -383,31 +385,49 @@ fn agent_list(opts: bindings::ListOpts) -> std::io::Result<i32> {
     print_agent_list(&response, &opts)
 }
 
+/// Closed rows are added by `--closed`, `--status closed` and `-a`.
+fn wants_closed(opts: &bindings::ListOpts) -> bool {
+    opts.closed || opts.all_sessions || opts.status.as_deref() == Some("closed")
+}
+
 /// Prints the list as JSON, or as a table on a terminal.
 fn print_agent_list(response: &serde_json::Value, opts: &bindings::ListOpts) -> std::io::Result<i32> {
     use std::io::IsTerminal;
-    let mut filtered;
-    let response = if opts.status.is_some() || opts.idle_for.is_some() {
-        filtered = response.clone();
+    let mut response = response.clone();
+    if response.get("error").is_none() && wants_closed(opts) {
+        let only_closed = opts.closed || opts.status.as_deref() == Some("closed");
+        let now = crate::agent_lifecycle::now_secs();
+        let session = current_session_name();
+        let mut agents: Vec<serde_json::Value> = if only_closed {
+            Vec::new()
+        } else {
+            response["result"]["agents"].as_array().cloned().unwrap_or_default()
+        };
+        agents.extend(
+            crate::agent_lifecycle::read_closed(&crate::agent_lifecycle::closed_log_path(), now)
+                .iter()
+                .filter(|r| opts.all_sessions || session.as_deref() == Some(r.session.as_str()))
+                .map(|r| crate::agent_lifecycle::closed_row(r, now)),
+        );
+        response["result"]["agents"] = agents.into();
+    }
+    if opts.status.is_some() || opts.idle_for.is_some() {
         let idle_for = opts
             .idle_for
             .as_deref()
             .and_then(|t| crate::agent_lifecycle::parse_duration(t).ok());
-        if let Some(agents) = filtered["result"]["agents"].as_array_mut() {
+        if let Some(agents) = response["result"]["agents"].as_array_mut() {
             agents.retain(|a| {
                 crate::agent_lifecycle::matches_filter(a, opts.status.as_deref(), idle_for)
             });
         }
-        &filtered
-    } else {
-        response
-    };
+    }
     if !opts.json && response.get("error").is_none() && std::io::stdout().is_terminal() {
         let agents = response["result"]["agents"].as_array().cloned().unwrap_or_default();
         print!("{}", crate::agent_lifecycle::agent_table(&agents));
         return Ok(0);
     }
-    super::print_response(response)
+    super::print_response(&response)
 }
 
 /// `klark agent list -a`: the same JSON shape as `agent list`, with the agents

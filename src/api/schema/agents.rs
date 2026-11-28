@@ -67,6 +67,15 @@ cli_params! {
     }
 }
 
+/// Closes an agent's pane and records the agent as closed (resumable).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct AgentCloseParams {
+    pub target: String,
+    /// `user` (default) or `idle-close`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AgentViewSetParams {
     pub source: String,

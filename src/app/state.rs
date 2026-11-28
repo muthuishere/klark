@@ -959,6 +959,12 @@ pub struct AppState {
     pub sidebar_agents: crate::config::AgentsSidebarConfig,
     pub sidebar_spaces: crate::config::SpacesSidebarConfig,
     pub next_agent_state_change_seq: u64,
+    /// Where closed agents are recorded; `None` records nothing (tests).
+    pub closed_agents_path: Option<std::path::PathBuf>,
+    /// Why the next terminal removals happen: `user`, `idle-close` or `exit`.
+    pub close_reason: &'static str,
+    /// Label of the workspace being closed or closed from, for closed-agent records.
+    pub closing_workspace_label: Option<String>,
     pub confirm_close: bool,
     pub pane_borders: crate::config::PaneBordersConfig,
     pub pane_outer_borders: bool,
@@ -1201,6 +1207,9 @@ impl AppState {
             sidebar_agents: crate::config::AgentsSidebarConfig::default(),
             sidebar_spaces: crate::config::SpacesSidebarConfig::default(),
             next_agent_state_change_seq: 0,
+            closed_agents_path: None,
+            close_reason: crate::agent_lifecycle::REASON_USER,
+            closing_workspace_label: None,
             confirm_close: true,
             pane_borders: crate::config::PaneBordersConfig::Auto,
             pane_outer_borders: true,

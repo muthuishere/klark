@@ -178,6 +178,7 @@ mod tests {
             "agent.view.clear",
             "agent.focus",
             "agent.start",
+            "agent.close",
             "agent.prompt",
             "agent.send_keys",
             "pane.split",
