@@ -417,6 +417,14 @@ const DEFAULT_CONFIG: &str = r##"# klark configuration
 # Milliseconds between automatic agent restores; 0 starts them without spacing.
 # startup_per_agent_delay_ms = 100
 
+[paste]
+# Pasting (ctrl+v) with an image on the clipboard saves it as a file and pastes
+# `@/path/to/paste-<ms>.png` into the pane, so agents that read files can open it.
+# Local panes only, macOS and Linux; `klark --remote` keeps uploading the image.
+# image_as_path = true
+# Pasted images older than this many days are deleted.
+# keep_days = 2
+
 [remote]
 # Whether klark manages the ssh config used for `klark --remote`.
 # When true (default), klark runs remote ssh through a generated config that

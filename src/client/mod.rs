@@ -226,6 +226,7 @@ fn run_client_with_mode(
         initial_host_input: Vec::new(),
         endpoint_keybindings,
         remote_image_paste_key,
+        paste: loaded_config.config.paste,
         shell_config,
     };
 
@@ -485,6 +486,7 @@ async fn run_client_loop(
         #[cfg(unix)]
         mouse_scroll_lines: config.mouse_scroll_lines,
         remote_image_paste_key: config.remote_image_paste_key,
+        paste: config.paste,
         redraw_on_focus_gained: config.redraw_on_focus_gained,
         repaint_pending: false,
         presentation_frozen: false,
@@ -855,15 +857,15 @@ async fn run_client_loop(
                     write_stream.active_id(),
                     write_stream.active_surface_available(),
                 );
-                // SPIKE: local pane, image on the clipboard -> paste its saved file path instead.
+                // Local pane, image on the clipboard -> paste its saved file path instead.
                 let data = if !image_bridge_active
-                    && clipboard_images::spike_paste_image_as_path_enabled()
+                    && state.paste.image_as_path
                     && clipboard_images::should_bridge_clipboard_image_paste(
                         &data,
                         true,
                         state.remote_image_paste_key,
                     ) {
-                    clipboard_images::spike_clipboard_image_as_path_input().unwrap_or(data)
+                    clipboard_images::clipboard_image_as_path_input(state.paste.keep_days).unwrap_or(data)
                 } else {
                     data
                 };
