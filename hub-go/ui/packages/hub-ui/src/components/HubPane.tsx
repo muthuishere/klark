@@ -57,11 +57,11 @@ export interface HubPaneProps {
 const sessionDrafts = webStorage(() => sessionStorage, 'klark:');
 
 // The page's reader class picks the chat's look. OpenCode, like Claude and Devin, comes from its own log as markdown,
-// so it gets proportional text; "generic" (monospace) is for agents the hub still reads off the screen.
-function readerClass(agent: string): string {
+// so it gets proportional text; so does Antigravity, whose transformer outputs markdown. "generic" (monospace) is for agents the hub still reads off the screen.
+export function readerClass(agent: string): string {
   if (!agent) return 'shell';
   const k = agentKey(agent);
-  return k === 'claude' ? 'claude' : k === 'opencode' ? 'opencode' : k === 'other' ? 'generic' : 'devin';
+  return k === 'claude' ? 'claude' : k === 'opencode' ? 'opencode' : k === 'agy' ? 'agy' : k === 'other' ? 'generic' : 'devin';
 }
 
 function sizeLabel(n: number): string {

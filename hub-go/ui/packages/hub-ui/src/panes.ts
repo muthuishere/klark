@@ -6,10 +6,10 @@ export const paneAgent = (p: PaneInfo) => p.display_agent || p.agent || '';
 export const paneStatus = (p: PaneInfo) => (p.agent_status && p.agent_status !== 'unknown' ? p.agent_status : '');
 export const isAgent = (p: PaneInfo) => paneAgent(p).length > 0 || paneStatus(p) !== '';
 
-export function agentKey(agent: string): 'claude' | 'devin' | 'codex' | 'opencode' | 'shell' | 'other' {
+export function agentKey(agent: string): 'claude' | 'devin' | 'codex' | 'opencode' | 'agy' | 'shell' | 'other' {
   const a = agent.toLowerCase();
   return a.includes('claude') ? 'claude' : a.includes('devin') ? 'devin' : a.includes('codex') ? 'codex'
-    : a.includes('opencode') ? 'opencode' : a === '' ? 'shell' : 'other';
+    : a.includes('opencode') ? 'opencode' : /\bagy\b/.test(a) || a.includes('antigravity') ? 'agy' : a === '' ? 'shell' : 'other';
 }
 export function agentIcon(agent: string): string {
   switch (agentKey(agent)) {
@@ -17,6 +17,7 @@ export function agentIcon(agent: string): string {
     case 'devin': return '◆';
     case 'codex': return '◎';
     case 'opencode': return '◇';
+    case 'agy': return '✦';
     case 'shell': return '$';
     default: return agent ? agent[0].toUpperCase() : '•';
   }
