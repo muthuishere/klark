@@ -25,6 +25,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{json, Value};
 
 mod devin;
+mod opencode;
 
 pub const DEFAULT_LIMIT: usize = 200;
 pub const MAX_LIMIT: usize = 1000;
@@ -401,6 +402,8 @@ enum Log {
     File(PathBuf, LogFormat),
     /// Devin's SQLite store and the session id in it.
     Devin(PathBuf, String),
+    /// OpenCode's SQLite store and the session id in it.
+    OpenCode(PathBuf, String),
 }
 
 /// (agent, log) for a pane, from `pane.get`.
@@ -429,6 +432,13 @@ fn structured_log(pane: &Value) -> (Option<String>, Option<Log>) {
             devin::db_path().and_then(|db| {
                 let sid = devin::find_session(&db, id.as_deref(), cwd.as_deref())?;
                 Some(Log::Devin(db, sid))
+            })
+        }
+        Some("opencode") => {
+            let id = session.and_then(|x| s(x, "value"));
+            opencode::db_path().and_then(|db| {
+                let sid = opencode::find_session(&db, id.as_deref(), cwd.as_deref())?;
+                Some(Log::OpenCode(db, sid))
             })
         }
         // Extension point: add other agents' log readers here.
@@ -495,6 +505,13 @@ fn transcript(o: Opts) -> Result<Value, String> {
         ),
         // A locked or unreadable store falls back to the screen.
         Some(Log::Devin(db, sid)) => devin::read_page(&db, &sid, query, o.limit)
+            .ok()
+            .filter(|p| {
+                !p.items.is_empty() || cursor(&o.after).is_some() || cursor(&o.before).is_some()
+            })
+            .map(|p| (p, "db")),
+        // Same for OpenCode (an older OpenCode without the 2.x store has no session here).
+        Some(Log::OpenCode(db, sid)) => opencode::read_page(&db, &sid, query, o.limit)
             .ok()
             .filter(|p| {
                 !p.items.is_empty() || cursor(&o.after).is_some() || cursor(&o.before).is_some()

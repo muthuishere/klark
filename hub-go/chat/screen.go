@@ -33,11 +33,17 @@ func PickReader(agent, raw string) string {
 		return readerDevin
 	case a == "agy" || strings.Contains(a, "antigravity"):
 		return readerAgy
+	case strings.Contains(a, "opencode"):
+		return readerOpenCode
 	}
 	plain := StripAnsi(raw)
 	switch {
 	case codexBanner.MatchString(plain):
 		return readerCodex
+	case isOpenCode(plain):
+		return readerOpenCode
+	case isDevin3(plain):
+		return readerDevin
 	case agyBanner.MatchString(plain):
 		return readerAgy
 	case strings.ContainsAny(plain, "⏺⎿"):
@@ -61,11 +67,19 @@ func Transform(agent, raw string) []ScreenTurn {
 		return codex(raw)
 	case readerAgy:
 		return agy(raw)
+	case readerOpenCode:
+		return opencode(raw)
 	}
 	return generic(raw)
 }
 
-func devin(raw string) []ScreenTurn { return TurnsWith(boxTables(Clean(raw)), "›>", "•", "└") }
+// devin reads Devin CLI: the 3000.x layout ("❭" prompts) with devin3, the older "›"/"•"/"└" layout with markers.
+func devin(raw string) []ScreenTurn {
+	if isDevin3(StripAnsi(raw)) {
+		return devin3(raw)
+	}
+	return TurnsWith(boxTables(Clean(raw)), "›>", "•", "└")
+}
 
 var (
 	codexPlaceholder = rx(`^\s*› (Ask Codex to do anything|Write tests for @filename|Explain this codebase|summarize recent commits|Implement \{feature\}|Find and fix a bug in @filename|Improve documentation in @filename|Use /skills to list available skills|Run /review on my current changes)\s*$`)

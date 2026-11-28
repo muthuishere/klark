@@ -1,0 +1,45 @@
+➜  /tmp/demo devin
+
+⠀⣴⣾⣶⡄⠀⠀⠀⠀
+⠀⠛⠿⠟⠻⣶⣾⣶⡄  Devin CLI
+⠀⣤⣶⣦⣴⠿⢿⠿⠃  v3000.15.14
+⠀⠻⢿⠿⠃⠀⠀⠀⠀
+
+ Free plan, use /upgrade to access better models · 100% remaining (resets in 22h 30m)
+
+❭ List the files in this folder with ls, then reply with a short markdown summary: one heading, a bullet list, a small
+  table, and a fenced code block. Do not change any files.
+
+ ✓ Listed ./
+
+ Folder Contents
+
+  /tmp/demo  is empty — no files, no subdirectories.
+
+ Findings
+
+   • Total files: 0
+   • Subdirectories: 0
+
+ ┌──────────┬────────────┐
+ │ Property │ Value      │
+ ├──────────┼────────────┤
+ │ Path     │  /tmp/demo │
+ ├──────────┼────────────┤
+ │ Files    │ 0          │
+ └──────────┴────────────┘
+
+
+   $ ls -la
+   total 0
+   drwxr-xr-x   2 me  wheel   64 27 Nov 14:19 .
+   drwxrwxrwt  15 root wheel 4928 27 Nov 17:44 ..
+
+
+ No files were changed.
+
+ ⏺ /tmp/demo
+────────────────────────────────────────────────────────────────────────────────────────── List the files in this folder with ls, … ─
+❭ Ask Devin to build features, fix bugs, or work on your code
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+SWE-2 Flash Medium                                                                                       ctrl+v to paste image

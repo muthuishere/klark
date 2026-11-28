@@ -301,6 +301,7 @@ func (a *App) postInput(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if b.Enter {
+		time.Sleep(SubmitDelay(len(b.Text)))
 		_ = a.Runtime.Keys(id, pane, []string{"enter"})
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -329,6 +330,17 @@ func (a *App) postKeys(w http.ResponseWriter, r *http.Request) {
 // postSend is what the chat's composer does: the text goes to the pane and is submitted. The hub's note is added
 // (so agents name files by absolute path), except to slash commands. A slash command to an agent whose
 // structured log never records local commands is chatted locally with the output read off the screen.
+// SubmitDelay is how long to wait between typing text and pressing Enter: the machine's own agent.prompt rule
+// (src/app/api/agents.rs submit_delay), 300 ms plus 1 ms per 16 bytes, at most 1.5 s. Without it Devin reads the
+// typed text as a paste still in progress and swallows the Enter, so the prompt sits unsent in its composer.
+func SubmitDelay(n int) time.Duration {
+	extra := n / 16
+	if extra > 1200 {
+		extra = 1200
+	}
+	return 300*time.Millisecond + time.Duration(extra)*time.Millisecond
+}
+
 func (a *App) postSend(w http.ResponseWriter, r *http.Request) {
 	id, ok := a.machineOr404(w, r)
 	if !ok {
@@ -353,10 +365,12 @@ func (a *App) postSend(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	if err := a.Runtime.Input(id, pane, hubchat.AppendNote(text, a.AgentNote)); err != nil {
+	sent := hubchat.AppendNote(text, a.AgentNote)
+	if err := a.Runtime.Input(id, pane, sent); err != nil {
 		failure(w, err)
 		return
 	}
+	time.Sleep(SubmitDelay(len(sent)))
 	_ = a.Runtime.Keys(id, pane, []string{"enter"})
 	w.WriteHeader(http.StatusNoContent)
 }
