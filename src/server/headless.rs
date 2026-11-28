@@ -435,6 +435,10 @@ impl HeadlessServer {
             crate::render_prof::event("loop.tick");
             crate::render_prof::flush_if_due();
             self.app.reap_finished_detached_processes();
+            if self.app.close_idle_agents_if_due(std::time::Instant::now()) {
+                needs_render = true;
+                needs_full_render = true;
+            }
 
             // If shutdown has been initiated, complete it and exit.
             if self.shutting_down {

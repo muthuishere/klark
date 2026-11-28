@@ -960,6 +960,9 @@ pub struct AppState {
     pub sidebar_spaces: crate::config::SpacesSidebarConfig,
     pub next_agent_state_change_seq: u64,
     /// Where closed agents are recorded; `None` records nothing (tests).
+    /// `[agents] close_idle_after` in seconds; `None` = off.
+    pub close_idle_after_secs: Option<u64>,
+    pub last_idle_close_check: std::time::Instant,
     pub closed_agents_path: Option<std::path::PathBuf>,
     /// Why the next terminal removals happen: `user`, `idle-close` or `exit`.
     pub close_reason: &'static str,
@@ -1207,6 +1210,8 @@ impl AppState {
             sidebar_agents: crate::config::AgentsSidebarConfig::default(),
             sidebar_spaces: crate::config::SpacesSidebarConfig::default(),
             next_agent_state_change_seq: 0,
+            close_idle_after_secs: None,
+            last_idle_close_check: std::time::Instant::now(),
             closed_agents_path: None,
             close_reason: crate::agent_lifecycle::REASON_USER,
             closing_workspace_label: None,

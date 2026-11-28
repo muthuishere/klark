@@ -287,6 +287,56 @@ impl<'de> Deserialize<'de> for FeedsConfig {
     }
 }
 
+/// `[agents]`: `close_idle_after = "3h"` closes agents idle that long (klark#58).
+/// Off by default. A value that is not a valid duration leaves it off.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct AgentsConfig {
+    pub close_idle_after: Option<String>,
+    /// How long closed-agent records are kept (default 7d).
+    pub keep_closed: Option<String>,
+}
+
+impl AgentsConfig {
+    /// The idle time in seconds, when set and valid and not zero.
+    pub fn close_idle_after_secs(&self) -> Option<u64> {
+        self.close_idle_after
+            .as_deref()
+            .and_then(|text| crate::agent_lifecycle::parse_duration(text).ok())
+            .filter(|secs| *secs > 0)
+    }
+}
+
+impl AgentsConfig {
+    /// Retention of closed-agent records in seconds; `None` = default.
+    pub fn keep_closed_secs(&self) -> Option<u64> {
+        self.keep_closed
+            .as_deref()
+            .and_then(|text| crate::agent_lifecycle::parse_duration(text).ok())
+            .filter(|secs| *secs > 0)
+    }
+}
+
+impl<'de> Deserialize<'de> for AgentsConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let toml::Value::Table(t) = toml::Value::deserialize(deserializer)? else {
+            return Ok(Self::default());
+        };
+        Ok(Self {
+            close_idle_after: t
+                .get("close_idle_after")
+                .and_then(toml::Value::as_str)
+                .map(str::to_owned),
+            keep_closed: t
+                .get("keep_closed")
+                .and_then(toml::Value::as_str)
+                .map(str::to_owned),
+        })
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct KlarkToastConfig {
@@ -408,6 +458,7 @@ pub struct Config {
     pub experimental: ExperimentalConfig,
     pub remote: RemoteConfig,
     pub feeds: FeedsConfig,
+    pub agents: AgentsConfig,
     pub hooks: super::HooksConfig,
 }
 
@@ -1427,6 +1478,21 @@ mod tests {
 
     /// A bad `[feeds]` value (hand-edited) must not cost the rest of the
     /// config: that value keeps its default, everything else loads.
+    #[test]
+    fn agents_close_idle_after_is_off_by_default_and_tolerant() {
+        let c = toml::from_str::<Config>("").unwrap();
+        assert_eq!(c.agents.close_idle_after_secs(), None);
+        let c = toml::from_str::<Config>("[agents]\nclose_idle_after = \"3h\"\n").unwrap();
+        assert_eq!(c.agents.close_idle_after_secs(), Some(10800));
+        let c = toml::from_str::<Config>("[agents]\nkeep_closed = \"2d\"\n").unwrap();
+        assert_eq!(c.agents.keep_closed_secs(), Some(2 * 86400));
+        assert_eq!(toml::from_str::<Config>("").unwrap().agents.keep_closed_secs(), None);
+        for bad in ["[agents]\nclose_idle_after = 5\n", "[agents]\nclose_idle_after = \"soon\"\n", "agents = 3\n", "[agents]\nclose_idle_after = \"0m\"\n"] {
+            let c = toml::from_str::<Config>(bad).expect("config loads");
+            assert_eq!(c.agents.close_idle_after_secs(), None, "{bad}");
+        }
+    }
+
     #[test]
     fn bad_feeds_values_keep_the_rest_of_the_config() {
         let toml = "[feeds]\nrestore = false\nmax_bytes = -1\nagents_may_create = \"no\"\n\

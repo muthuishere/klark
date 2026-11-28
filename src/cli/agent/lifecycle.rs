@@ -35,6 +35,7 @@ pub(crate) fn split_closed_target(target: &str) -> (Option<String>, String) {
 }
 
 pub(super) fn run_resume(target: &str) -> std::io::Result<i32> {
+    crate::agent_lifecycle::load_keep_closed_from_config();
     let (session, name) = split_closed_target(target);
     let records = lifecycle::read_closed(&lifecycle::closed_log_path(), lifecycle::now_secs());
     // Without a session in the target prefer this session's agent, then the newest anywhere.

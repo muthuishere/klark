@@ -161,8 +161,24 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-/// Closed-agent records older than this are dropped.
-pub(crate) const CLOSED_MAX_AGE_SECS: u64 = 30 * 86400;
+/// Closed-agent records older than this (default 7 days) are dropped.
+pub(crate) const DEFAULT_KEEP_CLOSED_SECS: u64 = 7 * 86400;
+
+static KEEP_CLOSED_SECS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(DEFAULT_KEEP_CLOSED_SECS);
+
+/// Sets the retention from `[agents] keep_closed` (`None` = the default).
+pub(crate) fn set_keep_closed(secs: Option<u64>) {
+    KEEP_CLOSED_SECS.store(
+        secs.unwrap_or(DEFAULT_KEEP_CLOSED_SECS),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
+
+/// For CLI commands: read the retention from config.toml.
+pub(crate) fn load_keep_closed_from_config() {
+    set_keep_closed(crate::config::Config::load().config.agents.keep_closed_secs());
+}
 
 pub(crate) const REASON_USER: &str = "user";
 pub(crate) const REASON_IDLE_CLOSE: &str = "idle-close";
@@ -204,7 +220,7 @@ pub(crate) fn read_closed(path: &Path, now: u64) -> Vec<ClosedRecord> {
     };
     text.lines()
         .filter_map(|line| serde_json::from_str::<ClosedRecord>(line).ok())
-        .filter(|r| now.saturating_sub(r.closed_at) <= CLOSED_MAX_AGE_SECS)
+        .filter(|r| now.saturating_sub(r.closed_at) <= KEEP_CLOSED_SECS.load(std::sync::atomic::Ordering::Relaxed))
         .collect()
 }
 
@@ -474,7 +490,8 @@ mod tests {
         let dir = tmp("closed");
         let path = dir.join("agents-closed.jsonl");
         let now = 100 * 86400;
-        append_closed(&path, &rec("old", "claude", now - 31 * 86400)).unwrap();
+        set_keep_closed(None);
+        append_closed(&path, &rec("old", "claude", now - 8 * 86400)).unwrap();
         append_closed(&path, &rec("a", "claude", now - 10)).unwrap();
         // The append of "a" pruned "old" from the file itself.
         let on_disk = std::fs::read_to_string(&path).unwrap();

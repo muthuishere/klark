@@ -357,6 +357,7 @@ fn agent_start(params: AgentStartParams) -> std::io::Result<i32> {
 }
 
 fn agent_list(opts: bindings::ListOpts) -> std::io::Result<i32> {
+    crate::agent_lifecycle::load_keep_closed_from_config();
     if let Some(text) = &opts.idle_for {
         if let Err(message) = crate::agent_lifecycle::parse_duration(text) {
             eprintln!("--idle-for: {message}");
