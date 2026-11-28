@@ -1,0 +1,25 @@
+                                                                                                                             Demo notes                   +
+  ┃
+  ┃  list the open items and run the build once the notes are tidy
+  ┃
+                                                                                                                             Context
+     + 2 commands, 1 thought                                                                                                 12,345 tokens
+                                                                                                                             5% used
+     ↳ Shell finished · JAVA_HOME=/opt/demo/jdk/Contents/Home /opt/demo/bin/build.sh --target app…
+
+     + 1 command, 1 edit
+
+     Done. Summary of what I found:
+
+     - Adaptive: remote assignment; the exact routing is server-side and unrecovered.
+     - #3 — closed by its author for inactivity; not a confirmation of the feature
+       being implemented, and a very long note that wraps onto a second line here.
+     - Telemetry: counts exist; no stored explanation was found.
+
+     Build · Demo-Model-1 · 41s · 40.2 tok/s · 2.1s ttft
+
+  ┃
+  ┃
+  ┃  Build auto · Demo-Model-1 OpenCode Go · low
+  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+  /tmp/demo                                                      ↓ 1 shell · 12.3K (5%)  ctrl+p commands    /tmp/demo

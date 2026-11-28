@@ -375,7 +375,9 @@ var (
 	blockStart = rx(`^(?:[-*+•▪◦]\s|\d+[.)]\s|[>›❯»→#|])`)
 	bullet     = rx(`^(\s*)[-*\x{2022}\x{25aa}\x{25e6}\x{2013}\x{2014}]\s+(\S.*)$`)
 	proseBull  = rx(`^\s*[-*\x{2022}]\s\p{L}[\p{L}\p{N}\s:,.'\x{2019}()%-]*$`)
-	hunk       = rx(`^@@ .* @@`)
+	// "- #3 — closed by its author; see a/b/c" : a dash bullet whose text starts with a letter, digit or "#".
+	proseBullet = rx(`^\s*[-*\x{2022}]\s[\p{L}\p{N}#]`)
+	hunk        = rx(`^@@ .* @@`)
 )
 
 const ruleChars = "─━═-_=⎯‾▁·•"
@@ -398,11 +400,19 @@ func isTableLine(line string) bool {
 	return strings.HasPrefix(strings.TrimLeft(line, " \t"), "|") && strings.HasSuffix(strings.TrimRight(line, " \t"), "|")
 }
 
-func isCodeLike(line string) bool {
+func isCodeLike(line string) bool { return isCodeLikeIn(line, false) }
+
+// isCodeLikeIn is isCodeLike for a reader that knows its transcript holds no diffs (OpenCode collapses edits into
+// "+ N edits" rows): a "- text" line there is a bullet, never a removed diff line, whatever punctuation it has.
+func isCodeLikeIn(line string, bulletsAreProse bool) bool {
 	if strings.TrimSpace(line) == "" || isRule(line) || isTableLine(line) {
 		return false
 	}
-	if boxDrawing.MatchString(line) || gutter.MatchString(line) || (diffMarker.MatchString(line) && !proseBull.MatchString(line)) ||
+	diff := diffMarker.MatchString(line) && !proseBull.MatchString(line)
+	if bulletsAreProse && proseBullet.MatchString(line) {
+		diff = false
+	}
+	if boxDrawing.MatchString(line) || gutter.MatchString(line) || diff ||
 		bareGutter.MatchString(line) || hunk.MatchString(line) || shellLike.MatchString(line) || pathish.MatchString(line) ||
 		columns.MatchString(line) {
 		return true
@@ -528,7 +538,10 @@ type shaped struct {
 // shapeMarkdown is shapeTranscript (herdr-expose transcriptText.ts) with markdown as its output: blank runs
 // collapse to one, the pane's hard and soft wraps are undone, long rules become rules, code-shaped runs become
 // fenced blocks that keep their columns, and bullets become a real list. Nothing is reworded.
-func shapeMarkdown(raw string) string {
+func shapeMarkdown(raw string) string { return shapeMarkdownIn(raw, false) }
+
+// shapeMarkdownIn is shapeMarkdown; bulletsAreProse is passed through to isCodeLikeIn.
+func shapeMarkdownIn(raw string, bulletsAreProse bool) string {
 	var rawLines []string
 	for _, l := range strings.Split(raw, "\n") {
 		rawLines = append(rawLines, strings.TrimRight(l, " \t"))
@@ -555,16 +568,16 @@ func shapeMarkdown(raw string) string {
 			blankRun++
 			continue
 		}
-		if isCodeLike(line) {
+		if isCodeLikeIn(line, bulletsAreProse) {
 			j := i
 			var run []string
 			for j < len(lines) {
-				if isCodeLike(lines[j]) {
+				if isCodeLikeIn(lines[j], bulletsAreProse) {
 					run = append(run, lines[j])
 					j++
 					continue
 				}
-				if lines[j] == "" && j+1 < len(lines) && isCodeLike(lines[j+1]) {
+				if lines[j] == "" && j+1 < len(lines) && isCodeLikeIn(lines[j+1], bulletsAreProse) {
 					run = append(run, "")
 					j++
 					continue
