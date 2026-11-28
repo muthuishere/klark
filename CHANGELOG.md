@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Added
+- The hub shows OpenCode and Devin panes as chat, not as a terminal dump. The machine reads OpenCode 2's own store (`opencode.db`) like Devin's and Claude's logs: replies as markdown, thinking, tool cards with results, and turn errors such as an exhausted balance. When there is no store, new screen readers for Devin 3000 and OpenCode drop the banner, sidebar, composer and footers. Details: `docs/ux/hub-chat-opencode-devin.md`.
+
+### Fixed
+- A message sent from the hub to Devin now submits. The hub waits between the text and Enter, as `agent.prompt` does on the machine; Devin used to swallow the Enter as part of the paste.
+- Devin chats no longer show injected context (compaction summaries, skill lists) as the person's messages, and command results drop Devin's "Output from command in shell …" header.
+
 ### Removed
 - The C# Blazor hub (`hub/`) is removed; the hub is the Go + React one in `hub-go/`. Gaps it does not cover yet are tracked as GitHub issues.
 

@@ -15,6 +15,13 @@ import { sizeLabel } from '../lib/files';
 
 const drafts = webStorage(() => sessionStorage, 'klark:');
 
+// The page's reader class picks the chat's look. OpenCode, like Claude and Devin, comes from its own log as markdown,
+// so it gets proportional text; "generic" (monospace) is for agents the hub still reads off the screen.
+function readerClass(agent: string): string {
+  if (!agent) return 'shell';
+  const k = agentKey(agent);
+  return k === 'claude' ? 'claude' : k === 'opencode' ? 'opencode' : k === 'other' ? 'generic' : 'devin';
+}
 export function PanePage() {
   const { machine = '', pane = '' } = useParams();
   const [q, setQ] = useSearchParams();
@@ -77,7 +84,7 @@ export function PanePage() {
 
   const readOnly = false;
   return (
-    <main className={'pane-app reader-' + (agent ? (agentKey(agent) === 'claude' ? 'claude' : agentKey(agent) === 'other' ? 'generic' : 'devin') : 'shell') + (dropping ? ' dropping' : '')}
+    <main className={'pane-app reader-' + readerClass(agent) + (dropping ? ' dropping' : '')}
       onDragOver={(e) => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); setDropping(true); } }}
       onDragLeave={() => setDropping(false)}
       onDrop={(e) => { e.preventDefault(); setDropping(false); const f = [...e.dataTransfer.files].filter((x) => x.type.startsWith('image/')); if (f.length) void upload(f); }}>

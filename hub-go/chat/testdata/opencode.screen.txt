@@ -1,0 +1,19 @@
+   Notes                         +
+  ┃  1. Week grid:
+  ┃     - On open, scroll so the working day shows.                                                               Context
+  ┃     - Hour labels are "09:00", not "01".    Select model                                     esc                342,157 tokens
+  ┃     - Add the "all day" row at the top.     Search                                                              33% used
+  ┃                                             ● GPT-5.6 Luna OpenCode Go
+  ┃  Leave everything uncommitted.              Claude Opus 5.5 Anthropic
+  ┃                                             Connect an integration ctrl+a  Favorite ctrl+f
+                                                                                                                   MCP
+     + 4 thoughts
+
+     Error: Insufficient balance. Top up in the console.
+
+     Build · GPT-5.6 Luna · 1m 13s · 3.6s ttft
+
+  ┃
+  ┃  Build auto · GPT-5.6 Luna OpenCode Go
+  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+  /tmp/demo:lane/demo     342.2K (33%)  ctrl+p commands    /tmp/demo

@@ -124,8 +124,10 @@ pub fn devin_items(chat: &str, node_id: i64, created_at: Option<i64>) -> Vec<Val
     };
     let content = msg.get("content").and_then(Value::as_str).unwrap_or("");
     match role {
-        "user" if !content.trim().is_empty() => {
-            push(json!({"role": "user", "kind": "text", "text": content}));
+        // Only what the person typed: Devin also stores injected context (conversation
+        // summaries for compaction, skill lists) as user rows, without is_user_input.
+        "user" if !content.trim().is_empty() && is_user_input(&msg) => {
+            push(json!({"role": "user", "kind": "text", "text": clean_markdown(content, "user")}));
         }
         "assistant" => {
             let thinking = msg
@@ -136,7 +138,9 @@ pub fn devin_items(chat: &str, node_id: i64, created_at: Option<i64>) -> Vec<Val
                 push(json!({"role": "assistant", "kind": "thinking", "text": thinking}));
             }
             if !content.trim().is_empty() {
-                push(json!({"role": "assistant", "kind": "text", "text": content}));
+                push(
+                    json!({"role": "assistant", "kind": "text", "text": clean_markdown(content, "assistant")}),
+                );
             }
             for call in msg
                 .get("tool_calls")
@@ -166,11 +170,16 @@ pub fn devin_items(chat: &str, node_id: i64, created_at: Option<i64>) -> Vec<Val
                 .and_then(|e| e.pointer("/chisel~1tool_result_meta/success"))
                 .and_then(Value::as_bool)
                 != Some(false);
+            let (body, notice) = split_truncation(text);
+            let mut shown = clean_exec_output(body);
+            if let Some(n) = notice {
+                shown = format!("{shown}\n{n}");
+            }
             push(json!({
                 "role": "tool",
                 "kind": "tool_result",
                 "tool_use_id": msg.get("tool_call_id").cloned().unwrap_or(Value::Null),
-                "text": truncate(text, TOOL_RESULT_CAP),
+                "text": truncate(&shown, TOOL_RESULT_CAP),
                 "ok": ok,
             }));
         }
@@ -178,6 +187,84 @@ pub fn devin_items(chat: &str, node_id: i64, created_at: Option<i64>) -> Vec<Val
         _ => {}
     }
     out
+}
+
+/// Devin wraps command output as "Output from command in shell <id>:\n…\n\nExit code: N".
+/// The first line is noise; a zero exit code is dropped, a failing one kept.
+fn clean_exec_output(text: &str) -> String {
+    let Some(rest) = text
+        .strip_prefix("Output from command in shell ")
+        .and_then(|r| r.split_once(":\n").map(|(_, body)| body))
+    else {
+        return text.to_string();
+    };
+    let body = rest.trim_end();
+    body.strip_suffix("Exit code: 0")
+        .map(|b| b.trim_end().to_string())
+        .unwrap_or_else(|| body.to_string())
+}
+
+/// Devin's own markup in the model's markdown. Assistant text cites code with
+/// self-closing `<ref_file file="P" />` / `<ref_snippet file="P" lines="A-B" />`
+/// tags, which the TUI draws as a file reference: shown as `P` / `P:A-B` in
+/// backticks (the hub links paths). User text can carry harness blocks.
+fn clean_markdown(text: &str, role: &str) -> String {
+    use std::sync::OnceLock;
+    static REF: OnceLock<regex::Regex> = OnceLock::new();
+    static BLOCK: OnceLock<regex::Regex> = OnceLock::new();
+    let re = REF.get_or_init(|| {
+        regex::Regex::new(
+            r#"<ref_(?:file|snippet)\s+file=["']([^"']+)["'](?:\s+lines=["']([^"']+)["'])?\s*/>"#,
+        )
+        .unwrap()
+    });
+    let mut out = re
+        .replace_all(text, |c: &regex::Captures| match c.get(2) {
+            // `P:A` links to line A in the hub's file viewer; the range follows as text.
+            Some(l) => {
+                let start = l.as_str().split('-').next().unwrap_or("");
+                format!("`{}:{}` (lines {})", &c[1], start, l.as_str())
+            }
+            None => format!("`{}`", &c[1]),
+        })
+        .into_owned();
+    if role == "user" {
+        let b = BLOCK.get_or_init(|| {
+            regex::Regex::new(
+                r"(?s)<(system_info|system_guidance|user-prompt-submit-hook)>.*?</(?:system_info|system_guidance|user-prompt-submit-hook)>",
+            )
+            .unwrap()
+        });
+        out = b.replace_all(&out, "").trim().to_string();
+    }
+    out
+}
+
+/// A `<truncation_notice>Full output written to: P</truncation_notice>` block at
+/// the end of tool output becomes one "[full output: P]" line.
+fn split_truncation(text: &str) -> (&str, Option<String>) {
+    let Some(i) = text.find("<truncation_notice>") else {
+        return (text, None);
+    };
+    let notice = &text[i + "<truncation_notice>".len()..];
+    let notice = notice
+        .split("</truncation_notice>")
+        .next()
+        .unwrap_or("")
+        .trim();
+    let path = notice
+        .strip_prefix("Full output written to:")
+        .map(str::trim)
+        .unwrap_or(notice);
+    (text[..i].trim_end(), Some(format!("[full output: {path}]")))
+}
+
+fn is_user_input(msg: &Value) -> bool {
+    match msg.pointer("/metadata/is_user_input") {
+        Some(Value::Bool(b)) => *b,
+        Some(Value::Number(n)) => n.as_i64() == Some(1),
+        _ => false,
+    }
 }
 
 struct Node {
@@ -347,7 +434,7 @@ CREATE INDEX idx_mn_session ON message_nodes(session_id);";
             (
                 1,
                 Some(0),
-                json!({"role":"user","content":"fix the bug","metadata":{"created_at":"2026-11-06T10:00:00Z"}}),
+                json!({"role":"user","content":"fix the bug","metadata":{"created_at":"2026-11-06T10:00:00Z","is_user_input":true}}),
             ),
             (
                 2,
@@ -368,7 +455,17 @@ CREATE INDEX idx_mn_session ON message_nodes(session_id);";
                 json!({"role":"assistant","content":"ABANDONED"}),
             ),
             (4, Some(3), json!({"role":"assistant","content":"Done."})),
-            (5, Some(4), json!({"role":"user","content":"thanks"})),
+            (
+                5,
+                Some(4),
+                json!({"role":"user","content":"thanks","metadata":{"is_user_input":1}}),
+            ),
+            // injected context (compaction summary) on the chain: not shown
+            (
+                6,
+                Some(5),
+                json!({"role":"user","content":"Conversation to summarize: INJECTED"}),
+            ),
             // an unrelated root
             (20, None, json!({"role":"user","content":"OTHER ROOT"})),
         ];
@@ -381,7 +478,7 @@ CREATE INDEX idx_mn_session ON message_nodes(session_id);";
         }
         c.execute_batch(
             "INSERT INTO sessions(id,working_directory,created_at,last_activity_at,main_chain_id,hidden) VALUES
-              ('s1','/w',1,10,5,0), ('old','/w',1,5,NULL,0), ('hid','/w',1,99,NULL,1);",
+              ('s1','/w',1,10,6,0), ('old','/w',1,5,NULL,0), ('hid','/w',1,99,NULL,1);",
         )
         .unwrap();
         p
@@ -404,7 +501,7 @@ CREATE INDEX idx_mn_session ON message_nodes(session_id);";
     fn transcript_devin_main_chain_only_with_tool_mapping() {
         let p = db("chain");
         let page = read_page(&p, "s1", Query::Tail, 200).unwrap();
-        assert_eq!(page.cursor, 5);
+        assert_eq!(page.cursor, 6);
         assert!(!page.has_more);
         assert_eq!(
             kinds(&page.items),
@@ -423,6 +520,7 @@ CREATE INDEX idx_mn_session ON message_nodes(session_id);";
             !all.contains("ABANDONED")
                 && !all.contains("OTHER ROOT")
                 && !all.contains("sys prompt")
+                && !all.contains("INJECTED")
         );
         let ids: Vec<&str> = page
             .items
@@ -441,6 +539,43 @@ CREATE INDEX idx_mn_session ON message_nodes(session_id);";
         assert_eq!(page.items[0]["ts"], "2026-11-06T10:00:00Z");
         assert!(page.items[1]["ts"].as_str().unwrap().starts_with("2026-"));
         assert_eq!(page.items[1]["cursor"], "2");
+    }
+
+    #[test]
+    fn transcript_devin_exec_output_header_and_zero_exit_dropped() {
+        assert_eq!(
+            clean_exec_output("Output from command in shell d83ffb:\ntotal 0\n.\n\n\nExit code: 0"),
+            "total 0\n."
+        );
+        assert_eq!(
+            clean_exec_output("Output from command in shell ab:\nboom\n\nExit code: 2"),
+            "boom\n\nExit code: 2"
+        );
+        assert_eq!(clean_exec_output("plain text"), "plain text");
+    }
+
+    #[test]
+    fn transcript_devin_markdown_citations_and_harness_markup() {
+        let a = clean_markdown(
+            "See <ref_snippet file=\"/x/mq-deadline.c\" lines=\"349-374\" /> and <ref_file file='/x/a.rs' />.\n\n## Done",
+            "assistant",
+        );
+        assert_eq!(
+            a,
+            "See `/x/mq-deadline.c:349` (lines 349-374) and `/x/a.rs`.\n\n## Done"
+        );
+        let u = clean_markdown("fix it<system_info>\nws: /tmp\n</system_info>", "user");
+        assert_eq!(u, "fix it");
+        // markdown itself is untouched
+        let md = "# T\n\n- a\n\n| x | y |\n|---|---|\n\n```rust\nfn f() {}\n```";
+        assert_eq!(clean_markdown(md, "assistant"), md);
+
+        let (body, n) = split_truncation(
+            "Output from command in shell ab:\nline\n\nExit code: 0\n<truncation_notice>\nFull output written to: /t/content.txt\n</truncation_notice>",
+        );
+        assert_eq!(clean_exec_output(body), "line");
+        assert_eq!(n.as_deref(), Some("[full output: /t/content.txt]"));
+        assert_eq!(split_truncation("plain").1, None);
     }
 
     #[test]

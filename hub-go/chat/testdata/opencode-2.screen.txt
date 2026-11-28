@@ -1,0 +1,38 @@
+                                                                                                                             Agent notes                  +
+  ┃
+  ┃  [klark msg from demo/session/hub] Question: please write down how the agent composes a conversation, for converting     Context
+  ┃  it into chat rows: the schema, how the TUI draws it, and anything else that helps render it as clean chat. Write it to  105,836 tokens
+  ┃  /tmp/demo/scratch/notes.md and reply with that path.                                                                    11% used
+  ┃  (reply: klark msg reply --to demo/session/hub "<text>")
+  ┃                                                                                                                          MCP
+  ┃                                                                                                                          • rea                       Connected
+
+     + 6 commands, 4 thoughts
+
+     There is a live store. Let me inspect the schema and a sample message:
+
+     + 2 commands, 1 thought
+
+     The store confirms the message shape. Let me pull role counts and tool examples compactly:
+
+     + 4 commands, 1 thought
+
+     Now the TUI rendering side — markers, chrome, placeholders:
+
+     + 1 command, 1 edit
+
+     Replied to the hub with the notes path. Summary of what I delivered in /tmp/demo/scratch/notes.md:
+
+     1. Schema — the conversation lives in one table with a parent link per message.
+
+     2. chat_message JSON — role, content, tool calls and a metadata flag for real user input.
+
+     3. Rendering recipe — walk the chain, drop system rows, pair tool results with their calls.
+
+     Build · GLM-5.3-Flash · 1m 11s · 181.5 tok/s · 3.2s ttft
+
+  ┃
+  ┃
+  ┃  Build auto · GLM-5.3-Flash OpenCode Go · low
+  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+  /tmp/demo                                                      ↓ 1 shell · 105.8K (11%)  ctrl+p commands    /tmp/demo
