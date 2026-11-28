@@ -9,7 +9,7 @@ export const isAgent = (p: PaneInfo) => paneAgent(p).length > 0 || paneStatus(p)
 export function agentKey(agent: string): 'claude' | 'devin' | 'codex' | 'opencode' | 'agy' | 'shell' | 'other' {
   const a = agent.toLowerCase();
   return a.includes('claude') ? 'claude' : a.includes('devin') ? 'devin' : a.includes('codex') ? 'codex'
-    : a.includes('opencode') ? 'opencode' : a.includes('agy') || a.includes('antigravity') ? 'agy' : a === '' ? 'shell' : 'other';
+    : a.includes('opencode') ? 'opencode' : /\bagy\b/.test(a) || a.includes('antigravity') ? 'agy' : a === '' ? 'shell' : 'other';
 }
 export function agentIcon(agent: string): string {
   switch (agentKey(agent)) {

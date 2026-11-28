@@ -23,6 +23,7 @@ describe('agentKey', () => {
   });
   it('falls back for agents read from the screen, and a plain shell', () => {
     expect(agentKey('grok')).toBe('other');
+    expect(agentKey('strategy-bot')).toBe('other'); // "agy" only as a word
     expect(agentKey('')).toBe('shell');
   });
 });
