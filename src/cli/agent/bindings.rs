@@ -239,6 +239,8 @@ pub(crate) enum Operation {
     Attach(Attach),
     Explain(Explain),
     Restart(super::restart::Restart),
+    Models(super::models::ModelsCmd),
+    Model(super::models::ModelCmd),
 }
 
 fn leaf(name: &'static str, arguments: Vec<clap::Arg>, about: &'static str) -> Command {
@@ -283,6 +285,16 @@ pub(crate) fn command() -> Command {
             .args(super::restart::args())
             .override_usage("klark agent restart <TARGET> [--soft] [--force] [--kill] [--reason TEXT] [--timeout MS] [--no-notice] [--notify-senders]")
             .after_help("Refuses, unless --force, while the agent shows a dialog or runs a git, deploy or install command. Also refuses with no conversation id to resume, with no shell under the agent, or from inside the agent itself.\n\nThe agent gets SIGTERM and is started again in its pane with its resume command; Claude Code keeps its launch flags. Its current turn, background helpers and shell commands stop; messages delivered since its last reply are listed as possibly unhandled and told to the resumed agent.\n\n--soft only presses Escape: the current turn stops and Claude Code runs its queued messages next."))
+        .subcommand(Command::new("models")
+            .about("List the models an agent (or agent type) can switch to")
+            .args(super::models::models_args())
+            .override_usage("klark agent models <TARGET|TYPE> [--json]")
+            .after_help("Devin: from `devin models`. Claude: the list in models.toml (no list command). Configure other agent types in models.toml in the klark config dir."))
+        .subcommand(Command::new("model")
+            .about("Switch a running agent's model, keeping its conversation")
+            .args(super::models::model_args())
+            .override_usage("klark agent model <TARGET> <MODEL> [--restart] [--wait] [--force] [--json]")
+            .after_help("If the agent type has a switch command (Claude: /model MODEL) and the agent is idle, it is typed with Enter and the pane is checked for the change. Otherwise, or with --restart, the agent is restarted on the same conversation with the model flag (claude/devin: --model MODEL). Note: Claude's /model also makes it Claude's default for new sessions; --restart does not. Refuses while the agent is working unless --wait.\n\nConfig: models.toml in the klark config dir, e.g.\n  [codex]\n  models = [\"gpt-5\", \"o3\"]\n  restart_args = [\"-m\", \"{model}\"]"))
         .subcommand(leaf("explain", ExplainProjection::arguments(), "Explain agent detection state")
             .group(ArgGroup::new("explain_source").args(["target", "file"]).required(true)))
 }
@@ -316,6 +328,8 @@ pub(crate) fn from_matches(matches: &ArgMatches) -> Result<Operation, ParseError
         "attach" => Operation::Attach(AttachProjection::from_matches(matches)?),
         "explain" => Operation::Explain(ExplainProjection::from_matches(matches)?),
         "restart" => Operation::Restart(super::restart::from_matches(matches)),
+        "models" => Operation::Models(super::models::models_from(matches)),
+        "model" => Operation::Model(super::models::model_from(matches)),
         _ => return Err(ParseError::Usage(format!("unknown agent command: {name}"))),
     })
 }

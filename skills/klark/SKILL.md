@@ -50,6 +50,7 @@ Most used, without reading further:
 |---|---|
 | see panes / agents here; in all sessions | `klark pane list`, `klark agent list`; `klark msg ls` |
 | prompt an agent and wait | `klark agent prompt <target> "<text>" --wait --timeout 120000` |
+| which models / switch agent X to model Y | `klark agent models <target\|claude\|devin>`; `klark agent model <target> <model>` (Claude switches by restart on the same conversation, since its live `/model` also changes Claude's saved default; `--live` types `/model` anyway; `--restart`, `--wait`; other agent types via `models.toml` in the klark config dir) |
 | message an agent | `klark msg send <session/agent> "<text>"`; answer one: `klark msg reply "<text>"`; outside a klark pane add `--wait-reply 600` to get the answer printed |
 | feed new output to an agent (when asked) | `klark feed add <agent> "<instruction>" --stream "<cmd>"` (or `--follow <file>`, `--poll "<cmd>"`) |
 | share this pane | `klark expose url` |
