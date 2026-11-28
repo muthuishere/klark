@@ -10,7 +10,7 @@
 
 ### Fixed
 - `klark agent restart` picks the agent process its shell started when the agent runs a helper with the same name (Devin's `devin acp`), instead of refusing with `no_shell`.
-- macOS: a klark built in a repo (`target/`, one per worktree) now starts its server from one fixed copy, `<state dir>/dev-bin/klark`, signed with the same identity. macOS ties Full Disk Access for a plain executable to its path, so every build folder used to add another "klark" to System Settings. Now one grant covers every repo build. Installed binaries are unchanged; `KLARK_DEV_SERVER_COPY=0` turns it off.
+- macOS: a klark built in a repo (`target/`, one per worktree) now starts its server from one fixed copy, `~/.local/state/klark-dev/dev-bin/klark` (debug and release builds alike), signed with the same identity. macOS ties Full Disk Access for a plain executable to its path, so every build folder used to add another "klark" to System Settings. Now one grant covers every repo build. Installed binaries are unchanged; `KLARK_DEV_SERVER_COPY=0` turns it off.
 
 ## 0.11.9
 

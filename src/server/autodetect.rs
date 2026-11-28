@@ -238,7 +238,13 @@ fn stable_dev_server_exe(exe: PathBuf) -> PathBuf {
     {
         return exe;
     }
-    let target = crate::config::state_dir().join("dev-bin").join("klark");
+    // One path for every repo build, debug or release, so one grant covers them.
+    let state = crate::config::state_dir();
+    let target = state
+        .parent()
+        .map_or_else(|| state.clone(), |parent| parent.join("klark-dev"))
+        .join("dev-bin")
+        .join("klark");
     match copy_if_changed(&exe, &target) {
         Ok(()) => target,
         Err(err) => {
