@@ -1,0 +1,60 @@
+# Publishes @muthuishere/klark-hub-ui (hub-go/ui/packages/hub-ui) to npm at the
+# release version, by OIDC trusted publishing: no stored token.
+# Runs on every v* tag, and by hand for an existing release:
+#   gh workflow run npm.yml -f tag=v0.11.10
+# If that version is already on npm it says so and succeeds.
+# One-time setup on npmjs.com (package settings, Trusted publishing):
+#   GitHub Actions, repo muthuishere/klark, workflow npm.yml, environment npm.
+name: npm
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "release tag to publish, e.g. v0.11.10"
+        required: true
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - name: npm >= 11.5 (trusted publishing)
+        run: npm install -g npm@latest && npm --version
+      - name: Tag equals the package version
+        run: |
+          v=$(node -p "require('./hub-go/ui/packages/hub-ui/package.json').version")
+          [ "v$v" = "$TAG" ] || { echo "version mismatch: $v vs $TAG"; exit 1; }
+          echo "VERSION=$v" >> "$GITHUB_ENV"
+      - name: Already on npm?
+        id: check
+        run: |
+          if npm view "@muthuishere/klark-hub-ui@$VERSION" version >/dev/null 2>&1; then
+            echo "::notice title=npm::@muthuishere/klark-hub-ui@$VERSION is already published; nothing to do"
+            echo "published=yes" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Build
+        if: steps.check.outputs.published != 'yes'
+        run: |
+          cd hub-go/ui && npm ci
+          cd packages/hub-ui && npm run build
+      - name: Publish
+        if: steps.check.outputs.published != 'yes'
+        working-directory: hub-go/ui/packages/hub-ui/release
+        run: npm publish --access public --provenance
